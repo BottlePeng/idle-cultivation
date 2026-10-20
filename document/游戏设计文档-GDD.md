@@ -1,6 +1,6 @@
 # 游戏设计文档（GDD）· 仙途挂机
 
-> 版本：v2（含阵法、灵植）｜ 最后更新：随代码同步 ｜ 对应代码：`js/data.js` `js/state.js` `js/engine.js` `js/ui.js` `js/main.js`
+> 版本：v3（含阵法、灵植、入世）｜ 最后更新：随代码同步 ｜ 对应代码：`js/data.js` `js/state.js` `js/engine.js` `js/ui.js` `js/main.js`
 
 ---
 
@@ -20,7 +20,7 @@
 1. **一句话上手**：点击即挂机，离开也在变强。
 2. **单一动作槽**：同一时间只做一件事，选择即取舍，避免多线程挂机的通胀。
 3. **离线收益与在线一致**：离线用同一套 `tick` 快进模拟，数值口径完全一致。
-4. **长线成长曲线**：9 大技能 + 33 阶境界 + 精通 + 阵法 + 灵植，形成多轴养成。
+4. **长线成长曲线**：10 大技能 + 33 阶境界 + 精通 + 阵法 + 灵植，形成多轴养成。
 5. **零素材 / 零构建**：图标用 Emoji，纯原生 JS，所有数值集中在 `data.js`。
 
 ---
@@ -61,6 +61,7 @@
 | 11 | 任务 | 成就式条件 + 奖励领取 | `TASKS` | [任务系统](./机制-任务系统.md) |
 | 12 | 背包 | 100 格种类上限、操作菜单、出售模式 | `CONFIG.INV_SLOTS` | [背包系统](./机制-背包系统.md) |
 | 13 | 市集 | 四店铺采购，加价购入 / 折价出售 | `SHOPS` | [市集系统](./机制-市集系统.md) |
+| 14 | 入世 | 红尘百业职业体验，概率成败，参考梅尔沃盗窃 | `ACTIONS.thieving/state.stun` | [入世系统](./机制-入世系统.md) |
 
 ---
 
@@ -115,6 +116,7 @@
 | 修炼 | `cultivation` | 🧘 | 70 · lvl^1.70（实际由境界表接管） |
 | 阵法 | `formation` | 🧭 | 18 · lvl^1.35 |
 | 灵植 | `farming` | 🌿 | 22 · lvl^1.40 |
+| 入世 | `thieving` | 🎭 | 26 · lvl^1.45 |
 
 > `SKILL_ORDER` 决定侧栏顺序、`state.skills` 初始化顺序、离线模拟遍历顺序。
 
@@ -144,6 +146,7 @@ state
 ├─ mastery{ id:{lvl,xp} }  精通表
 ├─ formations{ id:{levels:[]} }  阵纹等级
 ├─ plots[{seedId,growth,ready}]  灵植地块
+├─ stun             眩晕剩余秒数（入世被识破，期间无法开始新动作）
 ├─ action{skill,id} / actionTimer / actionWaiting   单一动作槽
 ├─ regenTimer / taskTimer   被动与任务计时
 ├─ tasks{ id:{done,claimed} }   任务进度

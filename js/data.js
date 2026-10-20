@@ -92,6 +92,12 @@ const ITEMS = {
   hide: { name: '兽皮', icon: '🟫', type: 'material', value: 5, desc: '妖兽皮毛，可制护甲。' },
   herb: { name: '灵草', icon: '🌿', type: 'material', value: 8, desc: '山间灵草，炼丹皆宜。' },
 
+  /* 凡间百业（入世体验产出） */
+  rice: { name: '米饭', icon: '🍚', type: 'food', value: 2, heal: 12, desc: '凡人家常饭食，食用后恢复 12 点生命。' },
+  wine: { name: '浊酒', icon: '🍶', type: 'food', value: 5, heal: 18, desc: '凡酿浊酒，食用后恢复 18 点生命。' },
+  cloth: { name: '麻布', icon: '🧶', type: 'material', value: 7, desc: '凡间织物，市集有人收。' },
+  painting: { name: '名家字画', icon: '🖼️', type: 'material', value: 26, desc: '凡间名家手笔，颇受修士喜爱。' },
+
   /* 药草 */
   herb_juqi: { name: '聚气草', icon: '🍀', type: 'material', value: 10, desc: '服之可聚气归元，炼丹基础。' },
   herb_liao: { name: '疗伤草', icon: '🌾', type: 'material', value: 12, desc: '生肌止血，疗伤丹主料。' },
@@ -153,10 +159,11 @@ const SKILLS = {
   combat: { name: '战斗', icon: '⚔️', xpBase: 38, xpPow: 1.60, desc: '讨伐妖兽，获取灵石与材料。' },
   cultivation: { name: '修炼', icon: '🧘', xpBase: 70, xpPow: 1.70, desc: '打坐吐纳，积累修为，冲击境界。' },
   formation: { name: '阵法', icon: '🧭', xpBase: 18, xpPow: 1.35, desc: '观星推演天机，布设阵法为诸般修行加持。' },
-  farming: { name: '灵植', icon: '🌿', xpBase: 22, xpPow: 1.40, desc: '种下灵草种子，悉心浇灌，收获炼丹上品。' }
+  farming: { name: '灵植', icon: '🌿', xpBase: 22, xpPow: 1.40, desc: '种下灵草种子，悉心浇灌，收获炼丹上品。' },
+  thieving: { name: '入世', icon: '🎭', xpBase: 26, xpPow: 1.45, desc: '混迹红尘百业，体验凡人生计——或有所得，或被识破驱离。' }
 };
 
-const SKILL_ORDER = ['woodcutting', 'fishing', 'mining', 'crafting', 'alchemy', 'combat', 'cultivation', 'formation', 'farming'];
+const SKILL_ORDER = ['woodcutting', 'fishing', 'mining', 'crafting', 'alchemy', 'combat', 'cultivation', 'formation', 'farming', 'thieving'];
 
 /* =========================================================================
  * 采集 / 修炼动作（无消耗）
@@ -195,6 +202,19 @@ const ACTIONS = {
     { id: 'ob_ziwei', name: '观星 · 紫微', icon: '🔭', req: 8, time: 4.5, xp: 28, out: { stardust: 10 } },
     { id: 'ob_huntian', name: '观星 · 浑天', icon: '🌠', req: 16, time: 6.0, xp: 68, out: { stardust: 30 } },
     { id: 'ob_zhoutian', name: '观星 · 周天', icon: '🌌', req: 24, time: 7.5, xp: 160, out: { stardust: 88 } }
+  ],
+  /* 入世：参考梅尔沃盗窃（Thieving）——概率判定成败的职业体验。
+     rate 基础成功率 / gold 灵石区间 / loot 掉落表 / fine 被罚灵石 / dmg 受伤 / stun 眩晕秒数 */
+  thieving: [
+    { id: 'job_farmer', name: '农户帮工', icon: '👨‍🌾', req: 1, time: 3.0, xp: 10, rate: 0.78, gold: [3, 8], fine: 5, dmg: 2, stun: 3, loot: [{ id: 'rice', chance: 0.55, qty: 1 }] },
+    { id: 'job_fisher', name: '渔行伙计', icon: '🛶', req: 4, time: 3.0, xp: 14, rate: 0.76, gold: [5, 12], fine: 8, dmg: 3, stun: 3, loot: [{ id: 'fish_qing', chance: 0.45, qty: 1 }, { id: 'fish_ling', chance: 0.12, qty: 1 }] },
+    { id: 'job_smith', name: '铁铺学徒', icon: '⚒️', req: 8, time: 3.2, xp: 20, rate: 0.74, gold: [8, 17], fine: 12, dmg: 4, stun: 3, loot: [{ id: 'ore_iron', chance: 0.40, qty: 1 }, { id: 'ingot_iron', chance: 0.15, qty: 1 }] },
+    { id: 'job_tavern', name: '酒楼跑堂', icon: '🍶', req: 12, time: 3.2, xp: 28, rate: 0.72, gold: [12, 25], fine: 18, dmg: 5, stun: 3, loot: [{ id: 'wine', chance: 0.45, qty: 1 }, { id: 'herb', chance: 0.12, qty: 1 }] },
+    { id: 'job_apoth', name: '药铺学徒', icon: '💊', req: 16, time: 3.4, xp: 40, rate: 0.70, gold: [18, 36], fine: 24, dmg: 6, stun: 3.5, loot: [{ id: 'herb_juqi', chance: 0.35, qty: 1 }, { id: 'herb_liao', chance: 0.18, qty: 1 }, { id: 'seed_juqi', chance: 0.08, qty: 1 }] },
+    { id: 'job_weaver', name: '织坊帮工', icon: '🧵', req: 21, time: 3.4, xp: 56, rate: 0.68, gold: [26, 50], fine: 32, dmg: 7, stun: 3.5, loot: [{ id: 'cloth', chance: 0.45, qty: 1 }, { id: 'hide', chance: 0.15, qty: 1 }] },
+    { id: 'job_guard', name: '行商护卫', icon: '🐫', req: 26, time: 3.6, xp: 78, rate: 0.66, gold: [42, 88], fine: 45, dmg: 8, stun: 4, loot: [{ id: 'cloth', chance: 0.25, qty: 1 }, { id: 'painting', chance: 0.08, qty: 1 }] },
+    { id: 'job_scribe', name: '书院抄手', icon: '📖', req: 31, time: 3.6, xp: 105, rate: 0.64, gold: [58, 120], fine: 60, dmg: 9, stun: 4, loot: [{ id: 'painting', chance: 0.35, qty: 1 }, { id: 'pill_juqi', chance: 0.07, qty: 1 }] },
+    { id: 'job_steward', name: '钱庄管事', icon: '💰', req: 36, time: 3.8, xp: 140, rate: 0.62, gold: [85, 175], fine: 80, dmg: 10, stun: 4, loot: [{ id: 'cloth', chance: 0.22, qty: 1 }, { id: 'painting', chance: 0.18, qty: 1 }, { id: 'pill_liao', chance: 0.08, qty: 1 }] }
   ]
 };
 

@@ -524,7 +524,10 @@ function currentBarHTML() {
   const stopBtn = '<button class="btn ghost small off" data-act="stop">停止</button>';
 
   if (!p) {
-    return '<div class="activebar"><div class="row"><span class="none">当前空闲 — 点击上方任意条目开始挂机（同一时间仅进行一件事）</span></div></div>';
+    const idleTxt = state.stun > 0
+      ? '😵 眩晕中 — 被识破后缓一缓，稍候自动恢复'
+      : '当前空闲 — 点击上方任意条目开始挂机（同一时间仅进行一件事）';
+    return '<div class="activebar"><div class="row"><span class="none">' + idleTxt + '</span></div></div>';
   }
   const label = (p.skill === 'combat') ? '' : (SKILLS[p.skill] ? SKILLS[p.skill].name + ' · ' : '');
   const note = p.skill === 'combat' ? '自动战斗中' : (p.waiting ? '等待材料' : '进行中');
@@ -613,19 +616,35 @@ function updatePlotGrowth() {
   }
 }
 
-function currentBarHTML() {
-  const p = currentProgress();
-  const stopBtn = '<button class="btn ghost small off" data-act="stop">停止</button>';
+/* 入世面板：红尘百业职业体验（参考梅尔沃盗窃） */
+function renderThieving() {
+  const s = state.skills.thieving;
+  let html = '<div class="secttl">红尘百业 · 点击开始体验（同一时间仅能体验一种生计，被识破会中断并眩晕）</div>';
+  html += '<div class="grid">';
 
-  if (!p) {
-    return '<div class="activebar"><div class="row"><span class="none">当前空闲 — 点击上方任意条目开始挂机（同一时间仅进行一件事）</span></div></div>';
-  }
-  const label = (p.skill === 'combat') ? '' : (SKILLS[p.skill] ? SKILLS[p.skill].name + ' · ' : '');
-  const note = p.skill === 'combat' ? '自动战斗中' : (p.waiting ? '等待材料' : '进行中');
-  return '<div class="activebar">' +
-    '<div class="row"><span class="now">' + label + '<b>' + esc(p.name) + '</b> <span class="none">(' + note + ')</span></span>' + stopBtn + '</div>' +
-    '<div class="bar"><i class="actfill" data-bar="active" style="width:' + (p.pct * 100).toFixed(1) + '%"></i></div>' +
-    '</div>';
+  ACTIONS.thieving.forEach(function (a) {
+    const locked = s.lvl < a.req;
+    const on = (state.action && state.action.skill === 'thieving' && state.action.id === a.id) ? ' on' : '';
+    const m = masteryOf(a.id);
+    const rate = Math.min(0.95, a.rate + m.lvl * 0.002);
+    const lootTxt = a.loot.map(function (l) {
+      return itemIcon(l.id) + itemName(l.id) + ' ' + Math.round(l.chance * 100) + '%';
+    }).join(' · ');
+
+    html +=
+      '<div class="entry' + on + (locked ? ' locked' : '') + '" data-act="action" data-skill="thieving" data-id="' + a.id + '">' +
+      '<span class="eico">' + a.icon + '</span>' +
+      '<span class="emain"><span class="ename">' + a.name +
+      (locked ? '<span class="etag">需 Lv.' + a.req + '</span>' : '') + '</span>' +
+      '<span class="emeta">成功率 <b>' + Math.round(rate * 100) + '%</b>（精通 +） · ' + fmtDur(a.time) + '/次 · 经验 <b>' + a.xp + '</b><br>' +
+      '报酬 💠' + a.gold[0] + '~' + a.gold[1] + ' · 产出：' + lootTxt + '<br>' +
+      '<span class="etag warn">被识破：罚 💠' + a.fine + ' · 伤 ' + a.dmg + ' · 眩晕 ' + a.stun + ' 秒 · 经验减半</span></span>' +
+      masteryHTML(a.id) + '</span>' +
+      '</div>';
+  });
+
+  html += '</div>';
+  return html;
 }
 
 function renderContent() {
@@ -641,6 +660,7 @@ function renderContent() {
   else if (id === 'cultivation') html += renderCultivation();
   else if (id === 'formation') html += renderFormation();
   else if (id === 'farming') html += renderFarming();
+  else if (id === 'thieving') html += renderThieving();
   else html += '<div class="secttl">可进行的活动</div>' + gatherEntries(ACTIONS[id] || [], id);
 
   html += currentBarHTML();

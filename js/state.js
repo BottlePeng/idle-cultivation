@@ -30,6 +30,7 @@ function defaultState() {
     actionWaiting: false,
 
     regenTimer: 0,      // 脱战回血计时
+    stun: 0,            // 眩晕剩余秒数（入世被识破时累积，期间无法开始新动作）
     taskTimer: 0,       // 任务检查计时
 
     tasks: {},          // taskId -> { done, claimed }
@@ -176,6 +177,7 @@ function mergeState(def, saved) {
   if (isFinite(saved.actionTimer)) out.actionTimer = Math.max(0, Number(saved.actionTimer));
   if (typeof saved.actionWaiting === 'boolean') out.actionWaiting = saved.actionWaiting;
   if (isFinite(saved.regenTimer)) out.regenTimer = Math.max(0, Number(saved.regenTimer));
+  if (isFinite(saved.stun)) out.stun = Math.max(0, Number(saved.stun));
 
   /* 任务 */
   if (saved.tasks && typeof saved.tasks === 'object') {

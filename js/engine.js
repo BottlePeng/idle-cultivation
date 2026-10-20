@@ -320,9 +320,52 @@ function masteryGain(def) {
   return Math.max(1, Math.round(def.xp * CONFIG.MASTERY_XP_RATIO * (1 + formBonus('mastery'))));
 }
 
+/* 入世（红尘历练）单次体验结算：参考梅尔沃盗窃——
+   成功得灵石与掉落；失败被罚灵石、受伤（保底 1 点生命，凡人伤不了修士性命）并眩晕中断。 */
+function thievingCycle(def) {
+  /* 精通每级 +0.2% 成功率（上限 95%），越干越熟 */
+  const m = masteryOf(def.id);
+  const rate = Math.min(0.95, def.rate + m.lvl * 0.002);
+
+  if (Math.random() >= rate) {
+    const fine = Math.min(state.gold, def.fine || 0);
+    state.gold -= fine;
+    state.hp = Math.max(1, state.hp - (def.dmg || 0));
+    state.stun = def.stun || 3;
+    addXp('thieving', Math.round(def.xp * 0.5));
+    logMsg('「' + def.name + '」被识破！被罚 💠 ' + fine + ' 还挨了顿揍，晕了 ' + state.stun + ' 秒。', 'bad');
+    return false;   /* 返回 false → 中断动作槽 */
+  }
+
+  const gold = Math.round(randInt(def.gold[0], def.gold[1]) * (1 + formBonus('gold')));
+  state.gold += gold;
+
+  const got = [];
+  const lost = [];
+  const dropMul = 1 + formBonus('drop');
+  const dchance = doubleChance(def.id, 'thieving');
+  def.loot.forEach(function (l) {
+    if (Math.random() >= Math.min(1, l.chance * dropMul)) return;
+    let qty = l.qty || 1;
+    let bonus = '';
+    if (Math.random() < dchance) { qty *= 2; bonus = '（精通·双倍）'; }
+    if (invAdd(l.id, qty)) got.push(qty + ' × ' + itemIcon(l.id) + itemName(l.id) + bonus);
+    else lost.push(itemName(l.id));
+  });
+
+  addXp('thieving', def.xp);
+  addMastery(def.id, masteryGain(def));
+  logMsg('「' + def.name + '」体验归来：灵石 +' + gold + (got.length ? '，' + got.join('、') : ''), 'gold');
+  if (lost.length) logMsg('背包已满，' + lost.join('、') + ' 只好忍痛丢弃。', 'warn');
+  return true;
+}
+
 /* 结算一次动作完成，返回 false 表示应中断 */
 function completeActivity(act, def) {
   const skillId = act.skill;
+
+  /* --- 入世：概率判定成败 --- */
+  if (skillId === 'thieving') return thievingCycle(def);
 
   /* --- 配方类（有消耗） --- */
   if (def.in && def.in.length) {
@@ -548,6 +591,12 @@ function growPlots(dt) {
 }
 
 function passiveTick(dt) {
+  /* 眩晕倒计时（入世被识破）：期间无法开始新动作，离线同样推进 */
+  if (state.stun > 0) {
+    state.stun = Math.max(0, state.stun - dt);
+    if (state.stun === 0) logMsg('缓过神来，可以继续行动了。', 'info');
+  }
+
   /* 灵力自然凝聚（不占用动作槽，受聚灵阵加成） */
   state.spirit += CONFIG.SPIRIT_PER_SEC * (1 + formBonus('spirit')) * dt;
 
@@ -696,6 +745,9 @@ function startAction(skillId, actionId) {
   const def = findActivity(skillId, actionId);
   if (!def) return;
 
+  /* 眩晕中无法开始新动作 */
+  if (state.stun > 0) { logMsg('眩晕中，还需 ' + Math.ceil(state.stun) + ' 秒才能行动。', 'warn'); return; }
+
   /* 已经在该动作 → 视为停止 */
   if (state.action && state.action.skill === skillId && state.action.id === actionId) {
     stopAction();
@@ -731,6 +783,9 @@ function stopAction(silent) {
 function startCombat(monsterId) {
   const m = findMonster(monsterId);
   if (!m) return;
+
+  /* 眩晕中无法进入战斗 */
+  if (state.stun > 0) { logMsg('眩晕中，还需 ' + Math.ceil(state.stun) + ' 秒才能行动。', 'warn'); return; }
 
   /* 再次点击同一目标 → 停止 */
   if (state.action && state.action.skill === 'combat' && state.action.id === monsterId) {
