@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>仙途挂机 · Idle Cultivation</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+
+<body>
+  <div id="app">
+    <!-- ============ 顶栏：资源与生命 ============ -->
+    <header id="topbar">
+      <div class="brand">
+        <span class="logo">☯</span>
+        <div class="brandtext">
+          <h1>仙途挂机</h1>
+          <small>Idle Cultivation</small>
+        </div>
+      </div>
+
+      <div class="resbar" id="resBar"></div>
+
+      <div class="hpwrap">
+        <div class="bar hpbar"><i id="hpFill"></i><span id="hpText">--</span></div>
+        <button class="btn ghost small" data-act="heal">灵气疗伤 (25 灵力)</button>
+      </div>
+
+      <div class="topright">
+        <button class="btn ghost small" data-act="save">保存</button>
+        <button class="btn ghost small danger" data-act="reset">重开</button>
+      </div>
+    </header>
+
+    <!-- ============ 主体：左技能 / 中内容 / 右角色 ============ -->
+    <main>
+      <nav id="sidebar"></nav>
+
+      <section id="content" class="scroll"></section>
+
+      <aside id="right" class="scroll">
+        <div class="card" id="charCard"></div>
+        <div class="card">
+          <h3>装备</h3>
+          <div id="equipList"></div>
+        </div>
+        <div class="card logcard">
+          <h3>见闻 <button class="mini" data-act="clearlog">清空</button></h3>
+          <div id="logList" class="scroll"></div>
+        </div>
+      </aside>
+    </main>
+  </div>
+
+  <div id="toast" class="hidden"></div>
+  <div id="invPopover" class="hidden"></div>
+
+  <script src="js/data.js"></script>
+  <script src="js/state.js"></script>
+  <script src="js/engine.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/main.js"></script>
+</body>
+
+</html>
