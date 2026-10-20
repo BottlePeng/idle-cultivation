@@ -244,4 +244,4 @@ setInterval(saveState,        AUTOSAVE_MS) // 自动存档
 
 ## 9. 附：机制文档索引
 
-见 [README.md](./README.md#文档索引)。
+见根目录 [README.md](../README.md#文档索引)。
