@@ -18,7 +18,7 @@ function defaultState() {
     hp: CONFIG.BASE_HP,
     inv: { fish_qing: 3, log_qing: 2, herb_juqi: 2 },   // 一点起步物资
     equip: { weapon: null, armor: null, helmet: null, boots: null, amulet: null, ring: null },
-    root: rollRoot(),   // 灵根资质
+    insight: 0,         // 悟性：每点 修炼速度 +1% / 突破成功率 +1%（悟道丹提升）
     skills: {},
     mastery: {},        // 精通表：actionId -> { lvl, xp }
     formations: {},     // 阵法表：formId -> { levels: [各阵纹等级] }
@@ -86,8 +86,8 @@ function mergeState(def, saved) {
     if (isFinite(saved[k])) out[k] = Math.max(0, Number(saved[k]));
   });
   if (isFinite(saved.lastSave)) out.lastSave = Number(saved.lastSave);
-  if (typeof saved.root === 'string' && ROOTS[saved.root]) out.root = saved.root;
-  else out.root = rollRoot();
+  /* 悟性（旧存档的 root 资质字段已废弃，直接忽略） */
+  if (isFinite(saved.insight)) out.insight = Math.max(0, Math.floor(Number(saved.insight)));
 
   if (saved.inv && typeof saved.inv === 'object') {
     out.inv = {};

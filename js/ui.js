@@ -289,7 +289,6 @@ function renderAlchemy() {
 function renderCultivation() {
   const s = state.skills.cultivation;
   const r = realmInfo(s.lvl);
-  const root = ROOTS[state.root];
   const bp = breakPreview();
   const li = levelInfo('cultivation');
 
@@ -301,8 +300,18 @@ function renderCultivation() {
     '<div class="rdesc">' + r.realmDesc + ' · 第 ' + (r.stageIndexInRealm + 1) + '/' + r.layerCount + ' 阶</div>' +
     '<div class="bar rbar"><i data-realmbar style="width:' + (li.pct * 100).toFixed(1) + '%"></i></div>' +
     '<div class="rsub"><span data-cultxp></span>' +
-    ' · 灵根 ' + root.icon + root.name + '（修炼 ×' + root.speed + '，突破 ' + (root.breakBonus >= 0 ? '+' : '') + Math.round(root.breakBonus * 100) + '%）</div>' +
+    ' · 悟性 ' + state.insight + '（每点 修炼+1% / 突破+1%）</div>' +
     '</div></div>';
+
+  /* 五行灵根：属性值 = 对应生计的技能等级 */
+  html += '<div class="secttl">灵根五行</div><div class="wxgrid">';
+  WUXING.forEach(function (w) {
+    html += '<div class="wxcard" style="--wc:' + w.color + '" title="' + w.desc + '">' +
+      '<span class="wxicon">' + w.icon + '</span>' +
+      '<div class="wxmain"><b>' + w.name + '灵根</b><br><small>Lv.' + state.skills[w.skill].lvl + ' · ' + SKILLS[w.skill].name + '</small></div>' +
+      '</div>';
+  });
+  html += '</div>';
 
   /* 突破区 */
   html += '<div class="secttl">冲击境界</div>';
@@ -319,7 +328,7 @@ function renderCultivation() {
     html += '<div class="breakbox' + (canBreak ? ' ready' : '') + '">' +
       '<div class="btitle">下一境界：<b>' + bp.next.full + '</b>' + (bp.boundary ? '<span class="etag warn">跨大境界</span>' : '') + '</div>' +
       '<div class="reqs">' + rows.join('') + '</div>' +
-      '<div class="bnote">突破成功率 <b>' + Math.round(bp.rate * 100) + '%</b>（基础 ' + Math.round((bp.rate - root.breakBonus) * 100) + '% + 资质 ' + (root.breakBonus >= 0 ? '+' : '') + Math.round(root.breakBonus * 100) + '%）。失败将损失 ' + Math.round(CONFIG.BREAK_FAIL_LOSS * 100) + '% 修为。</div>' +
+      '<div class="bnote">突破成功率 <b>' + Math.round(bp.rate * 100) + '%</b>（基础 ' + Math.round((bp.rate - state.insight * 0.01) * 100) + '% + 悟性 +' + state.insight + '%）。失败将损失 ' + Math.round(CONFIG.BREAK_FAIL_LOSS * 100) + '% 修为。</div>' +
       '<button class="btn break-btn' + (canBreak ? '' : ' disabled') + '" data-act="break">' +
       (bp.xpOk ? '冲击突破' : '修为未满') + '</button>' +
       '</div>';
@@ -674,7 +683,6 @@ function renderContent() {
 function renderCharacter() {
   const st = calcStats();
   const r = realmInfo(state.skills.cultivation.lvl);
-  const root = ROOTS[state.root];
 
   const foodOpts = ['<option value="auto"' + (state.ui.eatFood === 'auto' ? ' selected' : '') + '>自动（回复最高）</option>'];
   Object.keys(state.inv).forEach(function (id) {
@@ -690,9 +698,9 @@ function renderCharacter() {
 
   setHTML('#charCard',
     '<h3>角色</h3>' +
-    '<div class="rootline" style="--rc:' + root.color + '"><span class="rico">' + root.icon + '</span>' +
-    '<span><b>' + root.name + '</b><br><small>' + root.desc + '</small></span></div>' +
-    '<div class="statline">境界 <b>' + r.full + '</b> · 修炼 ×' + root.speed + ' · 突破 ' + (root.breakBonus >= 0 ? '+' : '') + Math.round(root.breakBonus * 100) + '%</div>' +
+    '<div class="statline">境界 <b>' + r.full + '</b> · 悟性 <b>' + state.insight + '</b>（修炼 +' + state.insight + '% / 突破 +' + state.insight + '%）</div>' +
+    '<div class="statline muted">灵根五行：' +
+    WUXING.map(function (w) { return w.icon + w.name + '·' + SKILLS[w.skill].name + ' Lv.' + state.skills[w.skill].lvl; }).join('　') + '</div>' +
     '<div class="statline">生命上限 ' + st.hp + ' · 伤害 ' + st.atkMin + '~' + st.atkMax +
     ' · 命中 ' + st.hit + ' · 闪避 ' + st.ev + ' · 减伤 ' + Math.round(st.dr * 100) + '%</div>' +
     '<div class="aeconfig">' +

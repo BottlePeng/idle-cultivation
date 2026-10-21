@@ -100,7 +100,7 @@ function handleClick(e) {
     case 'heal': healWithSpirit(); break;
     case 'save': saveState(); showToast('<h4>💾 已保存进度</h4>'); break;
     case 'reset':
-      if (window.confirm('确定要重开吗？当前所有进度将被清空，并重抽灵根。')) {
+      if (window.confirm('确定要重开吗？当前所有进度将被清空。')) {
         resetGame();
         state.ui.active = 'woodcutting';
         hideToast();

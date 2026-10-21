@@ -209,7 +209,8 @@ function xpMul(skillId) {
   const grp = XP_GROUP[skillId] || (skillId === 'formation' ? null : 'gather');
   const fb = grp ? (1 + formBonus('xp_' + grp)) : 1;
   if (skillId === 'cultivation') {
-    return ROOTS[state.root].speed * (1 + ri * CONFIG.CULT_XP_PER_REALM) * fb;
+    /* 悟性每点 +1% 修为收益，叠加境界与阵法加成 */
+    return (1 + ri * CONFIG.CULT_XP_PER_REALM) * (1 + state.insight * 0.01) * fb;
   }
   return (1 + ri * CONFIG.XP_REALM_BONUS) * fb;
 }
@@ -684,6 +685,9 @@ function usePill(itemId) {
     const heal = Math.round(maxHp() * 0.65);
     state.hp = Math.min(maxHp(), state.hp + heal);
     logMsg('服下「' + it.name + '」，恢复 ' + heal + ' 点生命。', 'heal');
+  } else if (it.use === 'wudao') {
+    state.insight += 1;
+    logMsg('服下「' + it.name + '」，悟性提升至 ' + state.insight + '（修炼 +' + state.insight + '% / 突破 +' + state.insight + '%）。', 'levelup');
   }
   return true;
 }
@@ -808,8 +812,7 @@ function breakPreview() {
   const s = state.skills.cultivation;
   const bi = breakInfo(s.lvl - 1);
   if (!bi) return { max: true };
-  const root = ROOTS[state.root];
-  const rate = clamp(bi.rate + root.breakBonus, 0.05, 0.98);
+  const rate = clamp(bi.rate + state.insight * 0.01, 0.05, 0.98);
   return {
     max: false,
     need: bi.need,
@@ -840,7 +843,7 @@ function breakthrough() {
   if (bi.pill) invRemove(bi.pill, 1);
   if (bi.gold > 0) state.gold -= bi.gold;
 
-  const rate = clamp(bi.rate + ROOTS[state.root].breakBonus, 0.05, 0.98);
+  const rate = clamp(bi.rate + state.insight * 0.01, 0.05, 0.98);
   if (Math.random() < rate) {
     s.lvl += 1;
     s.xp = 0;

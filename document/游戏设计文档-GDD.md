@@ -1,6 +1,6 @@
 # 游戏设计文档（GDD）· 仙途挂机
 
-> 版本：v3（含阵法、灵植、入世）｜ 最后更新：随代码同步 ｜ 对应代码：`js/data.js` `js/state.js` `js/engine.js` `js/ui.js` `js/main.js`
+> 版本：v4（含入世、五行灵根与悟性）｜ 最后更新：随代码同步 ｜ 对应代码：`js/data.js` `js/state.js` `js/engine.js` `js/ui.js` `js/main.js`
 
 ---
 
@@ -50,9 +50,9 @@
 | --- | --- | --- | --- | --- |
 | 1 | 动作槽 | 全局唯一动作，`startAction/stopAction/cycleTick` | `state.action` | [动作槽与离线收益](./机制-动作槽与离线收益.md) |
 | 2 | 离线收益 | `simulateOffline` 以 0.5s 步长快进 `tick` | `CONFIG.OFFLINE_CAP_H` | [动作槽与离线收益](./机制-动作槽与离线收益.md) |
-| 3 | 技能 | 9 技能，经验曲线 `base*lvl^pow` | `SKILLS/SKILL_ORDER` | [技能与精通](./机制-技能与精通.md) |
+| 3 | 技能 | 10 技能，经验曲线 `base*lvl^pow` | `SKILLS/SKILL_ORDER` | [技能与精通](./机制-技能与精通.md) |
 | 4 | 精通 | 每个动作独立成长，上限 99 | `state.mastery` | [技能与精通](./机制-技能与精通.md) |
-| 5 | 修炼境界 | 灵根 + 33 阶境界 + 突破 | `ROOTS/REALM_DEFS` | [修炼与境界](./机制-修炼与境界.md) |
+| 5 | 修炼境界 | 五行灵根 + 悟性 + 33 阶境界 + 突破 | `WUXING/REALM_DEFS` | [修炼与境界](./机制-修炼与境界.md) |
 | 6 | 战斗 | 命中制、属性、妖兽、自动进食 | `MONSTERS/CONFIG` | [战斗系统](./机制-战斗系统.md) |
 | 7 | 生产技能 | 伐木 / 钓鱼 / 采矿 / 炼器 / 炼丹 | `ACTIONS/RECIPES` | [生产技能](./机制-生产技能.md) |
 | 8 | 装备 | 六部位法宝，属性加成 | `ITEMS.type='equip'` | [装备系统](./机制-装备系统.md) |
@@ -139,7 +139,7 @@ state
 ├─ hp               当前生命
 ├─ inv{ id:qty }    背包：物品种类 → 数量
 ├─ equip{ slot:id } 六部位装备
-├─ root             灵根资质 id
+├─ insight          悟性（每点 修炼速度+1% / 突破成功率+1%）
 ├─ skills{ id:{lvl,xp} }   各技能等级与经验
 │   └─ combat 额外: monster/target/playerTimer/monsterTimer/respawn
 │   └─ cultivation 额外: capped（瓶颈提示标记）
@@ -177,7 +177,7 @@ state
 
 | 层 | 文件 | 职责 |
 | --- | --- | --- |
-| 数据层 | `js/data.js` | 纯配置（`CONFIG`/`ITEMS`/`SKILLS`/`ACTIONS`/`RECIPES`/`MONSTERS`/`FORMATIONS`/`FARM_SEEDS`/`TASKS`/`SHOPS`/`ROOTS`/`REALM_DEFS`）+ 纯函数工具 |
+| 数据层 | `js/data.js` | 纯配置（`CONFIG`/`ITEMS`/`SKILLS`/`ACTIONS`/`RECIPES`/`MONSTERS`/`FORMATIONS`/`FARM_SEEDS`/`TASKS`/`SHOPS`/`WUXING`/`REALM_DEFS`）+ 纯函数工具 |
 | 状态层 | `js/state.js` | 唯一存档对象 `state`、`defaultState`、`mergeState`、`save/load/reset` |
 | 引擎层 | `js/engine.js` | `tick(dt)` 唯一时间入口；动作 / 战斗 / 被动 / 精通 / 任务 / 离线结算 |
 | 界面层 | `js/ui.js` | DOM 渲染 + 增量刷新（签名缓存） |

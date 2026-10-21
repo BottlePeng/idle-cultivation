@@ -121,6 +121,7 @@ const ITEMS = {
   pill_ying: { name: '化婴丹', icon: '🔵', type: 'pill', use: 'break', value: 2200, desc: '冲击元婴期所必需，突破时消耗。' },
   pill_shen: { name: '化神丹', icon: '⚪', type: 'pill', use: 'break', value: 6000, desc: '冲击化神期所必需，突破时消耗。' },
   pill_xu: { name: '炼虚丹', icon: '🌑', type: 'pill', use: 'break', value: 16000, desc: '冲击炼虚期所必需，突破时消耗。' },
+  pill_wudao: { name: '悟道丹', icon: '🟠', type: 'pill', use: 'wudao', value: 800, desc: '服用后悟性 +1：修炼速度 +1%，突破成功率 +1%。' },
 
   /* 装备（法宝 / 灵甲 / 法冠 / 灵靴 / 玉佩 / 灵戒） */
   w_tie: { name: '铁剑', icon: '🗡️', type: 'equip', slot: 'weapon', atk: 6, value: 40, desc: '凡铁打造。攻击 +6。' },
@@ -250,7 +251,8 @@ const RECIPES = {
     { id: 'pl_ning', cat: 'pill', name: '炼制 · 凝元丹', icon: '🟣', req: 22, time: 8.0, xp: 130, in: [{ id: 'herb_ning', qty: 3 }, { id: 'herb_zhuji', qty: 2 }, { id: 'ore_ling', qty: 3 }], out: { id: 'pill_ning', qty: 1 } },
     { id: 'pl_ying', cat: 'pill', name: '炼制 · 化婴丹', icon: '🔵', req: 32, time: 10.0, xp: 260, in: [{ id: 'herb_ying', qty: 3 }, { id: 'herb_ning', qty: 2 }, { id: 'ore_ling', qty: 5 }], out: { id: 'pill_ying', qty: 1 } },
     { id: 'pl_shen', cat: 'pill', name: '炼制 · 化神丹', icon: '⚪', req: 42, time: 12.0, xp: 480, in: [{ id: 'herb_ying', qty: 4 }, { id: 'herb_ning', qty: 3 }, { id: 'ingot_xuan', qty: 2 }, { id: 'ore_ling', qty: 8 }], out: { id: 'pill_shen', qty: 1 } },
-    { id: 'pl_xu', cat: 'pill', name: '炼制 · 炼虚丹', icon: '🌑', req: 52, time: 14.0, xp: 800, in: [{ id: 'herb_ying', qty: 5 }, { id: 'herb_ning', qty: 4 }, { id: 'ingot_xuan', qty: 4 }, { id: 'ore_ling', qty: 12 }], out: { id: 'pill_xu', qty: 1 } }
+    { id: 'pl_xu', cat: 'pill', name: '炼制 · 炼虚丹', icon: '🌑', req: 52, time: 14.0, xp: 800, in: [{ id: 'herb_ying', qty: 5 }, { id: 'herb_ning', qty: 4 }, { id: 'ingot_xuan', qty: 4 }, { id: 'ore_ling', qty: 12 }], out: { id: 'pill_xu', qty: 1 } },
+    { id: 'pl_wudao', cat: 'pill', name: '炼制 · 悟道丹', icon: '🟠', req: 22, time: 10.0, xp: 160, in: [{ id: 'herb_zhuji', qty: 3 }, { id: 'herb_ning', qty: 1 }, { id: 'ore_ling', qty: 5 }], out: { id: 'pill_wudao', qty: 1 } }
   ]
 };
 
@@ -260,26 +262,24 @@ const RECIPES = {
 const MONSTERS = [
   { id: 'bandit', name: '山贼', icon: '🥷', lvl: 1, hp: 34, hit: 14, ev: 8, atkMin: 5, atkMax: 9, dr: 0.02, interval: 2.6, xp: 14, gold: [5, 11], respawn: 1.5, drops: [{ id: 'hide', chance: 0.45, qty: 1 }] },
   { id: 'wolf', name: '灵狼', icon: '🐺', lvl: 5, hp: 80, hit: 26, ev: 14, atkMin: 9, atkMax: 15, dr: 0.05, interval: 2.4, xp: 34, gold: [14, 26], respawn: 2.0, drops: [{ id: 'hide', chance: 0.6, qty: 1 }, { id: 'herb', chance: 0.25, qty: 1 }] },
-  { id: 'golem', name: '铁甲妖兽', icon: '🦾', lvl: 12, hp: 210, hit: 45, ev: 10, atkMin: 16, atkMax: 24, dr: 0.25, interval: 3.0, xp: 82, gold: [40, 70], respawn: 3.0, drops: [{ id: 'ore_xuan', chance: 0.5, qty: 1 }, { id: 'ore_iron', chance: 0.7, qty: 2 }] },
-  { id: 'zombie', name: '古墓僵尸', icon: '🧟', lvl: 22, hp: 480, hit: 80, ev: 22, atkMin: 28, atkMax: 40, dr: 0.15, interval: 3.2, xp: 180, gold: [110, 180], respawn: 4.0, drops: [{ id: 'ore_ling', chance: 0.35, qty: 1 }, { id: 'herb', chance: 0.5, qty: 2 }] },
-  { id: 'demon', name: '魔道修士', icon: '👹', lvl: 35, hp: 1100, hit: 150, ev: 45, atkMin: 55, atkMax: 80, dr: 0.2, interval: 2.6, xp: 420, gold: [300, 480], respawn: 5.0, drops: [{ id: 'ore_ling', chance: 0.8, qty: 2 }, { id: 'ingot_xuan', chance: 0.5, qty: 2 }, { id: 'herb_zhuji', chance: 0.15, qty: 1 }] },
-  { id: 'demonking', name: '万妖王', icon: '👺', lvl: 50, hp: 3600, hit: 320, ev: 90, atkMin: 110, atkMax: 160, dr: 0.3, interval: 2.4, xp: 1400, gold: [900, 1500], respawn: 8.0, drops: [{ id: 'herb_ning', chance: 0.3, qty: 1 }, { id: 'herb_ying', chance: 0.15, qty: 1 }, { id: 'ingot_xuan', chance: 0.8, qty: 3 }] }
+  { id: 'golem', name: '铁甲妖兽', icon: '🦾', lvl: 12, hp: 210, hit: 45, ev: 10, atkMin: 16, atkMax: 24, dr: 0.25, interval: 3.0, xp: 82, gold: [40, 70], respawn: 3.0, drops: [{ id: 'ore_xuan', chance: 0.5, qty: 1 }, { id: 'ore_iron', chance: 0.7, qty: 2 }, { id: 'pill_wudao', chance: 0.03, qty: 1 }] },
+  { id: 'zombie', name: '古墓僵尸', icon: '🧟', lvl: 22, hp: 480, hit: 80, ev: 22, atkMin: 28, atkMax: 40, dr: 0.15, interval: 3.2, xp: 180, gold: [110, 180], respawn: 4.0, drops: [{ id: 'ore_ling', chance: 0.35, qty: 1 }, { id: 'herb', chance: 0.5, qty: 2 }, { id: 'pill_wudao', chance: 0.05, qty: 1 }] },
+  { id: 'demon', name: '魔道修士', icon: '👹', lvl: 35, hp: 1100, hit: 150, ev: 45, atkMin: 55, atkMax: 80, dr: 0.2, interval: 2.6, xp: 420, gold: [300, 480], respawn: 5.0, drops: [{ id: 'ore_ling', chance: 0.8, qty: 2 }, { id: 'ingot_xuan', chance: 0.5, qty: 2 }, { id: 'herb_zhuji', chance: 0.15, qty: 1 }, { id: 'pill_wudao', chance: 0.08, qty: 1 }] },
+  { id: 'demonking', name: '万妖王', icon: '👺', lvl: 50, hp: 3600, hit: 320, ev: 90, atkMin: 110, atkMax: 160, dr: 0.3, interval: 2.4, xp: 1400, gold: [900, 1500], respawn: 8.0, drops: [{ id: 'herb_ning', chance: 0.3, qty: 1 }, { id: 'herb_ying', chance: 0.15, qty: 1 }, { id: 'ingot_xuan', chance: 0.8, qty: 3 }, { id: 'pill_wudao', chance: 0.15, qty: 1 }] }
 ];
 
 /* =========================================================================
- * 灵根资质：影响修炼速度与突破成功率
+ * 灵根五行：属性值 = 对应生计的技能等级（成长映射，无独立数值）
+ *   金→炼器  木→伐木  水→钓鱼  火→炼丹  土→阵法
+ * 悟性：默认 0，服用悟道丹 +1（战斗掉落 / 炼丹炼制）；
+ *       每点悟性：修炼速度 +1%、突破成功率 +1%
  * ========================================================================= */
-const ROOTS = {
-  tian: { id: 'tian', name: '天灵根', icon: '🌟', speed: 1.7, breakBonus: 0.18, color: '#f2dda6', desc: '万年难遇的绝顶资质，修炼一日千里。' },
-  shuang: { id: 'shuang', name: '双灵根', icon: '✨', speed: 1.35, breakBonus: 0.09, color: '#8ad4ff', desc: '资质上佳，修行顺遂。' },
-  san: { id: 'san', name: '三灵根', icon: '🔹', speed: 1.15, breakBonus: 0.04, color: '#7dd8b8', desc: '中人之资，勤能补拙。' },
-  wei: { id: 'wei', name: '四灵根（伪灵根）', icon: '🔸', speed: 0.92, breakBonus: -0.03, color: '#8b97ad', desc: '资质粗劣，唯有以勤补天。' }
-};
-const ROOT_ROLL = [
-  { id: 'tian', w: 4 },
-  { id: 'shuang', w: 16 },
-  { id: 'san', w: 32 },
-  { id: 'wei', w: 48 }
+const WUXING = [
+  { id: 'metal', name: '金', icon: '⚔️', color: '#d9c47a', skill: 'crafting', desc: '金主锋锐，道在炼器。' },
+  { id: 'wood', name: '木', icon: '🌿', color: '#7dd8b8', skill: 'woodcutting', desc: '木主生发，道在伐木。' },
+  { id: 'water', name: '水', icon: '�', color: '#63a9e0', skill: 'fishing', desc: '水主流转，道在钓鱼。' },
+  { id: 'fire', name: '火', icon: '�', color: '#e08a6a', skill: 'alchemy', desc: '火主炼化，道在炼丹。' },
+  { id: 'earth', name: '土', icon: '⛰️', color: '#b58a5f', skill: 'formation', desc: '土主承载，道在阵法。' }
 ];
 
 /* =========================================================================
@@ -544,18 +544,6 @@ function itemName(id) { return ITEMS[id] ? ITEMS[id].name : id; }
 function itemIcon(id) { return ITEMS[id] ? ITEMS[id].icon : '❔'; }
 
 function randInt(a, b) { return a + Math.floor(Math.random() * (b - a + 1)); }
-
-/* 抽灵根：按权重随机 */
-function rollRoot() {
-  let total = 0;
-  ROOT_ROLL.forEach(function (r) { total += r.w; });
-  let pick = Math.random() * total;
-  for (let i = 0; i < ROOT_ROLL.length; i++) {
-    pick -= ROOT_ROLL[i].w;
-    if (pick <= 0) return ROOT_ROLL[i].id;
-  }
-  return 'wei';
-}
 
 function realmInfo(lvl) {
   const idx = Math.max(0, Math.min(Math.floor(lvl) - 1, STAGES.length - 1));
