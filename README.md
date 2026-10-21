@@ -8,6 +8,25 @@
 - **技术栈**：原生 HTML / CSS / JavaScript，无任何外部依赖与素材。
 - **代码结构**：`js/` 目录按「数据 / 状态 / 引擎 / 界面 / 入口」五层分离。
 
+## 打包桌面 exe
+
+使用 [Neutralino.js](https://neutralino.js.org/) 打包，**壳代码与游戏源码完全隔离**在 `packaging/neutralino/` 目录，不修改任何 JS/CSS/HTML。产物约 2.6 MB，依赖 Win10+ 的 WebView2 Runtime（系统自带）。
+
+```bash
+# 首次：安装依赖（仅需执行一次）
+cd packaging/neutralino
+npm install @neutralinojs/neu@latest @neutralinojs/lib@latest --registry https://registry.npmmirror.com
+npx neu update
+
+# 每次构建：一键脚本完成同步 + 打包
+node build.js
+# 产物在 packaging/neutralino/dist/仙途挂机/仙途挂机-win_x64.exe
+```
+
+> **说明**：`build.js` 会把 `index.html` + `css/` + `js/` + `document/` 同步到 `www/`，再用 `neu build --embed-resources` 把资源嵌进 exe。`www/` 是临时 staging 目录，不进 git。
+>
+> **切换其他打包方式**：`packaging/neutralino/` 整体独立，后续想换 Electron / Tauri / WebView2 C# 壳，直接在 `packaging/` 下新建子目录即可，互不干扰。
+
 ## 游戏内容一览
 
 - **十大技能**：伐木 · 钓鱼 · 采矿 · 炼器 · 炼丹 · 战斗 · 修炼 · 阵法 · 灵植 · 入世
