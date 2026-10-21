@@ -324,10 +324,21 @@ function renderCultivation() {
     if (bp.pill) rows.push('<span class="' + (bp.pillOk ? 'ok' : 'no') + '" data-breakpill="' + bp.pill + '"></span>');
     if (bp.gold > 0) rows.push('<span class="' + (bp.goldOk ? 'ok' : 'no') + '" data-breakgold data-need="' + bp.gold + '"></span>');
 
-    const canBreak = bp.xpOk && bp.pillOk && bp.goldOk;
+    let canBreak = bp.xpOk && bp.pillOk && bp.goldOk;
+    let wxNote = '';
+    if (bp.wx) {
+      const wlist = WUXING.map(function (w) {
+        const lvl = state.skills[w.skill].lvl;
+        const ok = lvl >= 100;
+        return '<span class="' + (ok ? 'ok' : 'no') + '">' + w.icon + w.name + ' ' + Math.min(100, lvl) + '/100</span>';
+      }).join(' ');
+      wxNote = '<div class="bnote">冲击炼虚大圆满需五行灵根全部 Lv.100：<br>' + wlist + '</div>';
+      canBreak = canBreak && bp.wx.ok;
+    }
     html += '<div class="breakbox' + (canBreak ? ' ready' : '') + '">' +
       '<div class="btitle">下一境界：<b>' + bp.next.full + '</b>' + (bp.boundary ? '<span class="etag warn">跨大境界</span>' : '') + '</div>' +
       '<div class="reqs">' + rows.join('') + '</div>' +
+      wxNote +
       '<div class="bnote">突破成功率 <b>' + Math.round(bp.rate * 100) + '%</b>（基础 ' + Math.round((bp.rate - state.insight * 0.01) * 100) + '% + 悟性 +' + state.insight + '%）。失败将损失 ' + Math.round(CONFIG.BREAK_FAIL_LOSS * 100) + '% 修为。</div>' +
       '<button class="btn break-btn' + (canBreak ? '' : ' disabled') + '" data-act="break">' +
       (bp.xpOk ? '冲击突破' : '修为未满') + '</button>' +

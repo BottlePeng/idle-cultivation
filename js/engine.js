@@ -822,10 +822,21 @@ function breakPreview() {
     pillOk: !bi.pill || invCount(bi.pill) >= 1,
     gold: bi.gold,
     goldOk: state.gold >= bi.gold,
+    wx: (state.skills.cultivation.lvl === 32) ? wuxingNeed() : null,
     rate: rate,
     boundary: bi.boundary,
     next: realmInfo(s.lvl + 1)
   };
+}
+
+/* 五行灵根需求：仅炼虚后期冲击炼虚大圆满（lvl 32→33）时生效 */
+function wuxingNeed() {
+  if (state.skills.cultivation.lvl !== 32) return null;
+  const req = WUXING.map(function (w) {
+    return { w: w, lvl: state.skills[w.skill].lvl };
+  });
+  const lacks = req.filter(function (r) { return r.lvl < 100; });
+  return { lacks: lacks, ok: lacks.length === 0 };
 }
 
 function breakthrough() {
@@ -838,6 +849,12 @@ function breakthrough() {
   }
   if (bi.pill && invCount(bi.pill) < 1) { logMsg('突破需「' + itemName(bi.pill) + '」。', 'warn'); return false; }
   if (bi.gold > 0 && state.gold < bi.gold) { logMsg('突破需 ' + bi.gold + ' 灵石。', 'warn'); return false; }
+  const wx = wuxingNeed();
+  if (wx && !wx.ok) {
+    const txt = wx.lacks.map(function (r) { return r.w.name + '·' + SKILLS[r.w.skill].name + ' Lv.' + r.lvl; }).join('、');
+    logMsg('炼虚大圆满需五行灵根全部 Lv.100，尚缺：' + txt + '。', 'warn');
+    return false;
+  }
 
   /* 消耗（无论成败均消耗） */
   if (bi.pill) invRemove(bi.pill, 1);
