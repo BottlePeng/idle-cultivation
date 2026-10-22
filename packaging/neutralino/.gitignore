@@ -1,7 +1,0 @@
-# Neutralino 打包产物与临时目录
-packaging/neutralino/node_modules/
-packaging/neutralino/www/
-packaging/neutralino/dist/
-packaging/neutralino/resources.neu
-packaging/neutralino/bin/
-packaging/neutralino/extensions/

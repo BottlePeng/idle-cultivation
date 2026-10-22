@@ -1,10 +1,5 @@
-# 打包产物与临时目录
-packaging/**/node_modules/
-packaging/**/www/
-packaging/**/dist/
-packaging/**/bin/
-packaging/**/extensions/
-packaging/**/resources.neu
+# 打包目录整体忽略（壳代码与产物）
+packaging/
 
 # 存档调试
 *.log
