@@ -26,6 +26,9 @@ function handleClick(e) {
     /* 选择妖兽 */
     case 'monster': startCombat(id); break;
 
+    /* 进入秘境 */
+    case 'dungeon': startDungeon(id); break;
+
     case 'stop': stopAction(); break;
 
     /* 突破 */
@@ -43,10 +46,16 @@ function handleClick(e) {
     case 'equip': equipItem(id); hideInvPopover(); break;
     case 'unequip': unequipSlot(id); break;
 
-    /* 背包格子：出售模式直接卖 1 个，否则弹出操作菜单 */
+    /* 背包格子：出售模式按所选数量直接出售，否则弹出操作菜单 */
     case 'invslot':
-      if (state.ui.invSellMode) { sellItem(id, 1); hideInvPopover(); }
+      if (state.ui.invSellMode) { sellItem(id, state.ui.sellQty); hideInvPopover(); }
       else { showInvPopover(id, el); return; }   /* return：不重绘整树，避免弹层被销毁 */
+      break;
+
+    /* 选择出售数量（-1 = 全部） */
+    case 'sellqty':
+      state.ui.sellQty = Number(el.dataset.qty);
+      hideInvPopover();
       break;
 
     case 'togglesell':

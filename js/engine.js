@@ -201,7 +201,7 @@ function speedMul() {
 }
 
 /* 技能 → 阵法经验加成通道（阵法自身不受加成） */
-const XP_GROUP = { cultivation: 'cult', combat: 'combat', crafting: 'craft', farming: 'gather' };
+const XP_GROUP = { cultivation: 'cult', combat: 'combat', crafting: 'craft', smelting: 'craft', alchemy: 'craft', herbalism: 'gather', farming: 'gather' };
 
 /* 经验/修为加成 */
 function xpMul(skillId) {
@@ -223,6 +223,7 @@ function levelInfo(skillId) {
     const need = bi ? bi.need : s.xp;
     return { lvl: s.lvl, xp: s.xp, need: need, pct: need > 0 ? Math.min(1, s.xp / need) : 1, max: !bi };
   }
+  if (s.lvl >= CONFIG.SKILL_CAP) return { lvl: s.lvl, xp: 0, need: 0, pct: 1, max: true };
   const need = xpNeed(skillId, s.lvl);
   return { lvl: s.lvl, xp: s.xp, need: need, pct: Math.min(1, s.xp / need), max: false };
 }
@@ -248,11 +249,12 @@ function addXp(skillId, amount) {
 
   s.xp += gain;
   let gained = 0;
-  while (s.xp >= xpNeed(skillId, s.lvl) && gained < 500) {
+  while (s.xp >= xpNeed(skillId, s.lvl) && gained < 500 && s.lvl < CONFIG.SKILL_CAP) {
     s.xp -= xpNeed(skillId, s.lvl);
     s.lvl += 1;
     gained += 1;
   }
+  if (s.lvl >= CONFIG.SKILL_CAP) s.xp = 0;   /* 到达上限后多余经验清空 */
   if (gained > 0) onLevelUp(skillId, gained);
 }
 
@@ -263,6 +265,9 @@ function onLevelUp(skillId, n) {
     logMsg('战斗等级提升至 Lv.' + s.lvl + '，攻防命闪增强。', 'levelup');
   } else {
     logMsg(SKILLS[skillId].name + ' 等级提升至 Lv.' + s.lvl, 'levelup');
+  }
+  if (s.lvl >= CONFIG.SKILL_CAP) {
+    logMsg('🎉 ' + (SKILLS[skillId] ? SKILLS[skillId].name : '战斗') + ' 已达上限 Lv.' + CONFIG.SKILL_CAP + '！', 'levelup');
   }
 }
 
@@ -397,6 +402,7 @@ function completeActivity(act, def) {
     if (Math.random() < doubleChance(def.id, skillId)) { qty *= 2; bonus = '（精通·双倍）'; }
     invAdd(out.id, qty);
     state.stats.gathered += 1;
+    state.stats.perSkill[skillId] = (state.stats.perSkill[skillId] || 0) + 1;
     if (!OFFLINE_MODE) logMsg('获得 ' + qty + ' × ' + itemIcon(out.id) + itemName(out.id) + bonus, 'gather');
   }
   /* 观星产出星砂：同样享受额外产出加成 */
@@ -405,10 +411,11 @@ function completeActivity(act, def) {
     if (Math.random() < doubleChance(def.id, skillId)) { sd *= 2; bonus = '（精通·双倍）'; }
     state.stardust += sd;
     state.stats.gathered += 1;
+    state.stats.perSkill[skillId] = (state.stats.perSkill[skillId] || 0) + 1;
     if (!OFFLINE_MODE) logMsg('观星所得 💫 星砂 ×' + sd + bonus, 'gather');
   }
-  /* 炼丹采药：低概率掉落该药材对应的种子（梅尔沃式，花时间换种子） */
-  if (skillId === 'alchemy' && out.id) {
+  /* 采药（herbalism）：低概率掉落该药材对应的种子（梅尔沃式，花时间换种子） */
+  if (skillId === 'herbalism' && out.id) {
     FARM_SEEDS.forEach(function (seed) {
       if (seed.dropBy === def.id && Math.random() < 0.30) {
         invAdd(seed.id, 1);
@@ -437,6 +444,8 @@ function recipeOutText(out) {
 function cycleTick(dt) {
   const act = state.action;
   if (!act) return;
+  /* 战斗动作由 combatTick 独立驱动，不能在这里被当作采集/制作查表，否则会被判为无效动作清空 */
+  if (act.skill === 'combat') return;
 
   const def = findActivity(act.skill, act.id);
   if (!def) { state.action = null; state.actionTimer = 0; return; }
@@ -480,14 +489,65 @@ function rollRange(min, max) {
   return Math.round(min + Math.random() * (max - min));
 }
 
+/* ---------------------------------------------------------------- 秘境 */
+/* 数量简写（万级）：引擎层不依赖 ui.js 的 fmtNum */
+function fmtCount(n) {
+  n = Math.floor(n);
+  if (n >= 10000) return (n / 10000).toFixed(n >= 100000 ? 0 : 1) + ' 万';
+  return String(n);
+}
+
+/* 解锁进度：返回 { unlocked, have, need, text }；无 unlock 字段即默认开放 */
+function dungeonUnlockInfo(dg) {
+  const u = dg.unlock;
+  if (!u) return { unlocked: true, have: 1, need: 1, text: '' };
+  if (u.type === 'gatherSkill') {
+    const have = Math.floor(state.stats.perSkill[u.skill] || 0);
+    const sk = SKILLS[u.skill] || { name: u.skill };
+    return { unlocked: have >= u.n, have: have, need: u.n, text: sk.name + '累计采集 ' + u.n + ' 次' };
+  }
+  if (u.type === 'level') {
+    const have = state.skills[u.skill] ? state.skills[u.skill].lvl : 1;
+    const sk = SKILLS[u.skill] || { name: u.skill };
+    return { unlocked: have >= u.lvl, have: have, need: u.lvl, text: sk.name + '达到 Lv.' + u.lvl };
+  }
+  if (u.type === 'kills') {
+    const have = state.stats.kills;
+    return { unlocked: have >= u.n, have: have, need: u.n, text: '累计击杀 ' + u.n + ' 只妖兽' };
+  }
+  return { unlocked: false, have: 0, need: 1, text: '未知条件' };
+}
+
+/* 通关一轮：发放额外奖励并累计通关次数 */
+function dungeonReward(dg) {
+  const gold = Math.round(dg.reward.gold * (1 + formBonus('gold')));
+  state.gold += gold;
+  if (dg.reward.xp) addXp('combat', dg.reward.xp);
+  const got = [];
+  (dg.reward.items || []).forEach(function (it) {
+    invAdd(it.id, it.qty);
+    got.push(it.qty + ' × ' + itemIcon(it.id) + itemName(it.id));
+  });
+  state.dungeons[dg.id] = (state.dungeons[dg.id] || 0) + 1;
+  logMsg('通关秘境「' + dg.name + '」！灵石 +' + fmtCount(gold) + (got.length ? '，奖励：' + got.join('、') : '') +
+    '（累计通关 ' + state.dungeons[dg.id] + ' 次）', 'good');
+}
+
 function spawnTarget() {
   const c = state.skills.combat;
   const m = findMonster(c.monster);
   if (!m) { c.target = null; return; }
+  const dg = c.dungeon ? findDungeon(c.dungeon) : null;
+  /* 秘境加成：基础倍率 ×（1 + 8% × 当前波次），越深越强 */
+  const wave = dg ? 1 + 0.08 * c.floor : 1;
+  const hpMul = (dg ? dg.scale.hp : 1) * wave;
+  const atkMul = (dg ? dg.scale.atk : 1) * wave;
   c.target = {
     id: m.id, name: m.name, icon: m.icon, lvl: m.lvl,
-    hp: m.hp, maxHp: m.hp, hit: m.hit, ev: m.ev,
-    atkMin: m.atkMin, atkMax: m.atkMax, dr: m.dr, interval: m.interval
+    hp: Math.round(m.hp * hpMul), maxHp: Math.round(m.hp * hpMul), hit: m.hit, ev: m.ev,
+    atkMin: Math.round(m.atkMin * atkMul), atkMax: Math.round(m.atkMax * atkMul),
+    dr: m.dr, interval: m.interval,
+    dungeon: dg ? dg.id : null, floor: dg ? c.floor : -1
   };
   c.playerTimer = 0;
   c.monsterTimer = 0;
@@ -495,6 +555,11 @@ function spawnTarget() {
 
 function combatTick(dt) {
   const c = state.skills.combat;
+  /* 动作槽不在战斗 → 战斗必须停止（防止切换技能后仍在后台打怪） */
+  if (!state.action || state.action.skill !== 'combat') {
+    if (c.monster || c.target || c.dungeon) cancelCombat();
+    return;
+  }
   if (!c.monster) { c.target = null; return; }
 
   if (!c.target || c.target.hp <= 0) {
@@ -540,10 +605,11 @@ function onMonsterKilled(target) {
   const c = state.skills.combat;
   if (!m) { c.target = null; return; }
 
-  const gold = Math.round(randInt(m.gold[0], m.gold[1]) * (1 + formBonus('gold')));
+  const dg = c.dungeon ? findDungeon(c.dungeon) : null;
+  const gold = Math.round(randInt(m.gold[0], m.gold[1]) * (dg ? dg.scale.gold : 1) * (1 + formBonus('gold')));
   state.gold += gold;
   state.stats.kills += 1;
-  addXp('combat', m.xp);
+  addXp('combat', Math.round(m.xp * (dg ? dg.scale.xp : 1)));
   addMastery(m.id, Math.max(1, Math.round(m.xp * CONFIG.MASTERY_XP_RATIO * (1 + formBonus('mastery')))));
 
   const drops = [];
@@ -555,25 +621,41 @@ function onMonsterKilled(target) {
     }
   });
 
-  logMsg('击败「' + m.name + '」，灵石 +' + gold + (drops.length ? '，掉落：' + drops.join('、') : ''), 'kill');
+  logMsg('击败「' + m.name + '」' + (dg ? '（' + dg.name + ' 第 ' + (c.floor + 1) + '/' + dg.floors.length + ' 波）' : '') +
+    '，灵石 +' + gold + (drops.length ? '，掉落：' + drops.join('、') : ''), 'kill');
 
   c.target = null;
   c.playerTimer = 0;
   c.monsterTimer = 0;
+
+  if (dg) {
+    /* 秘境：推进到下一波；清完最后一波 → 结算通关奖励并从头循环 */
+    c.floor += 1;
+    if (c.floor >= dg.floors.length) {
+      c.floor = 0;
+      dungeonReward(dg);
+    }
+    c.monster = dg.floors[c.floor];
+    c.respawn = 1.2;
+    return;
+  }
   c.respawn = m.respawn || CONFIG.RESPAWN_TIME;
 }
 
 function onPlayerDeath(target) {
   const c = state.skills.combat;
+  if (!target) { c.target = null; return; }
   state.hp = 1;
   state.stats.deaths += 1;
-  /* 战败自动退出战斗动作槽并疗伤 */
-  if (state.action && state.action.skill === 'combat' && state.action.id === c.monster) stopAction(true);
-  c.monster = null;
-  c.target = null;
-  c.playerTimer = 0;
-  c.monsterTimer = 0;
-  logMsg('你被「' + target.name + '」击退，重伤返回洞府。先疗伤或备好食物再战。', 'bad');
+  const dg = c.dungeon ? findDungeon(c.dungeon) : null;
+  if (dg) {
+    logMsg('在秘境「' + dg.name + '」第 ' + (c.floor + 1) + ' 波被「' + target.name + '」击退，秘境挑战失败。', 'bad');
+  } else {
+    logMsg('你被「' + target.name + '」击退，重伤返回洞府。先疗伤或备好食物再战。', 'bad');
+  }
+  /* 战败自动退出战斗动作槽并疗伤；秘境同时判定为失败 */
+  if (state.action && state.action.skill === 'combat') stopAction(true);
+  cancelCombat();
 }
 
 /* ------------------------------------------------------------ 常驻被动 */
@@ -734,6 +816,8 @@ function harvestPlot(plotIdx) {
   let bonus = '';
   if (Math.random() < doubleChance('harvest_' + seed.id, 'farming')) { qty *= 2; bonus = '（精通·双倍）'; }
   invAdd(seed.outId, qty);
+  state.stats.gathered += 1;
+  state.stats.perSkill.farming = (state.stats.perSkill.farming || 0) + 1;
   if (!OFFLINE_MODE) logMsg('收获 ' + qty + ' × ' + itemIcon(seed.outId) + itemName(seed.outId) + bonus, 'gather');
 
   p.seedId = null;
@@ -765,6 +849,8 @@ function startAction(skillId, actionId) {
   }
   if (skillId === 'combat') return;   /* 战斗走 startCombat */
 
+  /* 切换动作前先彻底结束战斗，避免战斗在后台继续 */
+  cancelCombat();
   state.action = { skill: skillId, id: actionId };
   state.actionTimer = 0;
   state.actionWaiting = false;
@@ -772,12 +858,21 @@ function startAction(skillId, actionId) {
   if (def.in && def.in.length && !matsOk(def)) logMsg('材料不足，「' + def.name + '」正在等待材料…', 'warn');
 }
 
+/* 清空一切战斗状态（结束战斗/秘境时调用） */
+function cancelCombat() {
+  const c = state.skills.combat;
+  c.monster = null;
+  c.target = null;
+  c.dungeon = null;
+  c.floor = 0;
+  c.playerTimer = 0;
+  c.monsterTimer = 0;
+  c.respawn = 0;
+}
+
 /* silent=true 时不写日志（材料耗尽中止、切换动作等） */
 function stopAction(silent) {
-  if (state.action && state.action.skill === 'combat') {
-    state.skills.combat.monster = null;
-    state.skills.combat.target = null;
-  }
+  cancelCombat();
   state.action = null;
   state.actionTimer = 0;
   state.actionWaiting = false;
@@ -798,6 +893,7 @@ function startCombat(monsterId) {
   }
 
   const c = state.skills.combat;
+  if (state.action && state.action.skill === 'combat' && state.action.id !== monsterId) cancelCombat();
   c.monster = monsterId;
   c.respawn = 0;
   spawnTarget();
@@ -805,6 +901,41 @@ function startCombat(monsterId) {
   state.actionTimer = 0;
   state.actionWaiting = false;
   logMsg('挑战「' + m.name + '」（Lv.' + m.lvl + '）', 'info');
+}
+
+/* 进入秘境：按解锁条件与战斗等级校验，从第 1 波开打 */
+function startDungeon(dungeonId) {
+  const dg = findDungeon(dungeonId);
+  if (!dg) return;
+
+  if (state.stun > 0) { logMsg('眩晕中，还需 ' + Math.ceil(state.stun) + ' 秒才能行动。', 'warn'); return; }
+
+  const u = dungeonUnlockInfo(dg);
+  if (!u.unlocked) {
+    logMsg('秘境「' + dg.name + '」尚未开启：需' + u.text + '（' + fmtCount(u.have) + '/' + fmtCount(u.need) + '）。', 'warn');
+    return;
+  }
+  if (state.skills.combat.lvl < dg.req) {
+    logMsg('进入「' + dg.name + '」需战斗 Lv.' + dg.req + '，当前 Lv.' + state.skills.combat.lvl + '。', 'warn');
+    return;
+  }
+
+  /* 再次点击同一秘境 → 停止 */
+  if (state.action && state.action.skill === 'combat' && state.action.id === dg.id) {
+    stopAction();
+    return;
+  }
+
+  const c = state.skills.combat;
+  cancelCombat();
+  c.dungeon = dg.id;
+  c.floor = 0;
+  c.monster = dg.floors[0];
+  spawnTarget();
+  state.action = { skill: 'combat', id: dg.id };
+  state.actionTimer = 0;
+  state.actionWaiting = false;
+  logMsg('进入秘境「' + dg.name + '」（共 ' + dg.floors.length + ' 波，通关自动循环）', 'info');
 }
 
 /* ---------------------------------------------------------------- 突破 */

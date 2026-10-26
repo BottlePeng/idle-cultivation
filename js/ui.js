@@ -154,11 +154,12 @@ function renderSidebar() {
   const combS = state.skills.combat;
   const onComb = state.ui.active === 'combat' ? ' on' : '';
   const busyComb = (state.action && state.action.skill === 'combat') ? '<span class="dot"></span>' : '';
+  const combAtMax = combS.lvl >= CONFIG.SKILL_CAP;
   html +=
     '<button class="skillbtn' + onComb + '" data-act="select" data-skill="combat">' +
     '<span class="sico">' + comb.icon + '</span>' +
-    '<span class="sinfo"><span class="sname">' + comb.name + '</span><br>' +
-    '<span class="slvl">Lv.' + combS.lvl + busyComb + '</span></span>' +
+    '<span class="sinfo"><span class="sname">' + comb.name + (combAtMax ? ' <span class="maxtag">MAX</span>' : '') + '</span><br>' +
+    '<span class="slvl">Lv.' + combS.lvl + (combAtMax ? ' MAX' : '') + busyComb + '</span></span>' +
     '<span class="sbar" data-bar="combat"></span>' +
     '</button>';
 
@@ -169,11 +170,12 @@ function renderSidebar() {
     const s = state.skills[id];
     const on = state.ui.active === id ? ' on' : '';
     const busy = (state.action && state.action.skill === id) ? '<span class="dot"></span>' : '';
-    let lvlTxt = 'Lv.' + s.lvl;
+    const atMax = s.lvl >= CONFIG.SKILL_CAP;
+    let lvlTxt = atMax ? ('Lv.' + s.lvl + ' MAX') : ('Lv.' + s.lvl);
     html +=
       '<button class="skillbtn' + on + '" data-act="select" data-skill="' + id + '">' +
       '<span class="sico">' + sk.icon + '</span>' +
-      '<span class="sinfo"><span class="sname">' + sk.name + '</span><br>' +
+      '<span class="sinfo"><span class="sname">' + sk.name + (atMax ? ' <span class="maxtag">MAX</span>' : '') + '</span><br>' +
       '<span class="slvl">' + lvlTxt + busy + '</span></span>' +
       '<span class="sbar" data-bar="' + id + '"></span>' +
       '</button>';
@@ -266,23 +268,27 @@ function recipeEntries(list, skillId) {
   return html;
 }
 
-/* 炼器面板 */
+/* 炼器面板：锻造装备 */
 function renderCrafting() {
-  let html = '';
-  [['smelt', '熔炼 · 矿石转化'], ['forge', '锻造 · 法宝护具']].forEach(function (pair) {
-    const list = RECIPES.crafting.filter(function (r) { return r.cat === pair[0]; });
-    html += '<div class="secttl">' + pair[1] + '</div>' + recipeEntries(list, 'crafting');
-  });
-  return html;
+  const list = RECIPES.crafting;
+  return '<div class="secttl">锻造 · 法宝护具</div>' + recipeEntries(list, 'crafting');
 }
 
-/* 炼丹面板：采药 + 丹方 */
+/* 熔炼面板：矿石→锭 + 聚灵 */
+function renderSmelting() {
+  const list = RECIPES.smelting;
+  return '<div class="secttl">熔炼 · 矿石转化 / 聚灵化灵力</div>' + recipeEntries(list, 'smelting');
+}
+
+/* 采药面板 */
+function renderHerbalism() {
+  return '<div class="secttl">采药 · 灵草药材</div>' + gatherEntries(ACTIONS.herbalism, 'herbalism');
+}
+
+/* 炼丹面板 */
 function renderAlchemy() {
-  let html = '';
-  html += '<div class="secttl">采药 · 灵草药材</div>' + gatherEntries(ACTIONS.alchemy, 'alchemy');
   const pills = RECIPES.alchemy.filter(function (r) { return r.cat === 'pill'; });
-  html += '<div class="secttl">丹方 · 炼制丹药</div>' + recipeEntries(pills, 'alchemy');
-  return html;
+  return '<div class="secttl">丹方 · 炼制丹药</div>' + recipeEntries(pills, 'alchemy');
 }
 
 /* 修炼面板：境界 + 突破 */
@@ -354,9 +360,11 @@ function renderCombat() {
   const c = state.skills.combat;
   const st = calcStats();
   const pr = currentProgress();
+  const dg = c.dungeon ? findDungeon(c.dungeon) : null;
   let html = '';
 
-  html += '<div class="secttl">当前对战</div>';
+  html += '<div class="secttl">当前对战' +
+    (dg ? ' · 秘境「' + dg.name + '」第 ' + (c.floor + 1) + ' / ' + dg.floors.length + ' 波' : '') + '</div>';
   if (c.monster && c.target) {
     const t = c.target;
     const myHit = Math.round(hitChance(st.hit, t.ev) * 100);
@@ -399,6 +407,44 @@ function renderCombat() {
       '我方命中率 <b>' + myHit + '%</b> · 其命中率 ' + itsHit + '% · 经验 ' + m.xp + ' · 灵石 ' + m.gold[0] + '~' + m.gold[1] + '<br>' +
       '掉落：' + drops + '</span>' +
       masteryHTML(m.id) + '</span>' +
+      '</div>';
+  });
+  html += '</div>';
+
+  /* 秘境 · 副本（梅尔沃式波次挑战；隐藏秘境需满足跨技能条件才显形） */
+  html += '<div class="secttl">秘境 · 副本</div><div class="grid">';
+  DUNGEONS.forEach(function (d) {
+    const u = dungeonUnlockInfo(d);
+    const clears = state.dungeons[d.id] || 0;
+    if (!u.unlocked) {
+      html +=
+        '<div class="entry locked">' +
+        '<span class="eico">❓</span>' +
+        '<span class="emain"><span class="ename">？？？<span class="etag">未开启</span></span>' +
+        '<span class="emeta">隐藏秘境 · 需' + u.text + '（' + u.have + ' / ' + u.need + '）</span></span>' +
+        '</div>';
+      return;
+    }
+    const on = (state.action && state.action.skill === 'combat' && state.action.id === d.id) ? ' on' : '';
+    const lvOk = state.skills.combat.lvl >= d.req;
+    const floors = d.floors.map(function (fid) {
+      const fm = findMonster(fid);
+      return fm ? fm.icon + fm.name + ' Lv.' + fm.lvl : fid;
+    }).join(' → ');
+    const reward = ['💠 ' + fmtNum(d.reward.gold)];
+    (d.reward.items || []).forEach(function (it) {
+      reward.push(it.qty + ' × ' + itemIcon(it.id) + itemName(it.id));
+    });
+    if (d.reward.xp) reward.push('战斗经验 ' + fmtNum(d.reward.xp));
+    html +=
+      '<div class="entry' + on + '" data-act="dungeon" data-id="' + d.id + '">' +
+      '<span class="eico">' + d.icon + '</span>' +
+      '<span class="emain"><span class="ename">' + d.name +
+      (lvOk ? '' : '<span class="etag warn">需战斗 Lv.' + d.req + '</span>') +
+      '<span class="etag">通关 ' + clears + ' 次</span></span>' +
+      '<span class="emeta">' + esc(d.desc) + '<br>' +
+      d.floors.length + ' 波：' + floors + '<br>' +
+      '通关奖励：' + reward.join(' · ') + '</span></span>' +
       '</div>';
   });
   html += '</div>';
@@ -472,7 +518,7 @@ function renderShop() {
   html += '</div>';
 
   html += '<div class="secttl">出售说明</div>';
-  html += '<div class="shopnote">在背包页开启「出售模式」，点击物品即可快速出售；或点击物品查看详情后选择「出售 ×1 / 全部出售」。出售价为物品价值的 ' + Math.round(CONFIG.SELL_RATIO * 100) + '%。</div>';
+  html += '<div class="shopnote">在背包页先用「出售数量」（×1 / ×5 / ×10 / ×25 / ×100 / 全部）指定批量，开启「出售模式」后点击物品即按该数量出售；或点击物品查看详情后直接出售。出售价为物品价值的 ' + Math.round(CONFIG.SELL_RATIO * 100) + '%。</div>';
   return html;
 }
 
@@ -675,7 +721,9 @@ function renderContent() {
 
   let html = skillHeader(id);
   if (id === 'combat') html += renderCombat();
+  else if (id === 'smelting') html += renderSmelting();
   else if (id === 'crafting') html += renderCrafting();
+  else if (id === 'herbalism') html += renderHerbalism();
   else if (id === 'alchemy') html += renderAlchemy();
   else if (id === 'cultivation') html += renderCultivation();
   else if (id === 'formation') html += renderFormation();
@@ -750,6 +798,14 @@ function renderEquip() {
 
 const INV_FILTERS = [['all', '全部'], ['material', '材料'], ['food', '食物'], ['pill', '丹药'], ['equip', '装备']];
 
+/* 出售数量预设（梅尔沃式：[-1] 表示全部） */
+const SELL_QTY_PRESETS = [[1, '×1'], [5, '×5'], [10, '×10'], [25, '×25'], [100, '×100'], [-1, '全部']];
+
+/* 当前出售数量的文案：'×10' / '全部' */
+function sellQtyText() {
+  return state.ui.sellQty === -1 ? '全部' : '×' + state.ui.sellQty;
+}
+
 /* 背包面板：梅尔沃式图标网格 + 筛选 + 出售模式（标签页形式，与技能面板一致） */
 function renderBag() {
   const filt = state.ui.invFilter || 'all';
@@ -762,13 +818,21 @@ function renderBag() {
     ' · 点击物品查看操作，背包满时产出会原地等待</span></div>';
 
   /* 筛选 chips + 出售模式开关 */
-  const sellTip = state.ui.invSellMode ? '出售模式：点击物品即出售 1 个' : '普通模式：点击物品查看操作';
+  const sellTip = state.ui.invSellMode ? '出售模式：点击物品即出售 ' + sellQtyText() : '普通模式：点击物品查看操作';
   html += '<div class="bagbar"><span class="filterbar">' +
     INV_FILTERS.map(function (f) {
       const on = state.ui.invFilter === f[0] ? ' on' : '';
       return '<button class="chip' + on + '" data-act="filter" data-id="' + f[0] + '">' + f[1] + '</button>';
     }).join('') + '</span>' +
     '<button class="chip sell' + (state.ui.invSellMode ? ' on' : '') + '" data-act="togglesell" title="' + sellTip + '">💰 出售模式</button></div>';
+
+  /* 出售数量选择（梅尔沃式）：出售模式下点击格子即按此数量出售 */
+  html += '<div class="sellqtybar"><span class="qlabel">出售数量</span>' +
+    SELL_QTY_PRESETS.map(function (p) {
+      const on = state.ui.sellQty === p[0] ? ' on' : '';
+      return '<button class="chip' + on + '" data-act="sellqty" data-qty="' + p[0] + '">' + p[1] + '</button>';
+    }).join('') +
+    '<span class="qhint">出售模式下点击物品即按所选数量出售</span></div>';
 
   if (!ids.length) {
     html += '<div class="empty">此处空无一物。</div>';
@@ -805,14 +869,17 @@ function showInvPopover(id, anchorEl) {
   if (it.type === 'equip') actBtns += '<button class="mini" data-act="equip" data-id="' + id + '">装备</button>';
 
   const sp = sellPrice(id);
+  const have = invCount(id);
+  const sellAll = state.ui.sellQty === -1;
+  const q = sellAll ? have : Math.min(state.ui.sellQty, have);
   pop.innerHTML =
     '<div class="phead2"><b>' + it.icon + ' ' + it.name + '</b>' +
-    '<span class="pqty">×' + invCount(id) + '</span></div>' +
+    '<span class="pqty">×' + have + '</span></div>' +
     '<div class="pdesc2">' + esc(it.desc) + '</div>' +
     '<div class="pval">出售价 💠 ' + sp + ' / 个</div>' +
     '<div class="pacts">' + actBtns +
-    '<button class="mini" data-act="sell" data-id="' + id + '" data-qty="1">出售 ×1</button>' +
-    '<button class="mini" data-act="sellall" data-id="' + id + '">全部出售</button>' +
+    '<button class="mini gold" data-act="sell" data-id="' + id + '" data-qty="' + (sellAll ? -1 : state.ui.sellQty) + '">出售 ' + (sellAll ? '全部' : '×' + q) + ' · 💠 ' + (sp * q) + '</button>' +
+    (sellAll ? '' : '<button class="mini" data-act="sellall" data-id="' + id + '">全部出售 · 💠 ' + (sp * have) + '</button>') +
     '<button class="mini ghost" data-act="closepop">关闭</button></div>';
 
   pop.classList.remove('hidden');

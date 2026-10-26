@@ -22,6 +22,7 @@ function defaultState() {
     skills: {},
     mastery: {},        // 精通表：actionId -> { lvl, xp }
     formations: {},     // 阵法表：formId -> { levels: [各阵纹等级] }
+    dungeons: {},       // 秘境通关次数：dungeonId -> 次数
     plots: Array.from({ length: FARMING_PLOT_REQS.length }, () => ({ seedId: null, growth: 0, ready: false })),
 
     /* 单一动作槽：同一时刻只能进行一件事 */
@@ -34,17 +35,18 @@ function defaultState() {
     taskTimer: 0,       // 任务检查计时
 
     tasks: {},          // taskId -> { done, claimed }
-    ui: { active: 'woodcutting', autoEat: true, eatFood: 'auto', eatRatio: 0.35, invFilter: 'all', invSellMode: false, shopCat: 'general', farmSeedId: null },
+    ui: { active: 'woodcutting', autoEat: true, eatFood: 'auto', eatRatio: 0.35, invFilter: 'all', invSellMode: false, sellQty: 1, shopCat: 'general', farmSeedId: null },
     log: [],
-    stats: { gathered: 0, crafts: 0, kills: 0, deaths: 0, breaks: 0, pills: 0, gained: {}, startedAt: Date.now() },
+    stats: { gathered: 0, crafts: 0, kills: 0, deaths: 0, breaks: 0, pills: 0, gained: {}, perSkill: {}, startedAt: Date.now() },
     lastSave: Date.now()
   };
 
   SKILL_ORDER.forEach(function (id) {
     s.skills[id] = { lvl: 1, xp: 0 };
+    s.stats.perSkill[id] = 0;
   });
-  /* 战斗技能额外字段 */
-  Object.assign(s.skills.combat, { monster: null, target: null, playerTimer: 0, monsterTimer: 0, respawn: 0 });
+  /* 战斗技能额外字段（dungeon/floor 为秘境进度） */
+  Object.assign(s.skills.combat, { monster: null, target: null, playerTimer: 0, monsterTimer: 0, respawn: 0, dungeon: null, floor: 0 });
   /* 修炼瓶颈标记（修为封顶时提示一次） */
   s.skills.cultivation.capped = false;
 
@@ -108,7 +110,7 @@ function mergeState(def, saved) {
       const ss = saved.skills[id];
       if (!ss || typeof ss !== 'object') return;
       const t = out.skills[id];
-      if (isFinite(ss.lvl)) t.lvl = Math.max(1, Math.floor(ss.lvl));
+      if (isFinite(ss.lvl)) t.lvl = Math.max(1, Math.min(Math.floor(ss.lvl), CONFIG.SKILL_CAP));
       if (isFinite(ss.xp)) t.xp = Math.max(0, Number(ss.xp));
     });
     /* 修炼境界不能超过阶段表上限 */
@@ -125,6 +127,13 @@ function mergeState(def, saved) {
       if (isFinite(cs.playerTimer)) c.playerTimer = Number(cs.playerTimer);
       if (isFinite(cs.monsterTimer)) c.monsterTimer = Number(cs.monsterTimer);
       if (isFinite(cs.respawn)) c.respawn = Number(cs.respawn);
+      /* 秘境进度：秘境必须仍存在，且波次收敛到合法范围；当前妖兽同步为该波妖兽 */
+      if (cs.dungeon && findDungeon(cs.dungeon)) {
+        const dg = findDungeon(cs.dungeon);
+        c.dungeon = dg.id;
+        c.floor = isFinite(cs.floor) ? Math.max(0, Math.min(dg.floors.length - 1, Math.floor(cs.floor))) : 0;
+        c.monster = dg.floors[c.floor];
+      }
     }
   }
 
@@ -152,6 +161,15 @@ function mergeState(def, saved) {
           return isFinite(v) ? Math.max(0, Math.min(m.max, v)) : 0;
         })
       };
+    });
+  }
+
+  /* 秘境通关次数（只保留当前配置里仍存在的秘境） */
+  if (saved.dungeons && typeof saved.dungeons === 'object') {
+    out.dungeons = {};
+    DUNGEONS.forEach(function (d) {
+      const n = saved.dungeons[d.id];
+      if (isFinite(n) && n > 0) out.dungeons[d.id] = Math.floor(n);
     });
   }
 
@@ -196,6 +214,11 @@ function mergeState(def, saved) {
     if (isFinite(saved.ui.eatRatio)) out.ui.eatRatio = Math.max(0.1, Math.min(0.9, Number(saved.ui.eatRatio)));
     if (typeof saved.ui.invFilter === 'string') out.ui.invFilter = saved.ui.invFilter;
     if (typeof saved.ui.invSellMode === 'boolean') out.ui.invSellMode = saved.ui.invSellMode;
+    /* 出售数量：-1 表示全部，其余为正整数 */
+    if (isFinite(saved.ui.sellQty)) {
+      const sq = Math.floor(Number(saved.ui.sellQty));
+      out.ui.sellQty = sq === -1 ? -1 : Math.max(1, Math.min(9999, sq));
+    }
     if (typeof saved.ui.shopCat === 'string') out.ui.shopCat = saved.ui.shopCat;
   }
 
@@ -208,6 +231,14 @@ function mergeState(def, saved) {
       out.stats.gained = {};
       Object.keys(saved.stats.gained).forEach(function (id) {
         if (isFinite(saved.stats.gained[id])) out.stats.gained[id] = Math.max(0, Number(saved.stats.gained[id]));
+      });
+    }
+    /* 分技能累计采集次数（隐藏秘境解锁条件） */
+    if (saved.stats.perSkill && typeof saved.stats.perSkill === 'object') {
+      out.stats.perSkill = {};
+      SKILL_ORDER.forEach(function (id) {
+        const n = saved.stats.perSkill[id];
+        out.stats.perSkill[id] = (isFinite(n) && n >= 0) ? Math.floor(Number(n)) : 0;
       });
     }
   }
