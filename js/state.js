@@ -25,6 +25,20 @@ function defaultState() {
     dungeons: {},       // 秘境通关次数：dungeonId -> 次数
     plots: Array.from({ length: FARMING_PLOT_REQS.length }, () => ({ seedId: null, growth: 0, ready: false })),
 
+    /* 世界 · 洞天：建筑等级 + 人口 + 洞天内部资源（粮食/木材/石料） */
+    world: {
+      buildings: { farm: 1, lumber: 1, house: 1 },
+      pop: 2,
+      res: { food: 120, wood: 40, stone: 20 }
+    },
+
+    /* 信徒：owned 为仓库中的信徒 id，equipped 的位数由招贤殿等级决定（视作装备栏） */
+    disciples: { owned: [], equipped: [] },
+
+    /* 穿越星球：仅面板打开时运转（items 为飞行中的物品，瞬态不落存档）
+       aura 为灵气浓度（长期进度，不随开关清空），cross 为穿越次数 */
+    planet: { open: false, timer: PLANET.SPAWN_BASE, boost: 0, seq: 1, items: [], session: { gold: 0, star: 0, mat: 0, count: 0 }, aura: PLANET.AURA_CAP_BASE, cross: 0, waitReason: '' },
+
     /* 单一动作槽：同一时刻只能进行一件事 */
     action: { skill: 'cultivation', id: 'meditate' },
     actionTimer: 0,     // 当前周期已累计秒数
@@ -35,7 +49,7 @@ function defaultState() {
     taskTimer: 0,       // 任务检查计时
 
     tasks: {},          // taskId -> { done, claimed }
-    ui: { active: 'woodcutting', autoEat: true, eatFood: 'auto', eatRatio: 0.35, invFilter: 'all', invSellMode: false, sellQty: 1, shopCat: 'general', farmSeedId: null },
+    ui: { active: 'woodcutting', autoEat: true, eatFood: 'auto', eatRatio: 0.35, invFilter: 'all', invSellMode: false, itemQty: 1, shopCat: 'general', farmSeedId: null, worldTerrain: 'all' },
     log: [],
     stats: { gathered: 0, crafts: 0, kills: 0, deaths: 0, breaks: 0, pills: 0, gained: {}, perSkill: {}, startedAt: Date.now() },
     lastSave: Date.now()
@@ -110,12 +124,12 @@ function mergeState(def, saved) {
       const ss = saved.skills[id];
       if (!ss || typeof ss !== 'object') return;
       const t = out.skills[id];
-      if (isFinite(ss.lvl)) t.lvl = Math.max(1, Math.min(Math.floor(ss.lvl), CONFIG.SKILL_CAP));
+      if (isFinite(ss.lvl)) t.lvl = Math.max(1, Math.floor(ss.lvl));
       if (isFinite(ss.xp)) t.xp = Math.max(0, Number(ss.xp));
     });
-    /* 修炼境界不能超过阶段表上限 */
+    /* 修炼境界不能超过阶段表上限（含太上境的 96,500 层） */
     const sc = out.skills.cultivation;
-    sc.lvl = Math.max(1, Math.min(sc.lvl, STAGES.length));
+    sc.lvl = Math.max(1, Math.min(sc.lvl, TOTAL_STAGES));
     const bi = breakInfo(sc.lvl - 1);
     if (bi && sc.xp > bi.need) sc.xp = bi.need;
 
@@ -186,6 +200,58 @@ function mergeState(def, saved) {
     out.plots.push({ seedId: seedId, growth: growth, ready: ready });
   }
 
+  /* 世界 · 洞天：建筑等级按当前配置裁剪（删除过的建筑直接丢弃），资源钳制到容量 */
+  if (saved.world && typeof saved.world === 'object') {
+    out.world = { buildings: {}, pop: 0, res: { food: 0, wood: 0, stone: 0 } };
+    const sb = saved.world.buildings;
+    if (sb && typeof sb === 'object') {
+      BUILDINGS.forEach(function (b) {
+        const lv = Math.floor(Number(sb[b.id]));
+        if (isFinite(lv) && lv > 0) out.world.buildings[b.id] = lv;
+      });
+    }
+    const sr = saved.world.res;
+    if (sr && typeof sr === 'object') {
+      /* 仓储上限随建设度变化，裁剪时按当前建筑总等级推算 */
+      let lvSum = 0;
+      Object.keys(out.world.buildings).forEach(function (id) { lvSum += out.world.buildings[id] || 0; });
+      const cap = worldCap(1 + lvSum);
+      ['food', 'wood', 'stone'].forEach(function (k) {
+        if (isFinite(sr[k])) out.world.res[k] = Math.max(0, Math.min(cap[k], Number(sr[k])));
+      });
+    }
+    if (isFinite(saved.world.pop)) {
+      out.world.pop = Math.max(0, Math.min(worldPopCap(out), Number(saved.world.pop)));
+    }
+  }
+
+  /* 信徒：id 必须存在于当前配置；上阵位数量由招贤殿等级决定（未建造 = 0） */
+  {
+    const hall = out.world.buildings.summonhall || 0;
+    const slots = hall * DISCIPLE.SLOTS_PER_LVL;
+    out.disciples = { owned: [], equipped: [] };
+    for (let i = 0; i < slots; i++) out.disciples.equipped.push(null);
+
+    const sd = saved.disciples;
+    if (sd && typeof sd === 'object') {
+      if (Array.isArray(sd.owned)) {
+        sd.owned.forEach(function (id) { if (findDisciple(id)) out.disciples.owned.push(id); });
+      }
+      if (Array.isArray(sd.equipped)) {
+        for (let i = 0; i < slots; i++) {
+          if (findDisciple(sd.equipped[i])) out.disciples.equipped[i] = sd.equipped[i];
+        }
+      }
+    }
+
+    /* 容量裁剪：上阵数 + 仓库数 ≤ 招贤殿容量，多出的优先保留上阵者 */
+    const cap = hall > 0 ? DISCIPLE.BASE_STORE + (hall - 1) * DISCIPLE.STORE_PER_LVL : 0;
+    let eq = 0;
+    out.disciples.equipped.forEach(function (id) { if (id) eq += 1; });
+    const storeRoom = Math.max(0, cap - eq);
+    if (out.disciples.owned.length > storeRoom) out.disciples.owned.length = storeRoom;
+  }
+
   /* 动作槽合法性校验（防止旧存档引用已删除的动作） */
   if (saved.action && typeof saved.action === 'object' && saved.action.skill && saved.action.id) {
     if (findActivity(saved.action.skill, saved.action.id)) {
@@ -194,6 +260,14 @@ function mergeState(def, saved) {
   }
   if (isFinite(saved.actionTimer)) out.actionTimer = Math.max(0, Number(saved.actionTimer));
   if (typeof saved.actionWaiting === 'boolean') out.actionWaiting = saved.actionWaiting;
+
+  /* 星球是主动动作，但不在 ACTIONS/RECIPES 表内：读档一律不恢复，
+     保持「未开启」，也避免 defaultState 的打坐动作顶替它偷偷占槽 */
+  if (saved.action && saved.action.skill === 'planet') {
+    out.action = null;
+    out.actionTimer = 0;
+    out.actionWaiting = false;
+  }
   if (isFinite(saved.regenTimer)) out.regenTimer = Math.max(0, Number(saved.regenTimer));
   if (isFinite(saved.stun)) out.stun = Math.max(0, Number(saved.stun));
 
@@ -208,18 +282,40 @@ function mergeState(def, saved) {
 
   /* UI 偏好 */
   if (saved.ui && typeof saved.ui === 'object') {
-    if (SKILL_ORDER.indexOf(saved.ui.active) >= 0 || saved.ui.active === 'tasks' || saved.ui.active === 'shop' || saved.ui.active === 'bag') out.ui.active = saved.ui.active;
+    if (SKILL_ORDER.indexOf(saved.ui.active) >= 0 || saved.ui.active === 'tasks' || saved.ui.active === 'shop' || saved.ui.active === 'bag' || saved.ui.active === 'world' || saved.ui.active === 'disciples' || saved.ui.active === 'planet') out.ui.active = saved.ui.active;
     if (typeof saved.ui.autoEat === 'boolean') out.ui.autoEat = saved.ui.autoEat;
     if (typeof saved.ui.eatFood === 'string') out.ui.eatFood = saved.ui.eatFood;
     if (isFinite(saved.ui.eatRatio)) out.ui.eatRatio = Math.max(0.1, Math.min(0.9, Number(saved.ui.eatRatio)));
     if (typeof saved.ui.invFilter === 'string') out.ui.invFilter = saved.ui.invFilter;
     if (typeof saved.ui.invSellMode === 'boolean') out.ui.invSellMode = saved.ui.invSellMode;
-    /* 出售数量：-1 表示全部，其余为正整数 */
-    if (isFinite(saved.ui.sellQty)) {
-      const sq = Math.floor(Number(saved.ui.sellQty));
-      out.ui.sellQty = sq === -1 ? -1 : Math.max(1, Math.min(9999, sq));
+    /* 使用 / 出售数量：-1 表示全部，其余为正整数（兼容旧档的 sellQty） */
+    if (isFinite(saved.ui.itemQty) || isFinite(saved.ui.sellQty)) {
+      const q = Math.floor(Number(isFinite(saved.ui.itemQty) ? saved.ui.itemQty : saved.ui.sellQty));
+      out.ui.itemQty = q === -1 ? -1 : Math.max(1, Math.min(9999, q));
     }
     if (typeof saved.ui.shopCat === 'string') out.ui.shopCat = saved.ui.shopCat;
+    /* 洞天地形筛选：'all' 或当前配置里仍存在的地形 id */
+    if (saved.ui.worldTerrain === 'all' || findTerrain(saved.ui.worldTerrain)) out.ui.worldTerrain = saved.ui.worldTerrain;
+  }
+
+  /* 穿越星球：飞行中的物品 / 加速 / 本局收获是瞬态数据，读档一律从空盘开始（防止离线白拿）。
+     灵气浓度与穿越次数是长期进度：旧存档缺失时给满浓度 / 0 次，并钳制到当前上限，
+     保证不会出现负值、NaN 或超过上限的数值。 */
+  out.planet = {
+    open: false, timer: PLANET.SPAWN_BASE, boost: 0, seq: 1, items: [],
+    session: { gold: 0, star: 0, mat: 0, count: 0 },
+    aura: planetAuraCap(out), cross: 0, waitReason: ''
+  };
+  {
+    const sp = (saved.planet && typeof saved.planet === 'object') ? saved.planet : null;
+    if (sp) {
+      const cap = planetAuraCap(out);
+      const aura = isFinite(sp.aura) ? Number(sp.aura) : cap;
+      out.planet.aura = Math.max(PLANET.AURA_MIN, Math.min(cap, aura));
+      if (isFinite(sp.cross)) {
+        out.planet.cross = Math.max(0, Math.min(10000, Math.floor(Number(sp.cross))));
+      }
+    }
   }
 
   /* 统计 */

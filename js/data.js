@@ -6,6 +6,14 @@
  * 设计参考：《梅尔沃放置》的动作/精通/命中制战斗 + 《凡人修仙传》的境界/灵根/丹药
  * ========================================================================= */
 
+/* 版本号（全项目唯一来源，界面、窗口标题与打包文件名都读它）
+   三段式 主.次.修：
+     patch++  小更新（bug 修复等，不影响存档）
+     minor++  机制更新（新增/改动机制，影响存档），patch 归零
+     major++  大型更新（DLC、全新机制，需重开游戏），minor/patch 归零
+   改这里用 `node tools/version.js patch|minor|major`，打包前会自动同步。 */
+const VERSION = '1.9.8';
+
 const CONFIG = {
   TICK_MS: 100,          // 主循环步长
   RENDER_MS: 200,        // UI 刷新间隔
@@ -45,8 +53,7 @@ const CONFIG = {
   CULT_XP_PER_REALM: 6,    // 每个大境界，打坐修为收益 ×(1+倍数)
   REALM_ATK_BONUS: 0.12,   // 每个大境界 +12% 攻防命闪
 
-  /* --- 技能硬上限（类似 Melvor Idle，所有技能共享） --- */
-  SKILL_CAP: 100,
+  /* --- 技能等级：无上限（经验曲线 xpBase × lvl^xpPow 自然递增） --- */
 
   /* --- 精通（每个动作独立成长，上限 99） --- */
   MASTERY_CAP: 99,
@@ -78,13 +85,13 @@ const CONFIG = {
  * ========================================================================= */
 const ITEMS = {
   /* ===== 木材 ===== */
-  log_qing: { name: '灵木', icon: '🪵', type: 'material', value: 2, desc: '青云山常见灵木，炼器基础材料。' },
+  log_qing: { name: '灵木', icon: '🌳', type: 'material', value: 2, desc: '青云山常见灵木，炼器基础材料。' },
   log_han: { name: '寒松木', icon: '🌲', type: 'material', value: 6, desc: '生于寒潭边的松木，灵气充盈。' },
   log_tie:  { name: '铁木', icon: '🌳', type: 'material', value: 18, desc: '坚硬如铁的万年古木。' },
   log_bing: { name: '冰魄木', icon: '❄️', type: 'material', value: 40, desc: '极寒之地孕育，寒气凝于木髓。' },
   log_yun:  { name: '云杉木', icon: '☁️', type: 'material', value: 88, desc: '生于高云海峰之上，轻盈不腐。' },
   log_shen: { name: '万年神木', icon: '🌴', type: 'material', value: 220, desc: '上古遗留神木，炼虚境顶级基材。' },
-  log_lingxu:{ name: '灵虚木', icon: '🪵', type: 'material', value: 620, desc: '灵虚境修士从虚空截取的道木。' },
+  log_lingxu:{ name: '灵虚木', icon: '🌌', type: 'material', value: 620, desc: '灵虚境修士从虚空截取的道木。' },
   log_taiyuan:{ name: '太原木', icon: '🌲', type: 'material', value: 1200, desc: '太原天中自生的道木，坚硬不朽。' },
   log_kunlun:{ name: '昆仑木', icon: '🏔️', type: 'material', value: 2500, desc: '昆仑仙山万年道木，仙气充盈。' },
   log_wuxu:  { name: '无虚木', icon: '🌌', type: 'material', value: 5500, desc: '无虚之境凝结的道木，天地之根。' },
@@ -98,15 +105,15 @@ const ITEMS = {
   fish_zu:   { name: '须鱼王', icon: '🐲', type: 'food', value: 320, heal: 2500, desc: '深海巨妖化形之鱼王。' },
   fish_lingxu:{ name: '灵虚鲸', icon: '🐋', type: 'food', value: 780, heal: 6000, desc: '灵虚之海遨游的道鲸。' },
   fish_taiyuan:{ name: '太玄鲤', icon: '🐉', type: 'food', value: 1500, heal: 12000, desc: '太玄天池中的千年锦鲤。' },
-  fish_kunlun: { name: '昆仑螭', icon: '🪱', type: 'food', value: 3200, heal: 25000, desc: '昆仑仙泉中的螭龙化鱼。' },
+  fish_kunlun: { name: '昆仑螭', icon: '🐍', type: 'food', value: 3200, heal: 25000, desc: '昆仑仙泉中的螭龙化鱼。' },
   fish_wuxu:   { name: '无虚鲲', icon: '🌊', type: 'food', value: 7000, heal: 55000, desc: '无虚之海里的鲲化道鱼。' },
 
   /* ===== 矿 ===== */
-  ore_iron: { name: '铁矿石', icon: '🪨', type: 'material', value: 3, desc: '富含凡铁的矿石。' },
+  ore_iron: { name: '铁矿石', icon: '⛏️', type: 'material', value: 3, desc: '富含凡铁的矿石。' },
   ore_xuan: { name: '玄铁矿', icon: '⛰️', type: 'material', value: 10, desc: '玄铁矿石，炼器上品。' },
   ore_ling: { name: '灵石原矿', icon: '🔮', type: 'material', value: 22, desc: '蕴含灵气的原矿，可提炼灵石。' },
   ore_bing: { name: '冰晶石', icon: '💎', type: 'material', value: 55, desc: '极地挖出的冰晶石，寒气凛冽。' },
-  ore_yang: { name: '阳火精', icon: '�', type: 'material', value: 120, desc: '地心之矿，阳火精纯。' },
+  ore_yang: { name: '阳火精', icon: '🔥', type: 'material', value: 120, desc: '地心之矿，阳火精纯。' },
   ore_shen: { name: '神玉', icon: '🌈', type: 'material', value: 300, desc: '天外陨石中偶得的神玉原石。' },
   ore_xu:   { name: '炼虚石', icon: '🔮', type: 'material', value: 820, desc: '炼虚境采掘的虚空原矿。' },
   ore_tai:  { name: '太清玉', icon: '💎', type: 'material', value: 1600, desc: '太清天中凝结的宝玉原矿。' },
@@ -114,7 +121,7 @@ const ITEMS = {
   ore_wuxu: { name: '无虚髓', icon: '🌌', type: 'material', value: 7500, desc: '无虚之境核心的道髓原石。' },
 
   /* ===== 锭 ===== */
-  ingot_iron: { name: '铁锭', icon: '�', type: 'material', value: 10, desc: '熔炼后的铁锭。' },
+  ingot_iron: { name: '铁锭', icon: '⚙️', type: 'material', value: 10, desc: '熔炼后的铁锭。' },
   ingot_xuan: { name: '玄铁锭', icon: '⚙️', type: 'material', value: 32, desc: '熔炼后的玄铁锭。' },
   ingot_bing: { name: '冰魄锭', icon: '🧊', type: 'material', value: 160, desc: '冰晶石熔炼而成，寒意彻骨。' },
   ingot_yang: { name: '阳火锭', icon: '🔥', type: 'material', value: 360, desc: '阳火精熔炼，炽热难近。' },
@@ -129,7 +136,7 @@ const ITEMS = {
   herb_juqi: { name: '聚气草', icon: '🍀', type: 'material', value: 10, desc: '服之可聚气归元，炼丹基础。' },
   herb_liao: { name: '疗伤草', icon: '🌾', type: 'material', value: 12, desc: '生肌止血，疗伤丹主料。' },
   herb_zhuji:{ name: '筑基花', icon: '🌸', type: 'material', value: 40, desc: '百年一开，筑基丹必需。' },
-  herb_ning: { name: '凝元参', icon: '🪷', type: 'material', value: 120, desc: '深山灵参，凝元之要。' },
+  herb_ning: { name: '凝元参', icon: '🌼', type: 'material', value: 120, desc: '深山灵参，凝元之要。' },
   herb_ying: { name: '化婴芝', icon: '🍄', type: 'material', value: 320, desc: '灵芝化形，元婴之资。' },
   herb_bing: { name: '冰心草', icon: '❄️', type: 'material', value: 80, desc: '生长于冰渊深处，性寒镇魂。' },
   herb_yao:  { name: '妖丹花', icon: '🌺', type: 'material', value: 200, desc: '妖族内丹化花，丹道奇材。' },
@@ -137,9 +144,9 @@ const ITEMS = {
   herb_mo:   { name: '墨灵芝', icon: '🟣', type: 'material', value: 900, desc: '墨色流光，化神丹必备。' },
   herb_xue:  { name: '血玉参', icon: '🩸', type: 'material', value: 1800, desc: '血玉成参，炼虚根基。' },
   herb_shen: { name: '神元果', icon: '✨', type: 'material', value: 4000, desc: '神元凝结成实，炼虚大圆满之资。' },
-  herb_xu:   { name: '炼虚参', icon: '🪷', type: 'material', value: 9000, desc: '炼虚境的千年道参，破境必备。' },
+  herb_xu:   { name: '炼虚参', icon: '🏵️', type: 'material', value: 9000, desc: '炼虚境的千年道参，破境必备。' },
   herb_tai:  { name: '太清芝', icon: '🍄', type: 'material', value: 18000, desc: '太清天自生的道芝，仙品之上。' },
-  herb_kunlun:{ name: '昆仑莲', icon: '🪷', type: 'material', value: 40000, desc: '昆仑天池中千年一开的道莲。' },
+  herb_kunlun:{ name: '昆仑莲', icon: '🌷', type: 'material', value: 40000, desc: '昆仑天池中千年一开的道莲。' },
   herb_wuxu: { name: '无虚根', icon: '🌱', type: 'material', value: 90000, desc: '无虚之境的先天道根，万物之源。' },
 
   /* ===== 种子 ===== */
@@ -155,9 +162,9 @@ const ITEMS = {
   seed_mo:   { name: '墨灵芝种子', icon: '🟣', type: 'seed', value: 450, desc: '种入地块后可收获墨灵芝。' },
   seed_xue:  { name: '血玉参种子', icon: '🩸', type: 'seed', value: 900, desc: '种入地块后可收获血玉参。' },
   seed_shen: { name: '神元果种子', icon: '✨', type: 'seed', value: 2000, desc: '种入地块后可收获神元果。' },
-  seed_xu:   { name: '炼虚参种子', icon: '🪷', type: 'seed', value: 4500, desc: '种入地块后可收获炼虚参。' },
+  seed_xu:   { name: '炼虚参种子', icon: '🌱', type: 'seed', value: 4500, desc: '种入地块后可收获炼虚参。' },
   seed_tai:  { name: '太清芝种子', icon: '🍄', type: 'seed', value: 9000, desc: '种入地块后可收获太清芝。' },
-  seed_kunlun:{ name: '昆仑莲种子', icon: '🪷', type: 'seed', value: 20000,desc: '种入地块后可收获昆仑莲。' },
+  seed_kunlun:{ name: '昆仑莲种子', icon: '🌱', type: 'seed', value: 20000,desc: '种入地块后可收获昆仑莲。' },
   seed_wuxu: { name: '无虚根种子', icon: '🌱', type: 'seed', value: 45000,desc: '种入地块后可收获无虚根。' },
 
   /* ===== 丹药 ===== */
@@ -172,7 +179,7 @@ const ITEMS = {
   pill_bing: { name: '冰心丹', icon: '🧊', type: 'pill', use: 'cult', value: 180, desc: '冰心炼魂，服后修为大增并稳定心境。' },
   pill_yao:  { name: '妖元丹', icon: '🌺', type: 'pill', use: 'cult', value: 520, desc: '妖元凝成，修为、经验双加。' },
   pill_zu:   { name: '龙须丹', icon: '🌟', type: 'pill', use: 'break', value: 1800, desc: '化婴丹辅助，可提升化婴成功率 5%。' },
-  pill_ningyuan: { name: '凝元补丹', icon: '🪷', type: 'pill', use: 'cult', value: 6000, desc: '凝元期辅助丹，服后修为小涨。' },
+  pill_ningyuan: { name: '凝元补丹', icon: '🌼', type: 'pill', use: 'cult', value: 6000, desc: '凝元期辅助丹，服后修为小涨。' },
   pill_mo:   { name: '化神补丹', icon: '🟣', type: 'pill', use: 'cult', value: 2800, desc: '化神丹之外的辅助丹药。' },
   pill_xue:  { name: '血玉丹', icon: '🩸', type: 'pill', use: 'break', value: 14000, desc: '冲击炼虚期时提升成功率 6%。' },
   pill_shen_cult: { name: '神元丹', icon: '✨', type: 'pill', use: 'cult', value: 40000, desc: '炼虚后期服下，修为狂涨。' },
@@ -185,7 +192,7 @@ const ITEMS = {
   pill_lan:    { name: '蓝萤丹', icon: '🔵', type: 'pill', use: 'heal', value: 260,  desc: '服下后恢复大量生命。' },
   pill_zi:     { name: '紫芝丹', icon: '🍄', type: 'pill', use: 'cult', value: 1600, desc: '紫芝炼成，修为稳固。' },
   pill_you:    { name: '幽兰丹', icon: '🌑', type: 'pill', use: 'cult', value: 6800, desc: '幽兰入丹，阴柔养神。' },
-  pill_tian:   { name: '天心丹', icon: '🪷', type: 'pill', use: 'cult', value: 26000,desc: '天心莲炼成，心境通明。' },
+  pill_tian:   { name: '天心丹', icon: '🌸', type: 'pill', use: 'cult', value: 26000,desc: '天心莲炼成，心境通明。' },
   pill_shu:    { name: '扶桑丹', icon: '🌅', type: 'pill', use: 'cult', value: 62000,desc: '日精入丹，修为如旭日。' },
   pill_hun:    { name: '混沌丹', icon: '🌌', type: 'pill', use: 'cult', value: 150000,desc: '混沌草炼成，道法自然。' },
 
@@ -242,7 +249,7 @@ const ITEMS = {
   /* ===== 补档物品：保证每技能每 5 级有新物品 ===== */
 
   /* 木材 */
-  log_zi:     { name: '紫檀木', icon: '🪵', type: 'material', value: 130,  desc: '紫气凝聚的檀木，纹理如龙。' },
+  log_zi:     { name: '紫檀木', icon: '🎋', type: 'material', value: 130,  desc: '紫气凝聚的檀木，纹理如龙。' },
   log_lan:    { name: '蓝焰木', icon: '🔵', type: 'material', value: 420,  desc: '木质蕴含蓝焰，遇灵即燃。' },
   log_lei:    { name: '雷击木', icon: '⚡', type: 'material', value: 1000, desc: '天雷劈中之木，雷韵不散。' },
   log_you:    { name: '幽檀木', icon: '🌑', type: 'material', value: 1800, desc: '生于幽冥谷的檀木，阴气森森。' },
@@ -269,7 +276,7 @@ const ITEMS = {
   ore_lei:    { name: '雷银矿', icon: '⚡', type: 'material', value: 1100, desc: '雷银矿石，触之微麻。' },
   ore_you:    { name: '幽铁矿', icon: '🌑', type: 'material', value: 1900, desc: '幽冥地底的阴铁原矿。' },
   ore_gui:    { name: '鬼银矿', icon: '👻', type: 'material', value: 2900, desc: '鬼气缠绕的银矿，阴柔至极。' },
-  ore_tian:   { name: '天青石', icon: '🩵', type: 'material', value: 4200, desc: '天青色的灵玉原石。' },
+  ore_tian:   { name: '天青石', icon: '🔹', type: 'material', value: 4200, desc: '天青色的灵玉原石。' },
   ore_shu:    { name: '扶桑石', icon: '🌅', type: 'material', value: 8000, desc: '扶桑树下凝结的日精之石。' },
   ore_jian:   { name: '建木玉', icon: '🌳', type: 'material', value: 15000,desc: '建木根下孕育的通天玉矿。' },
   ore_pan:    { name: '盘古石', icon: '🏔️', type: 'material', value: 28000,desc: '开天祖石，坚不可摧。' },
@@ -281,7 +288,7 @@ const ITEMS = {
   ingot_lei:  { name: '雷银锭', icon: '⚡', type: 'material', value: 2900, desc: '雷银矿熔炼而成，带电不散。' },
   ingot_you:  { name: '幽铁锭', icon: '🌑', type: 'material', value: 5000, desc: '幽铁矿熔炼而成，阴柔噬魂。' },
   ingot_gui:  { name: '鬼银锭', icon: '👻', type: 'material', value: 7600, desc: '鬼银矿熔炼而成，鬼气凝形。' },
-  ingot_tian: { name: '天青锭', icon: '🩵', type: 'material', value: 11000,desc: '天青石熔炼而成。' },
+  ingot_tian: { name: '天青锭', icon: '💠', type: 'material', value: 11000,desc: '天青石熔炼而成。' },
   ingot_shu:  { name: '扶桑锭', icon: '🌅', type: 'material', value: 21000,desc: '扶桑石熔炼而成，日精流转。' },
   ingot_jian: { name: '建木锭', icon: '🌳', type: 'material', value: 40000,desc: '建木玉熔炼而成。' },
   ingot_pan:  { name: '盘古锭', icon: '🏔️', type: 'material', value: 74000,desc: '盘古石熔炼而成，祖气不灭。' },
@@ -291,12 +298,12 @@ const ITEMS = {
   herb_lan:   { name: '蓝萤草', icon: '🔵', type: 'material', value: 30,  desc: '夜色中泛蓝光的灵草。' },
   herb_zi:    { name: '紫芝',   icon: '🍄', type: 'material', value: 160, desc: '紫色灵芝，补元固本。' },
   herb_you:   { name: '幽兰',   icon: '🌑', type: 'material', value: 2400,desc: '幽冥谷中幽香暗涌的灵兰。' },
-  herb_tian:  { name: '天心莲', icon: '🪷', type: 'material', value: 9000,desc: '莲心通天的仙品灵植。' },
+  herb_tian:  { name: '天心莲', icon: '🌸', type: 'material', value: 9000,desc: '莲心通天的仙品灵植。' },
   herb_shu:   { name: '扶桑花', icon: '🌅', type: 'material', value: 19000,desc: '扶桑树上的日华之花。' },
   herb_hun:   { name: '混沌草', icon: '🌌', type: 'material', value: 52000,desc: '混沌之气化生的道草。' },
 
   /* 修炼产物 */
-  qi_jing:     { name: '气晶',     icon: '🫧', type: 'material', value: 25,   desc: '吐纳所得的气之结晶。' },
+  qi_jing:     { name: '气晶',     icon: '💠', type: 'material', value: 25,   desc: '吐纳所得的气之结晶。' },
   jing_ling:   { name: '灵晶',     icon: '💠', type: 'material', value: 90,   desc: '引气入体后凝出的灵晶。' },
   dao_guo:     { name: '道果',     icon: '🍎', type: 'material', value: 900,  desc: '入定圆满所结的道果。' },
   jing_yuan:   { name: '精元',     icon: '🔴', type: 'material', value: 6000, desc: '洗髓伐骨后凝出的精元。' },
@@ -312,8 +319,8 @@ const ITEMS = {
   tea_zi:     { name: '紫府茶', icon: '🍵', type: 'food', value: 950,  heal: 2600, desc: '饮用后恢复 2600 点生命。' },
   rice_tian:  { name: '天香米', icon: '🌾', type: 'food', value: 4200, heal: 12000,desc: '食用后恢复 12000 点生命。' },
   guo_shu:    { name: '扶桑果', icon: '🍑', type: 'food', value: 16000,heal: 42000,desc: '食用后恢复 42000 点生命。' },
-  dou_hun:    { name: '混沌豆', icon: '🫘', type: 'material', value: 48000,desc: '混沌之气结成的道豆。' },
-  lian_zi:    { name: '道莲',   icon: '🪷', type: 'material', value: 110000,desc: '九品道莲，食之悟道。' },
+  dou_hun:    { name: '混沌豆', icon: '🥜', type: 'material', value: 48000,desc: '混沌之气结成的道豆。' },
+  lian_zi:    { name: '道莲',   icon: '🌷', type: 'material', value: 110000,desc: '九品道莲，食之悟道。' },
 
   /* 新增种子 */
   seed_lingdao:   { name: '灵稻种子',   icon: '🌾', type: 'seed', value: 12,   desc: '种入地块后可收获灵米。' },
@@ -321,8 +328,8 @@ const ITEMS = {
   seed_zifu:      { name: '紫府茶种',   icon: '🍵', type: 'seed', value: 320,  desc: '种入地块后可收获紫府茶。' },
   seed_tianxiang: { name: '天香稻种',   icon: '🌾', type: 'seed', value: 1400, desc: '种入地块后可收获天香米。' },
   seed_fusang:    { name: '扶桑果种',   icon: '🍑', type: 'seed', value: 5000, desc: '种入地块后可收获扶桑果。' },
-  seed_hundou:    { name: '混沌豆种',   icon: '🫘', type: 'seed', value: 16000,desc: '种入地块后可收获混沌豆。' },
-  seed_daolian:   { name: '道莲种子',   icon: '🪷', type: 'seed', value: 36000,desc: '种入地块后可收获道莲。' },
+  seed_hundou:    { name: '混沌豆种',   icon: '🌱', type: 'seed', value: 16000,desc: '种入地块后可收获混沌豆。' },
+  seed_daolian:   { name: '道莲种子',   icon: '🌱', type: 'seed', value: 36000,desc: '种入地块后可收获道莲。' },
 
   /* 补档法宝装备 */
   w_zi:      { name: '紫檀剑', icon: '🗡️', type: 'equip', slot: 'weapon', atk: 46, hit: 18, value: 1800, desc: '紫檀为柄，紫金为锋。攻击 +46，命中 +18。' },
@@ -332,7 +339,7 @@ const ITEMS = {
   r_hundun:  { name: '混沌戒', icon: '🌌', type: 'equip', slot: 'ring', atk: 40, ev: 24, def: 18, hit: 24, value: 60000, desc: '混沌本源凝戒，万象归一。攻击 +40，闪避 +24，防御 +18，命中 +24。' },
   w_you:     { name: '玄冥剑', icon: '🌑', type: 'equip', slot: 'weapon', atk: 50, hit: 20, ev: 10, value: 3800, desc: '幽铁与鬼银合铸，幽光森森。攻击 +50，命中 +20，闪避 +10。' },
   a_gui:     { name: '幽铁甲', icon: '🌑', type: 'equip', slot: 'armor', def: 38, hp: 240, ev: 10, value: 5200, desc: '鬼银锻造，阴气护体。防御 +38，生命 +240，闪避 +10。' },
-  w_tian:    { name: '天穹剑', icon: '🩵', type: 'equip', slot: 'weapon', atk: 78, hit: 28, ev: 12, hp: 40, value: 9800, desc: '天青锭所铸，剑光如天。攻击 +78，命中 +28，闪避 +12，生命 +40。' },
+  w_tian:    { name: '天穹剑', icon: '🗡️', type: 'equip', slot: 'weapon', atk: 78, hit: 28, ev: 12, hp: 40, value: 9800, desc: '天青锭所铸，剑光如天。攻击 +78，命中 +28，闪避 +12，生命 +40。' },
   h_shu:     { name: '扶桑冠', icon: '🌅', type: 'equip', slot: 'helmet', def: 38, hit: 46, hp: 120, value: 18000, desc: '扶桑木与扶桑锭合铸，朝气蓬勃。防御 +38，命中 +46，生命 +120。' },
   r_jian:    { name: '建木戒', icon: '🌳', type: 'equip', slot: 'ring', atk: 28, ev: 18, def: 14, hit: 18, value: 38000, desc: '建木根凝戒，承通天之意。攻击 +28，闪避 +18，防御 +14，命中 +18。' },
   h_kunlun:  { name: '昆仑冠', icon: '🏔️', type: 'equip', slot: 'helmet', def: 52, hit: 58, hp: 200, value: 48000, desc: '昆仑山气凝冠，仙意凛然。防御 +52，命中 +58，生命 +200。' }
@@ -373,19 +380,19 @@ const SKILL_ORDER = ['woodcutting', 'fishing', 'mining', 'smelting', 'crafting',
  * ========================================================================= */
 const ACTIONS = {
   woodcutting: [
-    { id: 'wc_qing',  name: '灵木林', icon: '🪵', req: 1,  time: 1.5, xp: 5,   out: { id: 'log_qing', qty: 1 } },
+    { id: 'wc_qing',  name: '灵木林', icon: '🌳', req: 1,  time: 1.5, xp: 5,   out: { id: 'log_qing', qty: 1 } },
     { id: 'wc_pine',  name: '青松林', icon: '🌲', req: 3,  time: 2.0, xp: 9,   out: { id: 'log_qing', qty: 2 } },
     { id: 'wc_han',   name: '寒松林', icon: '🌲', req: 5,  time: 2.6, xp: 14,  out: { id: 'log_han',  qty: 1 } },
     { id: 'wc_maple', name: '赤枫林', icon: '🍁', req: 8,  time: 3.2, xp: 22,  out: { id: 'log_han',  qty: 1 } },
     { id: 'wc_tie',   name: '铁木古树', icon: '🌳', req: 15, time: 4.2, xp: 34,  out: { id: 'log_tie',  qty: 1 } },
-    { id: 'wc_zi',    name: '紫檀林', icon: '🪵', req: 18, time: 4.8, xp: 42,  out: { id: 'log_zi',   qty: 1 } },
+    { id: 'wc_zi',    name: '紫檀林', icon: '🎋', req: 18, time: 4.8, xp: 42,  out: { id: 'log_zi',   qty: 1 } },
     { id: 'wc_bing',  name: '冰魄古木', icon: '❄️', req: 22, time: 5.5, xp: 60,  out: { id: 'log_bing', qty: 1 } },
     { id: 'wc_lan',   name: '蓝焰林', icon: '🔵', req: 28, time: 6.2, xp: 88,  out: { id: 'log_lan',  qty: 1 } },
     { id: 'wc_yun',   name: '云杉绝顶', icon: '☁️', req: 32, time: 7.0, xp: 110, out: { id: 'log_yun',  qty: 1 } },
     { id: 'wc_lei',   name: '雷击古林', icon: '⚡', req: 40, time: 8.4, xp: 155, out: { id: 'log_lei',  qty: 1 } },
     { id: 'wc_you',   name: '幽檀谷', icon: '🌑', req: 44, time: 9.0, xp: 178, out: { id: 'log_you',  qty: 1 } },
     { id: 'wc_shen',  name: '万年神木苑', icon: '🌴', req: 48, time: 9.5, xp: 200, out: { id: 'log_shen', qty: 1 } },
-    { id: 'wc_lingxu',name: '灵虚林',     icon: '🪵', req: 55, time: 10.5, xp: 260, out: { id: 'log_lingxu', qty: 1 } },
+    { id: 'wc_lingxu',name: '灵虚林',     icon: '🌌', req: 55, time: 10.5, xp: 260, out: { id: 'log_lingxu', qty: 1 } },
     { id: 'wc_tian',  name: '天穹木林', icon: '☁️', req: 58, time: 11.2, xp: 292, out: { id: 'log_tian', qty: 1 } },
     { id: 'wc_taiyuan',name:'太原林',     icon: '🌲', req: 62, time: 12.0, xp: 340, out: { id: 'log_taiyuan', qty: 1 } },
     { id: 'wc_shu',   name: '扶桑林', icon: '🌅', req: 68, time: 13.0, xp: 420, out: { id: 'log_shu',  qty: 1 } },
@@ -414,13 +421,13 @@ const ACTIONS = {
     { id: 'fi_shu',  name: '扶桑鲤池',icon: '🐠', req: 68, time: 13.6,xp: 435, out: { id: 'fish_shu',  qty: 1 } },
     { id: 'fi_taiyuan',name:'太玄天池',icon:'🐉', req: 72, time: 14.5,xp: 460, out: { id: 'fish_taiyuan', qty: 1 } },
     { id: 'fi_jian', name: '建木鱼渊',icon: '🐡', req: 78, time: 15.8,xp: 610, out: { id: 'fish_jian', qty: 1 } },
-    { id: 'fi_kunlun',name: '昆仑仙泉',icon: '🪱', req: 82, time: 17.0,xp: 680, out: { id: 'fish_kunlun', qty: 1 } },
+    { id: 'fi_kunlun',name: '昆仑仙泉',icon: '🐍', req: 82, time: 17.0,xp: 680, out: { id: 'fish_kunlun', qty: 1 } },
     { id: 'fi_pan',  name: '盘古鲵海',icon: '🦎', req: 88, time: 18.4,xp: 890, out: { id: 'fish_pan',  qty: 1 } },
     { id: 'fi_wuxu', name: '无虚之海',icon: '🌊', req: 92, time: 20.5,xp: 1080,out: { id: 'fish_wuxu', qty: 1 } },
     { id: 'fi_hundun',name:'混沌鱼渊',icon: '🌊', req: 99, time: 22.5,xp: 1520,out: { id: 'fish_hundun', qty: 1 } }
   ],
   mining: [
-    { id: 'mn_iron', name: '铁矿脉', icon: '🪨', req: 1,  time: 2.0, xp: 6,   out: { id: 'ore_iron', qty: 1 } },
+    { id: 'mn_iron', name: '铁矿脉', icon: '⛏️', req: 1,  time: 2.0, xp: 6,   out: { id: 'ore_iron', qty: 1 } },
     { id: 'mn_copp', name: '铜矿脉', icon: '🟧', req: 3,  time: 2.4, xp: 10,  out: { id: 'ore_iron', qty: 2 } },
     { id: 'mn_xuan', name: '玄铁矿脉', icon: '⛰️', req: 6,  time: 3.2, xp: 16,  out: { id: 'ore_xuan', qty: 1 } },
     { id: 'mn_tung', name: '钨金矿脉', icon: '✨', req: 10, time: 3.8, xp: 24,  out: { id: 'ore_xuan', qty: 1 } },
@@ -433,7 +440,7 @@ const ACTIONS = {
     { id: 'mn_you',  name: '幽铁矿坑', icon: '🌑', req: 43, time: 9.0, xp: 168, out: { id: 'ore_you',  qty: 1 } },
     { id: 'mn_gui',  name: '鬼银矿洞', icon: '👻', req: 48, time: 10.0,xp: 212, out: { id: 'ore_gui',  qty: 1 } },
     { id: 'mn_shen', name: '神玉陨坑', icon: '🌈', req: 52, time: 10.5, xp: 230, out: { id: 'ore_shen', qty: 1 } },
-    { id: 'mn_tian', name: '天青石矿', icon: '🩵', req: 58, time: 11.6,xp: 305, out: { id: 'ore_tian', qty: 1 } },
+    { id: 'mn_tian', name: '天青石矿', icon: '🔹', req: 58, time: 11.6,xp: 305, out: { id: 'ore_tian', qty: 1 } },
     { id: 'mn_xu',   name: '炼虚矿脉', icon: '🔮', req: 62, time: 12.0, xp: 310, out: { id: 'ore_xu', qty: 1 } },
     { id: 'mn_shu',  name: '扶桑石矿', icon: '🌅', req: 68, time: 13.4,xp: 440, out: { id: 'ore_shu',  qty: 1 } },
     { id: 'mn_tai',  name: '太清玉矿', icon: '💎', req: 72, time: 13.5, xp: 420, out: { id: 'ore_tai', qty: 1 } },
@@ -451,7 +458,7 @@ const ACTIONS = {
     { id: 'al_lan',  name: '采药 · 蓝萤草', icon: '🔵', req: 8,  time: 3.4, xp: 20,  out: { id: 'herb_lan', qty: 1 } },
     { id: 'al_zhuji',name: '采药 · 筑基花', icon: '🌸', req: 12, time: 4.0, xp: 28,  out: { id: 'herb_zhuji', qty: 1 } },
     { id: 'al_zi',   name: '采药 · 紫芝', icon: '🍄', req: 18, time: 4.6, xp: 48,  out: { id: 'herb_zi', qty: 1 } },
-    { id: 'al_ning', name: '采药 · 凝元参', icon: '🪷', req: 22, time: 5.2, xp: 60,  out: { id: 'herb_ning', qty: 1 } },
+    { id: 'al_ning', name: '采药 · 凝元参', icon: '🌼', req: 22, time: 5.2, xp: 60,  out: { id: 'herb_ning', qty: 1 } },
     { id: 'al_bing', name: '采药 · 冰心草', icon: '❄️', req: 28, time: 5.8, xp: 85,  out: { id: 'herb_bing', qty: 1 } },
     { id: 'al_ying', name: '采药 · 化婴芝', icon: '🍄', req: 32, time: 6.4, xp: 110, out: { id: 'herb_ying', qty: 1 } },
     { id: 'al_yao',  name: '采药 · 妖丹花', icon: '🌺', req: 38, time: 7.2, xp: 150, out: { id: 'herb_yao', qty: 1 } },
@@ -459,19 +466,19 @@ const ACTIONS = {
     { id: 'al_you',  name: '采药 · 幽兰', icon: '🌑', req: 48, time: 8.6, xp: 225, out: { id: 'herb_you', qty: 1 } },
     { id: 'al_mo',   name: '采药 · 墨灵芝', icon: '🟣', req: 52, time: 9.2, xp: 260, out: { id: 'herb_mo', qty: 1 } },
     { id: 'al_xue',  name: '采药 · 血玉参', icon: '🩸', req: 60, time: 10.5, xp: 340, out: { id: 'herb_xue', qty: 1 } },
-    { id: 'al_tian', name: '采药 · 天心莲', icon: '🪷', req: 63, time: 11.4, xp: 400, out: { id: 'herb_tian', qty: 1 } },
+    { id: 'al_tian', name: '采药 · 天心莲', icon: '🌸', req: 63, time: 11.4, xp: 400, out: { id: 'herb_tian', qty: 1 } },
     { id: 'al_shen', name: '采药 · 神元果', icon: '✨', req: 70, time: 12.5, xp: 480, out: { id: 'herb_shen', qty: 1 } },
     { id: 'al_shu',  name: '采药 · 扶桑花', icon: '🌅', req: 73, time: 13.6, xp: 545, out: { id: 'herb_shu', qty: 1 } },
-    { id: 'al_xu',   name: '采药 · 炼虚参', icon: '🪷', req: 78, time: 14.5, xp: 620, out: { id: 'herb_xu', qty: 1 } },
+    { id: 'al_xu',   name: '采药 · 炼虚参', icon: '🏵️', req: 78, time: 14.5, xp: 620, out: { id: 'herb_xu', qty: 1 } },
     { id: 'al_hun',  name: '采药 · 混沌草', icon: '🌌', req: 83, time: 16.0, xp: 760, out: { id: 'herb_hun', qty: 1 } },
     { id: 'al_tai',  name: '采药 · 太清芝', icon: '🍄', req: 86, time: 17.0, xp: 850, out: { id: 'herb_tai', qty: 1 } },
-    { id: 'al_kunlun',name:'采药 · 昆仑莲', icon: '🪷', req: 93, time: 20.0, xp: 1250,out: { id: 'herb_kunlun', qty: 1 } },
+    { id: 'al_kunlun',name:'采药 · 昆仑莲', icon: '🌷', req: 93, time: 20.0, xp: 1250,out: { id: 'herb_kunlun', qty: 1 } },
     { id: 'al_wuxu', name: '采药 · 无虚根', icon: '🌱', req: 98, time: 24.0, xp: 1800,out: { id: 'herb_wuxu', qty: 1 } }
   ],
   alchemy: [],
   cultivation: [
     { id: 'meditate',   name: '打坐吐纳',   icon: '🧘', req: 1,  time: 2.5, xp: 12,  out: { spirit: 4,   heal: 8 } },
-    { id: 'xiaozhoutian',name:'小周天运转', icon: '🫧', req: 8,  time: 3.2, xp: 18,  out: { spirit: 8,   heal: 12, id: 'qi_jing', qty: 1 } },
+    { id: 'xiaozhoutian',name:'小周天运转', icon: '🌀', req: 8,  time: 3.2, xp: 18,  out: { spirit: 8,   heal: 12, id: 'qi_jing', qty: 1 } },
     { id: 'yinqi',      name: '引气入体',   icon: '💠', req: 13, time: 3.8, xp: 22,  out: { spirit: 9,   heal: 14, id: 'jing_ling', qty: 1 } },
     { id: 'guanxin',    name: '观心坐忘',   icon: '☯️', req: 20, time: 5.0, xp: 30,  out: { spirit: 12,  heal: 20 } },
     { id: 'ningshen',   name: '凝神入定',   icon: '🍎', req: 23, time: 5.4, xp: 40,  out: { spirit: 16,  heal: 28, id: 'dao_guo', qty: 1 } },
@@ -567,13 +574,13 @@ const RECIPES = {
     { id: 'sm_lei',   cat: 'smelt', name: '熔炼 · 雷银锭', icon: '⚡', req: 33, time: 7.2, xp: 118, in: [{ id: 'ore_lei', qty: 3 }, { id: 'log_lei', qty: 1 }], out: { id: 'ingot_lei', qty: 1 } },
     { id: 'sm_you',   cat: 'smelt', name: '熔炼 · 幽铁锭', icon: '🌑', req: 43, time: 8.8, xp: 172, in: [{ id: 'ore_you', qty: 3 }, { id: 'log_you', qty: 1 }], out: { id: 'ingot_you', qty: 1 } },
     { id: 'sm_gui',   cat: 'smelt', name: '熔炼 · 鬼银锭', icon: '👻', req: 48, time: 9.6, xp: 214, in: [{ id: 'ore_gui', qty: 3 }, { id: 'log_you', qty: 2 }], out: { id: 'ingot_gui', qty: 1 } },
-    { id: 'sm_tian',  cat: 'smelt', name: '熔炼 · 天青锭', icon: '🩵', req: 58, time: 11.4, xp: 306, in: [{ id: 'ore_tian', qty: 3 }, { id: 'log_tian', qty: 1 }], out: { id: 'ingot_tian', qty: 1 } },
+    { id: 'sm_tian',  cat: 'smelt', name: '熔炼 · 天青锭', icon: '💠', req: 58, time: 11.4, xp: 306, in: [{ id: 'ore_tian', qty: 3 }, { id: 'log_tian', qty: 1 }], out: { id: 'ingot_tian', qty: 1 } },
     { id: 'sm_shu',   cat: 'smelt', name: '熔炼 · 扶桑锭', icon: '🌅', req: 68, time: 13.2, xp: 430, in: [{ id: 'ore_shu', qty: 3 }, { id: 'log_shu', qty: 1 }], out: { id: 'ingot_shu', qty: 1 } },
     { id: 'sm_jian',  cat: 'smelt', name: '熔炼 · 建木锭', icon: '🌳', req: 78, time: 15.8, xp: 610, in: [{ id: 'ore_jian', qty: 3 }, { id: 'log_jian', qty: 1 }], out: { id: 'ingot_jian', qty: 1 } },
     { id: 'sm_pan',   cat: 'smelt', name: '熔炼 · 盘古锭', icon: '🏔️', req: 88, time: 18.6, xp: 890, in: [{ id: 'ore_pan', qty: 3 }, { id: 'log_pan', qty: 1 }], out: { id: 'ingot_pan', qty: 1 } },
     { id: 'sm_hundun',cat: 'smelt', name: '熔炼 · 混沌锭', icon: '🌌', req: 98, time: 22.8, xp: 1500,in: [{ id: 'ore_hundun', qty: 3 }, { id: 'log_hundun', qty: 1 }], out: { id: 'ingot_hundun', qty: 1 } },
     /* --- 修炼产物 → 灵力（修炼 ↔ 炼器联动） --- */
-    { id: 'sm_qi',    cat: 'smelt', name: '聚灵 · 气晶',  icon: '🫧', req: 8,  time: 2.0, xp: 10,  in: [{ id: 'qi_jing', qty: 2 }], out: { spirit: 100 } },
+    { id: 'sm_qi',    cat: 'smelt', name: '聚灵 · 气晶',  icon: '💠', req: 8,  time: 2.0, xp: 10,  in: [{ id: 'qi_jing', qty: 2 }], out: { spirit: 100 } },
     { id: 'sm_jing',  cat: 'smelt', name: '聚灵 · 灵晶',  icon: '💠', req: 13, time: 2.4, xp: 20,  in: [{ id: 'jing_ling', qty: 2 }], out: { spirit: 260 } },
     { id: 'sm_daoguo',cat: 'smelt', name: '聚灵 · 道果',  icon: '🍎', req: 23, time: 3.2, xp: 52,  in: [{ id: 'dao_guo', qty: 2 }], out: { spirit: 700 } },
     { id: 'sm_jingyuan',cat:'smelt',name: '聚灵 · 精元',  icon: '🔴', req: 38, time: 4.6, xp: 120, in: [{ id: 'jing_yuan', qty: 2 }], out: { spirit: 2000 } },
@@ -581,8 +588,8 @@ const RECIPES = {
     { id: 'sm_xuanzhu',cat: 'smelt', name: '聚灵 · 玄珠',  icon: '⚫', req: 63, time: 8.0, xp: 400, in: [{ id: 'xuan_zhu', qty: 2 }], out: { spirit: 15000 } },
     { id: 'sm_xukong',cat: 'smelt', name: '聚灵 · 虚空晶',icon: '🕳️', req: 78, time: 10.5,xp: 640, in: [{ id: 'xu_kong_jing', qty: 2 }], out: { spirit: 40000 } },
     { id: 'sm_tiandao',cat: 'smelt', name: '聚灵 · 天道印',icon: '🌟', req: 88, time: 13.0,xp: 920, in: [{ id: 'tian_dao', qty: 2 }], out: { spirit: 100000 } },
-    { id: 'sm_douhun',cat: 'smelt', name: '聚灵 · 混沌豆',icon: '🫘', req: 73, time: 9.6, xp: 520, in: [{ id: 'dou_hun', qty: 2 }], out: { spirit: 30000 } },
-    { id: 'sm_lian',  cat: 'smelt', name: '聚灵 · 道莲',  icon: '🪷', req: 83, time: 11.8,xp: 780, in: [{ id: 'lian_zi', qty: 2 }], out: { spirit: 80000 } },
+    { id: 'sm_douhun',cat: 'smelt', name: '聚灵 · 混沌豆',icon: '🥜', req: 73, time: 9.6, xp: 520, in: [{ id: 'dou_hun', qty: 2 }], out: { spirit: 30000 } },
+    { id: 'sm_lian',  cat: 'smelt', name: '聚灵 · 道莲',  icon: '🌷', req: 83, time: 11.8,xp: 780, in: [{ id: 'lian_zi', qty: 2 }], out: { spirit: 80000 } },
     { id: 'sm_stone', cat: 'smelt', name: '提炼 · 灵石', icon: '💠', req: 14, time: 2.2, xp: 15,  in: [{ id: 'ore_ling', qty: 3 }], out: { gold: 50 } },
     { id: 'sm_spirit',cat: 'smelt', name: '聚灵 · 化灵力', icon: '✨', req: 14, time: 1.5, xp: 5,   in: [{ id: 'ore_ling', qty: 1 }], out: { spirit: 60 } },
     { id: 'sm_tie',   cat: 'smelt', name: '熔炼 · 铁木汁', icon: '🌳', req: 15, time: 4.5, xp: 36,  in: [{ id: 'log_tie', qty: 2 }, { id: 'ore_ling', qty: 1 }], out: { id: 'ingot_iron', qty: 3 } },
@@ -634,7 +641,7 @@ const RECIPES = {
     /* 补档过渡装备（填补拆分后的 20 档缺口） */
     { id: 'fg_you',    cat: 'forge', name: '锻造 · 玄冥剑',  icon: '🌑', req: 38, time: 11.0, xp: 250, in: [{ id: 'ingot_you', qty: 3 }, { id: 'ingot_gui', qty: 2 }, { id: 'hide', qty: 3 }], out: { id: 'w_you', qty: 1 } },
     { id: 'fg_gui',    cat: 'forge', name: '锻造 · 幽铁甲',  icon: '🌑', req: 52, time: 13.5, xp: 360, in: [{ id: 'ingot_gui', qty: 4 }, { id: 'hide', qty: 6 }, { id: 'ingot_you', qty: 2 }], out: { id: 'a_gui', qty: 1 } },
-    { id: 'fg_wtian',  cat: 'forge', name: '锻造 · 天穹剑',  icon: '🩵', req: 56, time: 14.5, xp: 400, in: [{ id: 'ingot_tian', qty: 4 }, { id: 'log_tian', qty: 3 }, { id: 'ingot_shu', qty: 2 }], out: { id: 'w_tian', qty: 1 } },
+    { id: 'fg_wtian',  cat: 'forge', name: '锻造 · 天穹剑',  icon: '🗡️', req: 56, time: 14.5, xp: 400, in: [{ id: 'ingot_tian', qty: 4 }, { id: 'log_tian', qty: 3 }, { id: 'ingot_shu', qty: 2 }], out: { id: 'w_tian', qty: 1 } },
     { id: 'fg_hshu',   cat: 'forge', name: '锻造 · 扶桑冠',  icon: '🌅', req: 73, time: 18.0, xp: 620, in: [{ id: 'ingot_shu', qty: 3 }, { id: 'hide', qty: 4 }, { id: 'log_shu', qty: 2 }], out: { id: 'h_shu', qty: 1 } },
     { id: 'fg_rjian',  cat: 'forge', name: '锻造 · 建木戒',  icon: '🌳', req: 83, time: 21.0, xp: 820, in: [{ id: 'ingot_jian', qty: 3 }, { id: 'ingot_kunlun', qty: 2 }, { id: 'ore_jian', qty: 2 }], out: { id: 'r_jian', qty: 1 } },
     { id: 'fg_hkunlun',cat: 'forge', name: '锻造 · 昆仑冠',  icon: '🏔️', req: 93, time: 26.0, xp: 1400,in: [{ id: 'ingot_kunlun', qty: 4 }, { id: 'hide', qty: 6 }, { id: 'ingot_tai', qty: 2 }], out: { id: 'h_kunlun', qty: 1 } },
@@ -654,7 +661,7 @@ const RECIPES = {
     { id: 'pl_bing',  cat: 'pill', name: '炼制 · 冰心丹',  icon: '🧊', req: 28, time: 9.0, xp: 200, in: [{ id: 'herb_bing', qty: 3 }, { id: 'herb_juqi', qty: 2 }, { id: 'ore_bing', qty: 2 }], out: { id: 'pill_bing', qty: 1 } },
     { id: 'pl_yao',   cat: 'pill', name: '炼制 · 妖元丹',  icon: '🌺', req: 38, time: 11.0,xp: 340, in: [{ id: 'herb_yao', qty: 3 }, { id: 'herb_zhuji', qty: 2 }, { id: 'ore_bing', qty: 2 }], out: { id: 'pill_yao', qty: 1 } },
     { id: 'pl_zu',    cat: 'pill', name: '炼制 · 龙须丹',  icon: '🌟', req: 45, time: 12.5,xp: 440, in: [{ id: 'herb_zu', qty: 3 }, { id: 'herb_ying', qty: 2 }, { id: 'ore_bing', qty: 2 }], out: { id: 'pill_zu', qty: 1 } },
-    { id: 'pl_ningyuan', cat: 'pill', name: '炼制 · 凝元补丹', icon: '🪷', req: 48, time: 13.0,xp: 520, in: [{ id: 'herb_ning', qty: 3 }, { id: 'herb_zu', qty: 2 }, { id: 'ore_gui', qty: 2 }], out: { id: 'pill_ningyuan', qty: 1 } },
+    { id: 'pl_ningyuan', cat: 'pill', name: '炼制 · 凝元补丹', icon: '🌼', req: 48, time: 13.0,xp: 520, in: [{ id: 'herb_ning', qty: 3 }, { id: 'herb_zu', qty: 2 }, { id: 'ore_gui', qty: 2 }], out: { id: 'pill_ningyuan', qty: 1 } },
     { id: 'pl_mo',    cat: 'pill', name: '炼制 · 化神补丹',icon: '🟣', req: 52, time: 14.0,xp: 600, in: [{ id: 'herb_mo', qty: 3 }, { id: 'herb_ning', qty: 3 }, { id: 'ore_bing', qty: 2 }], out: { id: 'pill_mo', qty: 1 } },
     { id: 'pl_xue',   cat: 'pill', name: '炼制 · 血玉丹',  icon: '🩸', req: 60, time: 16.0,xp: 900, in: [{ id: 'herb_xue', qty: 3 }, { id: 'herb_mo', qty: 2 }, { id: 'ore_yang', qty: 3 }], out: { id: 'pill_xue', qty: 1 } },
     { id: 'pl_shen2', cat: 'pill', name: '炼制 · 神元丹',  icon: '✨', req: 70, time: 20.0,xp: 1400,in: [{ id: 'herb_shen', qty: 3 }, { id: 'herb_xue', qty: 2 }, { id: 'ore_shen', qty: 2 }], out: { id: 'pill_shen_cult', qty: 1 } },
@@ -665,7 +672,7 @@ const RECIPES = {
     { id: 'pl_lan',   cat: 'pill', name: '炼制 · 蓝萤丹',  icon: '🔵', req: 8,  time: 3.6, xp: 22,  in: [{ id: 'herb_lan', qty: 3 }, { id: 'herb', qty: 1 }], out: { id: 'pill_lan', qty: 1 } },
     { id: 'pl_zi',    cat: 'pill', name: '炼制 · 紫芝丹',  icon: '🍄', req: 18, time: 5.2, xp: 50,  in: [{ id: 'herb_zi', qty: 3 }, { id: 'herb_liao', qty: 2 }], out: { id: 'pill_zi', qty: 1 } },
     { id: 'pl_you',   cat: 'pill', name: '炼制 · 幽兰丹',  icon: '🌑', req: 43, time: 10.0,xp: 190, in: [{ id: 'herb_you', qty: 3 }, { id: 'herb_zu', qty: 1 }, { id: 'ore_you', qty: 1 }], out: { id: 'pill_you', qty: 1 } },
-    { id: 'pl_tian',  cat: 'pill', name: '炼制 · 天心丹',  icon: '🪷', req: 63, time: 14.0,xp: 430, in: [{ id: 'herb_tian', qty: 3 }, { id: 'herb_xue', qty: 2 }, { id: 'ore_tian', qty: 2 }], out: { id: 'pill_tian', qty: 1 } },
+    { id: 'pl_tian',  cat: 'pill', name: '炼制 · 天心丹',  icon: '🌸', req: 63, time: 14.0,xp: 430, in: [{ id: 'herb_tian', qty: 3 }, { id: 'herb_xue', qty: 2 }, { id: 'ore_tian', qty: 2 }], out: { id: 'pill_tian', qty: 1 } },
     { id: 'pl_shu',   cat: 'pill', name: '炼制 · 扶桑丹',  icon: '🌅', req: 73, time: 17.0,xp: 640, in: [{ id: 'herb_shu', qty: 3 }, { id: 'herb_tian', qty: 2 }, { id: 'ore_shu', qty: 2 }], out: { id: 'pill_shu', qty: 1 } },
     { id: 'pl_hun',   cat: 'pill', name: '炼制 · 混沌丹',  icon: '🌌', req: 83, time: 21.0,xp: 1150,in: [{ id: 'herb_hun', qty: 3 }, { id: 'herb_shu', qty: 2 }, { id: 'ore_hundun', qty: 1 }], out: { id: 'pill_hun', qty: 1 } },
     { id: 'pl_he',    cat: 'pill', name: '炼制 · 合一丹',  icon: '☯️', req: 68, time: 18.0,xp: 1100,in: [{ id: 'herb_shen', qty: 2 }, { id: 'herb_bing', qty: 2 }, { id: 'herb_yao', qty: 2 }, { id: 'herb_zu', qty: 2 }, { id: 'herb_mo', qty: 2 }], out: { id: 'pill_he', qty: 1 } },
@@ -677,7 +684,7 @@ const RECIPES = {
  * 妖兽表（命中制：hit 命中 / ev 闪避 / atkMin~atkMax 伤害区间 / dr 伤害减免 / interval 出手间隔）
  * ========================================================================= */
 const MONSTERS = [
-  { id: 'bandit',    name: '山贼',     icon: '🥷', lvl: 1,  hp: 34,   hit: 14,  ev: 8,  atkMin: 5,   atkMax: 9,   dr: 0.02, interval: 2.6, xp: 14,   gold: [5, 11],     respawn: 1.5, drops: [{ id: 'hide', chance: 0.45, qty: 1 }, { id: 'herb_liao', chance: 0.25, qty: 1 }, { id: 'log_qing', chance: 0.35, qty: 1 }] },
+  { id: 'bandit',    name: '山贼',     icon: '👤', lvl: 1,  hp: 34,   hit: 14,  ev: 8,  atkMin: 5,   atkMax: 9,   dr: 0.02, interval: 2.6, xp: 14,   gold: [5, 11],     respawn: 1.5, drops: [{ id: 'hide', chance: 0.45, qty: 1 }, { id: 'herb_liao', chance: 0.25, qty: 1 }, { id: 'log_qing', chance: 0.35, qty: 1 }] },
   { id: 'wolf',      name: '灵狼',     icon: '🐺', lvl: 5,  hp: 80,   hit: 26,  ev: 14, atkMin: 9,   atkMax: 15,  dr: 0.05, interval: 2.4, xp: 34,   gold: [14, 26],    respawn: 2.0, drops: [{ id: 'hide', chance: 0.6, qty: 1 }, { id: 'herb', chance: 0.25, qty: 1 }, { id: 'ore_iron', chance: 0.3, qty: 1 }] },
   { id: 'boar',      name: '铁背野猪', icon: '🐗', lvl: 8,  hp: 130,  hit: 34,  ev: 12, atkMin: 12,  atkMax: 19,  dr: 0.12, interval: 2.8, xp: 52,   gold: [22, 40],    respawn: 2.5, drops: [{ id: 'hide', chance: 0.7, qty: 2 }, { id: 'ore_iron', chance: 0.4, qty: 1 }, { id: 'pill_liao', chance: 0.04, qty: 1 }] },
   { id: 'golem',     name: '铁甲妖兽', icon: '🦾', lvl: 12, hp: 210,  hit: 45,  ev: 10, atkMin: 16,  atkMax: 24,  dr: 0.25, interval: 3.0, xp: 82,   gold: [40, 70],    respawn: 3.0, drops: [{ id: 'ore_xuan', chance: 0.5, qty: 1 }, { id: 'ore_iron', chance: 0.7, qty: 2 }, { id: 'log_han', chance: 0.3, qty: 1 }, { id: 'pill_wudao', chance: 0.03, qty: 1 }] },
@@ -758,8 +765,8 @@ const DUNGEONS = [
 const WUXING = [
   { id: 'metal', name: '金', icon: '⚔️', color: '#d9c47a', skill: 'crafting', desc: '金主锋锐，道在炼器。' },
   { id: 'wood', name: '木', icon: '🌿', color: '#7dd8b8', skill: 'woodcutting', desc: '木主生发，道在伐木。' },
-  { id: 'water', name: '水', icon: '�', color: '#63a9e0', skill: 'fishing', desc: '水主流转，道在钓鱼。' },
-  { id: 'fire', name: '火', icon: '�', color: '#e08a6a', skill: 'alchemy', desc: '火主炼化，道在炼丹。' },
+  { id: 'water', name: '水', icon: '💧', color: '#63a9e0', skill: 'fishing', desc: '水主流转，道在钓鱼。' },
+  { id: 'fire', name: '火', icon: '🔥', color: '#e08a6a', skill: 'alchemy', desc: '火主炼化，道在炼丹。' },
   { id: 'earth', name: '土', icon: '⛰️', color: '#b58a5f', skill: 'formation', desc: '土主承载，道在阵法。' }
 ];
 
@@ -770,22 +777,22 @@ const WUXING = [
 const REALM_DEFS = [
   { name: '炼气期', icon: '🌱', color: '#7dd8b8', desc: '引气入体，褪去凡胎。',
     stages: ['一层', '二层', '三层', '四层', '五层', '六层', '七层', '八层', '九层', '十层', '十一层', '十二层', '十三层'],
-    needBase: 100, needMul: 1.32, rate: 0.95, rateToNext: 0.55, pill: 'pill_zhuji', gold: 0 },
+    needBase: 7600, needMul: 1.32, rate: 0.95, rateToNext: 0.55, pill: 'pill_zhuji', gold: 0 },
   { name: '筑基期', icon: '🏔️', color: '#63a9e0', desc: '筑就道基，可御法器。',
     stages: ['初期', '中期', '后期', '大圆满'],
-    needBase: 6000, needMul: 1.5, rate: 0.72, rateToNext: 0.40, pill: 'pill_ning', gold: 150 },
+    needBase: 728000, needMul: 1.5, rate: 0.72, rateToNext: 0.40, pill: 'pill_ning', gold: 150 },
   { name: '结丹期', icon: '🔆', color: '#d8b26a', desc: '凝结金丹，寿元大增。',
     stages: ['初期', '中期', '后期', '大圆满'],
-    needBase: 40000, needMul: 1.55, rate: 0.60, rateToNext: 0.30, pill: 'pill_ying', gold: 400 },
+    needBase: 2815000, needMul: 1.45, rate: 0.60, rateToNext: 0.30, pill: 'pill_ying', gold: 400 },
   { name: '元婴期', icon: '👶', color: '#a98be0', desc: '元婴出窍，神通初显。',
     stages: ['初期', '中期', '后期', '大圆满'],
-    needBase: 250000, needMul: 1.6, rate: 0.50, rateToNext: 0.22, pill: 'pill_shen', gold: 1200 },
+    needBase: 9790000, needMul: 1.45, rate: 0.50, rateToNext: 0.22, pill: 'pill_shen', gold: 1200 },
   { name: '化神期', icon: '✨', color: '#e0a3c8', desc: '神识化虚，可称大能。',
     stages: ['初期', '中期', '后期', '大圆满'],
-    needBase: 1200000, needMul: 1.65, rate: 0.40, rateToNext: 0.15, pill: 'pill_xu', gold: 3000 },
-  { name: '炼虚期', icon: '🌌', color: '#8ad4ff', max: true, desc: '炼化虚空，追索长生。',
+    needBase: 34400000, needMul: 1.35, rate: 0.40, rateToNext: 0.15, pill: 'pill_xu', gold: 3000 },
+  { name: '炼虚期', icon: '🌌', color: '#8ad4ff', desc: '炼化虚空，追索长生。',
     stages: ['初期', '中期', '后期', '大圆满'],
-    needBase: 8000000, needMul: 1.5, rate: 0.32, rateToNext: 0, pill: null, gold: 8000 }
+    needBase: 97450000, needMul: 1.3, rate: 0.32, rateToNext: 0.18, pill: null, gold: 8000 }
 ];
 
 /* 展开成完整境界阶段表（共 33 阶） */
@@ -821,6 +828,84 @@ function buildStages() {
   return out;
 }
 const STAGES = buildStages();
+
+/* =========================================================================
+ * 太上境：炼虚之上的终极境界，共 96,500 层
+ * - 不预展开 9.65 万个阶段对象，改为按需生成并缓存（taishangStage）
+ * - 需求曲线承接炼虚大圆满（27,000,000 × 1.5 = 40,500,000 起）
+ * - 层数太多，指数曲线会溢出双精度，故沿用同量级的幂律递增：need = needBase × 层^needPow
+ * ========================================================================= */
+const TAISHANG_DEF = {
+  name: '太上境',
+  icon: '☯️',
+  color: '#f0d77b',
+  desc: '太上忘情，万法归一。',
+  layerCount: 96500,
+  needBase: 300000000,
+  needPow: 1.5,     // 每层修为需求按 层^1.5 递增，保证单调增长且不溢出
+  rate: 0.25        // 同境突破成功率
+};
+
+/* 中文数字（1 ~ 96500），用于太上境层名：16 → 十六，96500 → 九万六千五百 */
+function cnBelow10000(n) {
+  const D = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
+  const U = ['', '十', '百', '千'];
+  let out = '';
+  let started = false;
+  let zero = false;
+  for (let i = 3; i >= 0; i--) {
+    const d = Math.floor(n / Math.pow(10, i)) % 10;
+    if (d === 0) { if (started) zero = true; continue; }
+    if (zero) { out += '零'; zero = false; }
+    out += D[d] + U[i];
+    started = true;
+  }
+  if (out.indexOf('一十') === 0) out = out.slice(1);   // 一十六 → 十六
+  return out;
+}
+function cnNum(n) {
+  n = Math.floor(n);
+  if (n <= 0) return '零';
+  if (n < 10000) return cnBelow10000(n);
+  if (n >= 100000000) return String(n);
+  const hi = Math.floor(n / 10000);
+  const lo = n % 10000;
+  return cnBelow10000(hi) + '万' + (lo === 0 ? '' : (lo < 1000 ? '零' + cnBelow10000(lo) : cnBelow10000(lo)));
+}
+
+const TAISHANG_START = STAGES.length;                 // 0 起：第 34 阶 → 下标 33
+const TOTAL_STAGES = STAGES.length + TAISHANG_DEF.layerCount;
+
+const _tsCache = [];   // 缓存：下标 = 太上境内层号 - 1
+
+function taishangStage(si) {
+  let st = _tsCache[si];
+  if (st) return st;
+  const layer = si + 1;
+  const isLast = layer >= TAISHANG_DEF.layerCount;
+  st = {
+    lvl: TAISHANG_START + layer,
+    realmIndex: REALM_DEFS.length,
+    realm: TAISHANG_DEF.name,
+    realmIcon: TAISHANG_DEF.icon,
+    color: TAISHANG_DEF.color,
+    realmDesc: TAISHANG_DEF.desc,
+    stageName: cnNum(layer) + '层',
+    stageIndexInRealm: si,
+    layerCount: TAISHANG_DEF.layerCount,
+    full: TAISHANG_DEF.name + ' ' + cnNum(layer) + '层',
+    isMax: isLast,
+    breakInfo: isLast ? null : {
+      need: Math.floor(TAISHANG_DEF.needBase * Math.pow(layer, TAISHANG_DEF.needPow)),
+      rate: TAISHANG_DEF.rate,
+      pill: null,
+      gold: 0,
+      boundary: false
+    }
+  };
+  _tsCache[si] = st;
+  return st;
+}
 
 /* =========================================================================
  * 任务 / 成就
@@ -935,68 +1020,120 @@ function findShop(id) {
 
 /* =========================================================================
  * 阵法（玩法参考《梅尔沃放置》的观星 / 星座系统）
- * 观星台推演天机获得「星砂」，再以星砂点亮阵纹，换取常驻全局加成。
+ * 每一种「观星」对应一座阵法：观星解锁后阵法随之解锁，阵纹升级还需
+ * 该观星的精通等级达标（mper × 目标阵纹等级），星砂则是唯一升级货币。
  * mods[].key 为加成通道：引擎的 formBonus(key) 汇总所有阵法的同类加成。
  * per 为每级加成（小数），max 为阵纹等级上限。
  * 升级消耗：formCost = cost × growth^当前等级 ×（1 + 阵纹序号 × 0.35）
  * ========================================================================= */
-const FORMATIONS = [
-  {
-    id: 'f_ling', name: '聚灵阵', icon: '☯', color: '#7dd8b8', req: 1, cost: 8, growth: 1.40,
-    desc: '引天地灵气入体，最基础的修行阵法。',
-    mods: [
-      { key: 'xp_cult', name: '修炼速度', per: 0.03, max: 10 },
-      { key: 'spirit', name: '灵力凝聚', per: 0.06, max: 10 },
-      { key: 'xp_gather', name: '采集经验', per: 0.02, max: 10 }
-    ]
-  },
-  {
-    id: 'f_feng', name: '疾风阵', icon: '🌪️', color: '#8ad4ff', req: 6, cost: 24, growth: 1.42,
-    desc: '罡风流转，加快动作节奏、增益精通。',
-    mods: [
-      { key: 'speed', name: '动作速度', per: 0.015, max: 10 },
-      { key: 'double', name: '额外产出', per: 0.012, max: 10 },
-      { key: 'mastery', name: '精通经验', per: 0.04, max: 10 },
-      { key: 'growth', name: '灵植生长', per: 0.04, max: 10 }
-    ]
-  },
-  {
-    id: 'f_bao', name: '聚宝阵', icon: '💰', color: '#f2dda6', req: 12, cost: 60, growth: 1.44,
-    desc: '聚财纳珍，广开财路与机缘。',
-    mods: [
-      { key: 'gold', name: '灵石获取', per: 0.05, max: 10 },
-      { key: 'drop', name: '掉落概率', per: 0.03, max: 10 },
-      { key: 'sell', name: '出售价', per: 0.02, max: 10 }
-    ]
-  },
-  {
-    id: 'f_jin', name: '金刚阵', icon: '🛡️', color: '#c9a24d', req: 18, cost: 160, growth: 1.46,
-    desc: '金刚护体，血肉坚如金石。',
-    mods: [
-      { key: 'hp', name: '生命上限', per: 0.04, max: 10 },
-      { key: 'def', name: '防御', per: 0.05, max: 10 },
-      { key: 'regen', name: '脱战回血', per: 0.05, max: 10 }
-    ]
-  },
-  {
-    id: 'f_xuan', name: '玄机阵', icon: '🔯', color: '#a98be0', req: 24, cost: 400, growth: 1.48,
-    desc: '洞悉玄机，出手如电、趋避由心。',
-    mods: [
-      { key: 'atk', name: '攻击', per: 0.04, max: 10 },
-      { key: 'hit', name: '命中', per: 0.03, max: 10 },
-      { key: 'ev', name: '闪避', per: 0.03, max: 10 }
-    ]
-  },
-  {
-    id: 'f_tai', name: '太虚阵', icon: '🌌', color: '#63a9e0', req: 30, cost: 1200, growth: 1.50,
-    desc: '炼虚合道之阵，唯阵法宗师方能完整布下。',
-    mods: [
-      { key: 'xp_combat', name: '战斗经验', per: 0.04, max: 10 },
-      { key: 'xp_craft', name: '炼器经验', per: 0.04, max: 10 },
-      { key: 'xp_cult', name: '修炼速度', per: 0.05, max: 10 }
-    ]
-  }
+const FORM_SPECS = [
+  { obs: 'ob_qiyao', name: '七曜阵', icon: '🌟', color: '#7dd8b8', costMul: 2, growth: 1.30,
+    desc: '观七曜运转，引天地灵气入体。',
+    mods: [{ key: 'xp_cult', name: '修炼速度', per: 0.03, max: 10 },
+           { key: 'spirit', name: '灵力凝聚', per: 0.06, max: 10 }] },
+  { obs: 'ob_ziwei', name: '紫微阵', icon: '🔭', color: '#a98be0', costMul: 2, growth: 1.30,
+    desc: '紫微定星，推演天机更速。',
+    mods: [{ key: 'mastery', name: '精通经验', per: 0.05, max: 10 },
+           { key: 'xp_gather', name: '采集经验', per: 0.03, max: 10 }] },
+  { obs: 'ob_xuanji', name: '璇玑阵', icon: '✨', color: '#8ad4ff', costMul: 2, growth: 1.31,
+    desc: '璇玑疾转，动作如风。',
+    mods: [{ key: 'speed', name: '动作速度', per: 0.015, max: 10 },
+           { key: 'double', name: '额外产出', per: 0.015, max: 10 }] },
+  { obs: 'ob_huntian', name: '浑天阵', icon: '🌠', color: '#c9a24d', costMul: 2, growth: 1.31,
+    desc: '浑天护体，血肉坚如金石。',
+    mods: [{ key: 'hp', name: '生命上限', per: 0.04, max: 10 },
+           { key: 'def', name: '防御', per: 0.05, max: 10 }] },
+  { obs: 'ob_taiwei', name: '太微阵', icon: '🌜', color: '#f2dda6', costMul: 2, growth: 1.32,
+    desc: '太微主财，广开财路与机缘。',
+    mods: [{ key: 'gold', name: '灵石获取', per: 0.05, max: 10 },
+           { key: 'sell', name: '出售价', per: 0.02, max: 10 }] },
+  { obs: 'ob_zhoutian', name: '周天阵', icon: '🌌', color: '#63a9e0', costMul: 2, growth: 1.32,
+    desc: '小周天运转，采集与生长皆顺。',
+    mods: [{ key: 'xp_gather', name: '采集经验', per: 0.04, max: 10 },
+           { key: 'growth', name: '灵植生长', per: 0.04, max: 10 }] },
+  { obs: 'ob_tianshi', name: '天市阵', icon: '🏮', color: '#e29a6b', costMul: 2, growth: 1.32,
+    desc: '天市集珍，财货与掉落俱丰。',
+    mods: [{ key: 'gold', name: '灵石获取', per: 0.06, max: 10 },
+           { key: 'drop', name: '掉落概率', per: 0.03, max: 10 }] },
+  { obs: 'ob_taixuan', name: '太玄阵', icon: '🌙', color: '#7d8fd8', costMul: 2, growth: 1.33,
+    desc: '太玄观天，修行与征战俱进。',
+    mods: [{ key: 'xp_cult', name: '修炼速度', per: 0.05, max: 10 },
+           { key: 'xp_combat', name: '战斗经验', per: 0.04, max: 10 }] },
+  { obs: 'ob_bagua', name: '八卦阵', icon: '☯️', color: '#b8c9a0', costMul: 2, growth: 1.33,
+    desc: '八卦定方位，趋避由心。',
+    mods: [{ key: 'hit', name: '命中', per: 0.03, max: 10 },
+           { key: 'ev', name: '闪避', per: 0.03, max: 10 }] },
+  { obs: 'ob_ziwei2', name: '紫微垣阵', icon: '🪐', color: '#a98be0', costMul: 2, growth: 1.34,
+    desc: '紫微垣周列星辰，精通与机缘同增。',
+    mods: [{ key: 'mastery', name: '精通经验', per: 0.06, max: 10 },
+           { key: 'drop', name: '掉落概率', per: 0.04, max: 10 }] },
+  { obs: 'ob_nine', name: '九宫阵', icon: '📐', color: '#d8b46b', costMul: 2, growth: 1.34,
+    desc: '九宫轮转，攻守兼备。',
+    mods: [{ key: 'atk', name: '攻击', per: 0.04, max: 10 },
+           { key: 'hit', name: '命中', per: 0.04, max: 10 }] },
+  { obs: 'ob_luotian', name: '罗天阵', icon: '🌀', color: '#5fb0c9', costMul: 2, growth: 1.35,
+    desc: '罗天匝地，炼器与机缘皆盛。',
+    mods: [{ key: 'xp_craft', name: '炼器经验', per: 0.04, max: 10 },
+           { key: 'drop', name: '掉落概率', per: 0.03, max: 10 }] },
+  { obs: 'ob_dayan', name: '大衍阵', icon: '🔢', color: '#c9a24d', costMul: 2, growth: 1.35,
+    desc: '大衍之数五十，其用四十有九。',
+    mods: [{ key: 'mastery', name: '精通经验', per: 0.07, max: 10 },
+           { key: 'double', name: '额外产出', per: 0.02, max: 10 }] },
+  { obs: 'ob_taiji', name: '太极阵', icon: '✨', color: '#9fd8c8', costMul: 2, growth: 1.36,
+    desc: '太极归一，生生不息。',
+    mods: [{ key: 'spirit', name: '灵力凝聚', per: 0.08, max: 10 },
+           { key: 'regen', name: '脱战回血', per: 0.05, max: 10 }] },
+  { obs: 'ob_lingxu', name: '灵虚阵', icon: '🪐', color: '#63a9e0', costMul: 2, growth: 1.36,
+    desc: '灵虚纳气，动若脱兔。',
+    mods: [{ key: 'speed', name: '动作速度', per: 0.02, max: 10 },
+           { key: 'xp_cult', name: '修炼速度', per: 0.06, max: 10 }] },
+  { obs: 'ob_dongxu', name: '洞虚阵', icon: '🕳️', color: '#6f7c9a', costMul: 2, growth: 1.37,
+    desc: '洞虚见真，守御无懈。',
+    mods: [{ key: 'ev', name: '闪避', per: 0.04, max: 10 },
+           { key: 'def', name: '防御', per: 0.06, max: 10 }] },
+  { obs: 'ob_taiyuan', name: '太原阵', icon: '💠', color: '#8ad4ff', costMul: 2, growth: 1.37,
+    desc: '太原天中，灵力如泉。',
+    mods: [{ key: 'spirit', name: '灵力凝聚', per: 0.10, max: 10 },
+           { key: 'xp_gather', name: '采集经验', per: 0.05, max: 10 }] },
+  { obs: 'ob_taichu', name: '太初阵', icon: '🌠', color: '#b09ae0', costMul: 2, growth: 1.38,
+    desc: '太初有道，征伐无双。',
+    mods: [{ key: 'xp_combat', name: '战斗经验', per: 0.06, max: 10 },
+           { key: 'atk', name: '攻击', per: 0.05, max: 10 }] },
+  { obs: 'ob_kunlun', name: '昆仑阵', icon: '🏔️', color: '#c9a24d', costMul: 2, growth: 1.38,
+    desc: '昆仑仙山，道体长存。',
+    mods: [{ key: 'hp', name: '生命上限', per: 0.06, max: 10 },
+           { key: 'regen', name: '脱战回血', per: 0.06, max: 10 }] },
+  { obs: 'ob_wuji', name: '无极阵', icon: '♾️', color: '#d8d8e0', costMul: 2, growth: 1.39,
+    desc: '无极之外，复无无极。',
+    mods: [{ key: 'double', name: '额外产出', per: 0.03, max: 10 },
+           { key: 'sell', name: '出售价', per: 0.03, max: 10 }] },
+  { obs: 'ob_wuxu', name: '无虚阵', icon: '🌌', color: '#63a9e0', costMul: 2, growth: 1.40,
+    desc: '无虚之境，万法归一。',
+    mods: [{ key: 'xp_cult', name: '修炼速度', per: 0.08, max: 10 },
+           { key: 'mastery', name: '精通经验', per: 0.08, max: 10 }] }
 ];
+
+/* 由观星动作反推解锁门槛与基础消耗（星砂产出越多，阵纹越贵）；
+   id 与观星一一对应，obs 指向该观星动作 */
+const FORMATIONS = FORM_SPECS.map(function (sp) {
+  const gaze = findActivity('formation', sp.obs) || { req: 1, out: { stardust: 4 } };
+  const sd = (gaze.out && gaze.out.stardust) || 4;
+  return {
+    id: 'f_' + sp.obs.replace('ob_', ''),
+    obs: sp.obs,
+    name: sp.name, icon: sp.icon, color: sp.color, desc: sp.desc,
+    req: gaze.req,
+    cost: Math.max(8, Math.round(sd * (sp.costMul || 2))),
+    growth: sp.growth || 1.32,
+    mper: 4,             /* 每级阵纹所需的观星精通等级 */
+    mods: sp.mods
+  };
+});
+
+/* 阵纹升到 lvl 级所需的观星精通等级 */
+function formMasteryReq(f, lvl) {
+  return Math.max(0, Math.floor(Number(lvl) || 0)) * (f.mper || 4);
+}
 
 /* 阵纹升级消耗：随等级与阵纹序号递增 */
 function formCost(f, modIndex, lvl) {
@@ -1023,7 +1160,7 @@ const FARM_SEEDS = [
   { id: 'seed_juqi',   name: '聚气草种子',   icon: '🌱', req: 1,  growTime: 30,  yield: 2, outId: 'herb_juqi',  dropBy: 'al_juqi' },
   { id: 'seed_liao',   name: '疗伤草种子',   icon: '🌱', req: 3,  growTime: 38,  yield: 2, outId: 'herb_liao',  dropBy: 'al_liao' },
   { id: 'seed_zhuji',  name: '筑基花种子',   icon: '🌺', req: 10, growTime: 70,  yield: 2, outId: 'herb_zhuji', dropBy: 'al_zhuji' },
-  { id: 'seed_ning',   name: '凝元参种子',   icon: '🪷', req: 20, growTime: 120, yield: 2, outId: 'herb_ning',  dropBy: 'al_ning' },
+  { id: 'seed_ning',   name: '凝元参种子',   icon: '🌱', req: 20, growTime: 120, yield: 2, outId: 'herb_ning',  dropBy: 'al_ning' },
   { id: 'seed_ying',   name: '化婴芝种子',   icon: '🍄', req: 30, growTime: 200, yield: 2, outId: 'herb_ying',  dropBy: 'al_ying' },
   { id: 'seed_bing',   name: '冰心草种子',   icon: '❄️', req: 26, growTime: 160, yield: 2, outId: 'herb_bing',  dropBy: 'al_bing' },
   { id: 'seed_yao',    name: '妖丹花种子',   icon: '🌺', req: 36, growTime: 250, yield: 2, outId: 'herb_yao',   dropBy: 'al_yao' },
@@ -1031,9 +1168,9 @@ const FARM_SEEDS = [
   { id: 'seed_mo',     name: '墨灵芝种子',   icon: '🟣', req: 50, growTime: 420, yield: 2, outId: 'herb_mo',    dropBy: 'al_mo' },
   { id: 'seed_xue',    name: '血玉参种子',   icon: '🩸', req: 58, growTime: 560, yield: 2, outId: 'herb_xue',   dropBy: 'al_xue' },
   { id: 'seed_shen',   name: '神元果种子',   icon: '✨', req: 68, growTime: 760, yield: 2, outId: 'herb_shen',  dropBy: 'al_shen' },
-  { id: 'seed_xu',     name: '炼虚参种子',   icon: '🪷', req: 78, growTime: 960, yield: 2, outId: 'herb_xu',    dropBy: 'al_xu' },
+  { id: 'seed_xu',     name: '炼虚参种子',   icon: '🌱', req: 78, growTime: 960, yield: 2, outId: 'herb_xu',    dropBy: 'al_xu' },
   { id: 'seed_tai',    name: '太清芝种子',   icon: '🍄', req: 86, growTime: 1200,yield: 2, outId: 'herb_tai',   dropBy: 'al_tai' },
-  { id: 'seed_kunlun', name: '昆仑莲种子',   icon: '🪷', req: 93, growTime: 1500,yield: 2, outId: 'herb_kunlun',dropBy: 'al_kunlun' },
+  { id: 'seed_kunlun', name: '昆仑莲种子',   icon: '🌱', req: 93, growTime: 1500,yield: 2, outId: 'herb_kunlun',dropBy: 'al_kunlun' },
   { id: 'seed_wuxu',   name: '无虚根种子',   icon: '🌱', req: 98, growTime: 1800,yield: 2, outId: 'herb_wuxu',  dropBy: 'al_wuxu' },
   /* === 灵植作物：稻棉茶果，填充每 5 级档 === */
   { id: 'seed_lingdao',   name: '灵稻种子',   icon: '🌾', req: 13, growTime: 90,  yield: 3, outId: 'rice_ling' },
@@ -1041,8 +1178,8 @@ const FARM_SEEDS = [
   { id: 'seed_zifu',      name: '紫府茶种',   icon: '🍵', req: 33, growTime: 230, yield: 2, outId: 'tea_zi' },
   { id: 'seed_tianxiang', name: '天香稻种',   icon: '🌾', req: 53, growTime: 480, yield: 2, outId: 'rice_tian' },
   { id: 'seed_fusang',    name: '扶桑果种',   icon: '🍑', req: 63, growTime: 660, yield: 2, outId: 'guo_shu' },
-  { id: 'seed_hundou',    name: '混沌豆种',   icon: '🫘', req: 73, growTime: 880, yield: 2, outId: 'dou_hun' },
-  { id: 'seed_daolian',   name: '道莲种子',   icon: '🪷', req: 83, growTime: 1100,yield: 2, outId: 'lian_zi' }
+  { id: 'seed_hundou',    name: '混沌豆种',   icon: '🌱', req: 73, growTime: 880, yield: 2, outId: 'dou_hun' },
+  { id: 'seed_daolian',   name: '道莲种子',   icon: '🌱', req: 83, growTime: 1100,yield: 2, outId: 'lian_zi' }
 ];
 
 function findSeed(seedId) {
@@ -1052,6 +1189,405 @@ function findSeed(seedId) {
 
 function plotUnlocked(farmingLvl, idx) {
   return idx < FARMING_PLOT_REQS.length && farmingLvl >= FARMING_PLOT_REQS[idx];
+}
+
+/* =========================================================================
+ * 世界 · 洞天营造（参考《梅尔沃放置》的城镇 Township）
+ * - 建筑只提供"被动收益"，不占用动作槽，离线同样推进
+ * - 粮食 / 木材 / 石料是洞天内部资源（存于 state.world.res）
+ * - 灵石 / 灵力 / 星砂产出直接进入全局资源
+ * - out 单位统一为"每分钟"，实际产出再乘以人口效率（engine.worldEff）
+ * ========================================================================= */
+const WORLD = {
+  BASE_POP_CAP: 4,          // 没有民居时的人口上限
+  FOOD_PER_POP_MIN: 2.5,    // 每个居民每分钟消耗粮食
+  POP_GROWTH: 0.003,        // 每秒向人口上限逼近的比例（仅在粮食有盈余时）
+  POP_DECAY: 0.002,         // 断粮时人口每秒流失比例
+  EFF_BASE: 0.3,            // 人口为 0 时的基础效率
+  CAP: { food: 2000, wood: 1200, stone: 1200 },  // 建设度 1 时的基础仓储上限
+  CAP_GROW: 0.4,            // 每点建设度，仓储上限相对基础值 +40%（跟住造价增长）
+  /* 单栋建筑不再设等级上限，造价按 COST_MUL 逐级递增 */
+  COST_MUL: 1.18            // 每级建造成本倍率
+};
+
+/* 洞天仓储上限：随建设度线性增长。
+   造价按 1.18^等级 指数上涨，若仓储固定不变，后期会出现"单次造价 > 仓储上限"的死锁；
+   按建设度放大后，只要持续推进建设度就能继续升级。 */
+function worldCap(level) {
+  const lv = Math.max(1, Math.floor(level) || 1);
+  const g = 1 + WORLD.CAP_GROW * (lv - 1);
+  return {
+    food: Math.floor(WORLD.CAP.food * g),
+    wood: Math.floor(WORLD.CAP.wood * g),
+    stone: Math.floor(WORLD.CAP.stone * g)
+  };
+}
+
+/* 地形：建筑按地形分区，参考《梅尔沃放置》城镇的生物群系。
+   每种地形有独立的建筑链与专精方向；地形本身不单独设门槛，
+   其解锁门槛 = 该地形内建筑的最低 req（见 terrainReq）。 */
+const TERRAINS = [
+  { id: 'plains',    name: '平原', icon: '🌾', color: '#8ad46a', desc: '沃野千里，宜农宜牧，人口与香火之基。' },
+  { id: 'forest',    name: '林地', icon: '🌲', color: '#6fbf73', desc: '古木参天，木材与灵植生长的摇篮。' },
+  { id: 'mountain',  name: '山岳', icon: '⛰️', color: '#9aa4b8', desc: '峰峦叠嶂，石料与坚甲厚壁之地。' },
+  { id: 'waterside', name: '水泽', icon: '💧', color: '#66c4d9', desc: '泽国水乡，灵力与生机汇聚之所。' },
+  { id: 'desert',    name: '荒漠', icon: '🏜️', color: '#e0b06a', desc: '商旅驼铃，灵石与买卖的天堂。' },
+  { id: 'volcano',   name: '火山', icon: '🌋', color: '#e07a6a', desc: '熔岩奔流，兵锋与攻伐的试炼场。' },
+  { id: 'snow',      name: '雪原', icon: '❄️', color: '#a9c8e0', desc: '冰封万里，星砂与学问的清修地。' },
+  { id: 'mystic',    name: '秘境', icon: '🌀', color: '#a98be0', desc: '虚空裂隙，修为与匠作的奇境。' }
+];
+
+/* req：解锁所需的建设度（worldLevel）；cost：0 级造价；terrain：所属地形 */
+const BUILDINGS = [
+  /* ---------------------------------------------------------- 平原 plains */
+  { id: 'farm',   name: '灵田',   icon: '🌾', color: '#8ad46a', terrain: 'plains', req: 1,
+    desc: '开垦灵田，产出粮食供养居民。', cost: { gold: 40, wood: 20, stone: 10 }, out: { food: 10 } },
+  { id: 'house',  name: '民居',   icon: '🏠', color: '#d9b27a', terrain: 'plains', req: 1, popCap: 4,
+    desc: '安置凡民与弟子，每级 +4 人口上限。', cost: { gold: 150, wood: 40, stone: 30 }, out: null },
+  { id: 'vault',  name: '聚宝阁', icon: '💰', color: '#f0c95a', terrain: 'plains', req: 8,
+    desc: '收拢四方香火供奉，被动产出灵石。', cost: { gold: 300, wood: 60, stone: 60 }, out: { gold: 5 } },
+  { id: 'granary', name: '谷仓',  icon: '🏺', terrain: 'plains', req: 10,
+    desc: '囤积灵谷，粮食 +6/分。', cost: { gold: 420, wood: 50, stone: 50 }, out: { food: 6 } },
+  { id: 'mill',   name: '磨坊',   icon: '🌬️', terrain: 'plains', req: 14,
+    desc: '风磨碾谷，粮食 +8/分。', cost: { gold: 580, wood: 70, stone: 70 }, out: { food: 8 } },
+  { id: 'orchard', name: '果园',  icon: '🍎', terrain: 'plains', req: 22,
+    desc: '灵果成林，粮食 +12/分。', cost: { gold: 960, wood: 110, stone: 110 }, out: { food: 12 } },
+  { id: 'pasture', name: '牧场',  icon: '🐄', terrain: 'plains', req: 30,
+    desc: '牧养灵畜，粮食 +14/分。', cost: { gold: 1400, wood: 150, stone: 150 }, out: { food: 14 } },
+  { id: 'beehive', name: '蜂园',  icon: '🍯', terrain: 'plains', req: 40,
+    desc: '灵蜂酿蜜，粮食 +16/分。', cost: { gold: 1900, wood: 200, stone: 200 }, out: { food: 16 } },
+  { id: 'winery', name: '酒坊',   icon: '🍶', terrain: 'plains', req: 50, bonus: { key: 'gold', per: 0.01 },
+    desc: '灵酒远销，每级灵石收益 +1%。', cost: { gold: 2600, wood: 240, stone: 240 }, out: null },
+  { id: 'teahouse', name: '茶肆', icon: '🍵', terrain: 'plains', req: 62, bonus: { key: 'sell', per: 0.01 },
+    desc: '茶香引客，每级出售价 +1%。', cost: { gold: 3300, wood: 260, stone: 260 }, out: null },
+  { id: 'fairground', name: '集市广场', icon: '🎪', terrain: 'plains', req: 74, bonus: { key: 'gold', per: 0.015 },
+    desc: '四方云集，每级灵石收益 +1.5%。', cost: { gold: 4050, wood: 270, stone: 270 }, out: null },
+  { id: 'embassy', name: '驿馆',  icon: '🏛️', terrain: 'plains', req: 86, bonus: { key: 'sell', per: 0.012 },
+    desc: '万国来朝，每级出售价 +1.2%。', cost: { gold: 4950, wood: 290, stone: 290 }, out: null },
+  { id: 'imperialroad', name: '官道', icon: '🛣️', terrain: 'plains', req: 98, bonus: { key: 'speed', per: 0.01 },
+    desc: '驿道通达，每级动作速度 +1%。', cost: { gold: 6100, wood: 330, stone: 330 }, out: null },
+
+  /* ---------------------------------------------------------- 林地 forest */
+  { id: 'lumber', name: '伐木坊', icon: '🪓', color: '#c08a5a', terrain: 'forest', req: 1,
+    desc: '雇工伐取灵木，为营造提供木材。', cost: { gold: 60, wood: 10, stone: 15 }, out: { wood: 8 } },
+  { id: 'sawmill', name: '木料场', icon: '🏭', terrain: 'forest', req: 6,
+    desc: '解木成材，木材 +6/分。', cost: { gold: 260, wood: 30, stone: 30 }, out: { wood: 6 } },
+  { id: 'charcoal', name: '炭窑', icon: '🔥', terrain: 'forest', req: 9,
+    desc: '烧木成炭，木材 +5/分。', cost: { gold: 380, wood: 45, stone: 45 }, out: { wood: 5 } },
+  { id: 'huntinglodge', name: '猎屋', icon: '🏹', terrain: 'forest', req: 12, bonus: { key: 'drop', per: 0.01 },
+    desc: '狩猎所得更丰，每级掉落率 +1%。', cost: { gold: 500, wood: 60, stone: 60 }, out: null },
+  { id: 'treetop', name: '树屋',  icon: '🌳', terrain: 'forest', req: 16, bonus: { key: 'growth', per: 0.015 },
+    desc: '悬枝而居，每级灵植生长 +1.5%。', cost: { gold: 660, wood: 80, stone: 80 }, out: null },
+  { id: 'herbgarden', name: '药圃', icon: '🌿', color: '#7fc96a', terrain: 'forest', req: 20, bonus: { key: 'growth', per: 0.03 },
+    desc: '暖圃催生，每级灵植生长速度 +3%。', cost: { gold: 700, wood: 90, stone: 90 }, out: null },
+  { id: 'fletcher', name: '箭坊', icon: '🏹', terrain: 'forest', req: 24, bonus: { key: 'hit', per: 0.008 },
+    desc: '箭矢精良，每级命中 +0.8%。', cost: { gold: 1060, wood: 120, stone: 120 }, out: null },
+  { id: 'windhall', name: '风阵坊', icon: '⚡', color: '#6fc3e0', terrain: 'forest', req: 28, bonus: { key: 'speed', per: 0.015 },
+    desc: '风阵环绕，每级动作速度 +1.5%。', cost: { gold: 1000, wood: 130, stone: 110 }, out: null },
+  { id: 'tannery', name: '皮坊',  icon: '🧵', terrain: 'forest', req: 32, bonus: { key: 'hp', per: 0.015 },
+    desc: '鞣皮制甲，每级生命上限 +1.5%。', cost: { gold: 1500, wood: 160, stone: 160 }, out: null },
+  { id: 'arborist', name: '修木院', icon: '🌲', terrain: 'forest', req: 38,
+    desc: '养护灵木，木材 +9/分。', cost: { gold: 1800, wood: 190, stone: 190 }, out: { wood: 9 } },
+  { id: 'spiritgrove', name: '灵木林', icon: '🌱', terrain: 'forest', req: 48,
+    desc: '灵木成荫，木材 +12/分、灵力 +2/分。', cost: { gold: 2450, wood: 240, stone: 240 }, out: { wood: 12, spirit: 2 } },
+  { id: 'druidcircle', name: '祭木坛', icon: '🗿', terrain: 'forest', req: 58, bonus: { key: 'growth', per: 0.02 },
+    desc: '祭木祈福，每级灵植生长 +2%。', cost: { gold: 3050, wood: 250, stone: 250 }, out: null },
+  { id: 'worldtree', name: '建木台', icon: '🎋', terrain: 'forest', req: 80, bonus: { key: 'xp', per: 0.008 },
+    desc: '建木通神，每级全技能经验 +0.8%。', cost: { gold: 4500, wood: 280, stone: 280 }, out: null },
+
+  /* -------------------------------------------------------- 山岳 mountain */
+  { id: 'quarry', name: '采石场', icon: '⛏️', color: '#9aa4b8', terrain: 'mountain', req: 2,
+    desc: '开山取石，为营造提供石料。', cost: { gold: 80, wood: 25, stone: 10 }, out: { stone: 6 } },
+  { id: 'stonepit', name: '石坑', icon: '⛏️', terrain: 'mountain', req: 5,
+    desc: '浅坑取石，石料 +5/分。', cost: { gold: 220, wood: 25, stone: 25 }, out: { stone: 5 } },
+  { id: 'mine',   name: '矿洞',   icon: '🕳️', terrain: 'mountain', req: 8,
+    desc: '深井掘脉，石料 +6/分、灵石 +2/分。', cost: { gold: 340, wood: 40, stone: 40 }, out: { stone: 6, gold: 2 } },
+  { id: 'smelter', name: '熔炉',  icon: '♨️', terrain: 'mountain', req: 14,
+    desc: '熔炼矿石，灵石 +3/分。', cost: { gold: 580, wood: 70, stone: 70 }, out: { gold: 3 } },
+  { id: 'forge',  name: '锻坊',   icon: '🔨', terrain: 'mountain', req: 22, bonus: { key: 'atk', per: 0.008 },
+    desc: '锻造兵刃，每级攻击 +0.8%。', cost: { gold: 960, wood: 110, stone: 110 }, out: null },
+  { id: 'bastion', name: '磐石堡', icon: '🏰', terrain: 'mountain', req: 30, bonus: { key: 'def', per: 0.015 },
+    desc: '坚壁如磐，每级防御 +1.5%。', cost: { gold: 1400, wood: 150, stone: 150 }, out: null },
+  { id: 'clinic', name: '药庐',   icon: '💊', color: '#d98ca0', terrain: 'mountain', req: 36, bonus: { key: 'hp', per: 0.04 },
+    desc: '修士疗伤之所，每级生命上限 +4%。', cost: { gold: 1300, wood: 140, stone: 150 }, out: null },
+  { id: 'quarrymill', name: '石碾坊', icon: '🧱', terrain: 'mountain', req: 44,
+    desc: '碾石成料，石料 +10/分。', cost: { gold: 2150, wood: 220, stone: 220 }, out: { stone: 10 } },
+  { id: 'armory', name: '藏兵阁', icon: '🗡️', color: '#e0906a', terrain: 'mountain', req: 52, bonus: { key: 'hit', per: 0.02 },
+    desc: '兵刃齐备，招式精准，每级命中 +2%。', cost: { gold: 2100, wood: 175, stone: 175 }, out: null },
+  { id: 'ironvein', name: '铁脉井', icon: '⚙️', terrain: 'mountain', req: 56,
+    desc: '铁脉涌泉，灵石 +6/分。', cost: { gold: 2950, wood: 250, stone: 250 }, out: { gold: 6 } },
+  { id: 'turtlewall', name: '玄龟壁', icon: '🛡️', color: '#8a9ab8', terrain: 'mountain', req: 68, bonus: { key: 'def', per: 0.03 },
+    desc: '仿玄龟背甲立壁，每级防御 +3%。', cost: { gold: 2600, wood: 210, stone: 230 }, out: null },
+  { id: 'earthaltar', name: '镇岳坛', icon: '🏔️', terrain: 'mountain', req: 70, bonus: { key: 'hp', per: 0.02 },
+    desc: '镇压地脉，每级生命上限 +2%。', cost: { gold: 3800, wood: 270, stone: 270 }, out: null },
+  { id: 'ninepeak', name: '九嶂台', icon: '⛰️', terrain: 'mountain', req: 90, bonus: { key: 'def', per: 0.02 },
+    desc: '九峰镇守，每级防御 +2%。', cost: { gold: 5300, wood: 300, stone: 300 }, out: null },
+
+  /* ------------------------------------------------------ 水泽 waterside */
+  { id: 'dock',   name: '渡口',   icon: '⚓', terrain: 'waterside', req: 4,
+    desc: '渔舟唱晚，粮食 +4/分。', cost: { gold: 180, wood: 22, stone: 22 }, out: { food: 4 } },
+  { id: 'fishpond', name: '鱼塘', icon: '🐟', terrain: 'waterside', req: 7,
+    desc: '灵鱼满塘，粮食 +6/分。', cost: { gold: 300, wood: 35, stone: 35 }, out: { food: 6 } },
+  { id: 'lotuspond', name: '莲池', icon: '🌸', terrain: 'waterside', req: 10,
+    desc: '莲开见性，灵力 +3/分。', cost: { gold: 420, wood: 50, stone: 50 }, out: { spirit: 3 } },
+  { id: 'well',   name: '灵脉井', icon: '🌀', color: '#66c4d9', terrain: 'waterside', req: 16,
+    desc: '引地脉灵气入井，被动产出灵力。', cost: { gold: 600, wood: 80, stone: 80 }, out: { spirit: 15 } },
+  { id: 'spring', name: '灵泉',   icon: '💧', terrain: 'waterside', req: 18,
+    desc: '泉眼通灵，灵力 +8/分。', cost: { gold: 760, wood: 90, stone: 90 }, out: { spirit: 8 } },
+  { id: 'tidegate', name: '潮闸', icon: '🌊', terrain: 'waterside', req: 26, bonus: { key: 'regen', per: 0.02 },
+    desc: '潮息养身，每级脱战回血 +2%。', cost: { gold: 1160, wood: 130, stone: 130 }, out: null },
+  { id: 'pearlshed', name: '珠坊', icon: '🦪', terrain: 'waterside', req: 34, bonus: { key: 'gold', per: 0.008 },
+    desc: '珠贝成宝，每级灵石收益 +0.8%。', cost: { gold: 1600, wood: 170, stone: 170 }, out: null },
+  { id: 'rainaltar', name: '祈雨坛', icon: '🌧️', terrain: 'waterside', req: 42,
+    desc: '祷雨润田，粮食 +12/分。', cost: { gold: 2000, wood: 210, stone: 210 }, out: { food: 12 } },
+  { id: 'mistlake', name: '雾隐湖', icon: '🌫️', terrain: 'waterside', req: 54,
+    desc: '雾锁灵湖，灵力 +14/分。', cost: { gold: 2800, wood: 250, stone: 250 }, out: { spirit: 14 } },
+  { id: 'dragonpalace', name: '龙宫', icon: '🐉', terrain: 'waterside', req: 66, bonus: { key: 'spirit', per: 0.02 },
+    desc: '龙脉吐灵，每级灵力凝聚 +2%。', cost: { gold: 3550, wood: 260, stone: 260 }, out: null },
+  { id: 'watermirror', name: '水镜台', icon: '🔮', terrain: 'waterside', req: 78, bonus: { key: 'regen', per: 0.03 },
+    desc: '心澄如镜，每级脱战回血 +3%。', cost: { gold: 4350, wood: 280, stone: 280 }, out: null },
+  { id: 'deepabyss', name: '归墟渊', icon: '🌌', terrain: 'waterside', req: 88,
+    desc: '渊底藏星，星砂 +3/分。', cost: { gold: 5100, wood: 300, stone: 300 }, out: { stardust: 3 } },
+  { id: 'seacalling', name: '沧海阁', icon: '🐚', terrain: 'waterside', req: 96, bonus: { key: 'xp', per: 0.006 },
+    desc: '沧海遗珠，每级全技能经验 +0.6%。', cost: { gold: 5900, wood: 320, stone: 320 }, out: null },
+
+  /* ---------------------------------------------------------- 荒漠 desert */
+  { id: 'oasis',  name: '绿洲',   icon: '🌴', terrain: 'desert', req: 12,
+    desc: '沙中甘泉，粮食 +5/分、灵力 +2/分。', cost: { gold: 500, wood: 60, stone: 60 }, out: { food: 5, spirit: 2 } },
+  { id: 'caravan', name: '驼队',  icon: '🐪', terrain: 'desert', req: 20,
+    desc: '商队往来，灵石 +3/分。', cost: { gold: 860, wood: 100, stone: 100 }, out: { gold: 3 } },
+  { id: 'saltflat', name: '盐场', icon: '🧂', terrain: 'desert', req: 26,
+    desc: '晒卤成盐，灵石 +5/分。', cost: { gold: 1160, wood: 130, stone: 130 }, out: { gold: 5 } },
+  { id: 'bazaar', name: '大市集', icon: '⛺', terrain: 'desert', req: 30, bonus: { key: 'sell', per: 0.01 },
+    desc: '四方交易，每级出售价 +1%。', cost: { gold: 1400, wood: 150, stone: 150 }, out: null },
+  { id: 'market', name: '商行',   icon: '🏪', color: '#e0a06a', terrain: 'desert', req: 34, bonus: { key: 'sell', per: 0.015 },
+    desc: '货通四海，每级出售价 +1.5%。', cost: { gold: 1400, wood: 160, stone: 160 }, out: null },
+  { id: 'spicehouse', name: '香料铺', icon: '🌶️', terrain: 'desert', req: 40, bonus: { key: 'gold', per: 0.012 },
+    desc: '奇香值钱，每级灵石收益 +1.2%。', cost: { gold: 1900, wood: 200, stone: 200 }, out: null },
+  { id: 'silkroad', name: '丝路驿站', icon: '🐎', terrain: 'desert', req: 50, bonus: { key: 'speed', per: 0.01 },
+    desc: '驿马如飞，每级动作速度 +1%。', cost: { gold: 2600, wood: 240, stone: 240 }, out: null },
+  { id: 'tomb',   name: '古墓',   icon: '⚱️', terrain: 'desert', req: 58, bonus: { key: 'drop', per: 0.015 },
+    desc: '古墓寻宝，每级掉落率 +1.5%。', cost: { gold: 3050, wood: 250, stone: 250 }, out: null },
+  { id: 'mirage', name: '蜃楼',   icon: '🏜️', terrain: 'desert', req: 68, bonus: { key: 'ev', per: 0.01 },
+    desc: '虚实难辨，每级闪避 +1%。', cost: { gold: 3650, wood: 260, stone: 260 }, out: null },
+  { id: 'sandtower', name: '沙塔', icon: '🗼', terrain: 'desert', req: 76, bonus: { key: 'hit', per: 0.008 },
+    desc: '高处瞭敌，每级命中 +0.8%。', cost: { gold: 4200, wood: 280, stone: 280 }, out: null },
+  { id: 'treasurecave', name: '藏宝洞', icon: '🗝️', terrain: 'desert', req: 84, bonus: { key: 'drop', per: 0.02 },
+    desc: '洞藏珍宝，每级掉落率 +2%。', cost: { gold: 4800, wood: 290, stone: 290 }, out: null },
+  { id: 'goldenterrace', name: '黄金台', icon: '🏵️', terrain: 'desert', req: 94, bonus: { key: 'gold', per: 0.02 },
+    desc: '金台悬赏，每级灵石收益 +2%。', cost: { gold: 5700, wood: 310, stone: 310 }, out: null },
+
+  /* --------------------------------------------------------- 火山 volcano */
+  { id: 'lavaforge', name: '熔岩坊', icon: '🌋', terrain: 'volcano', req: 10,
+    desc: '熔岩凝石，石料 +4/分、灵石 +2/分。', cost: { gold: 420, wood: 50, stone: 50 }, out: { stone: 4, gold: 2 } },
+  { id: 'ashfield', name: '灰烬田', icon: '🔥', terrain: 'volcano', req: 16,
+    desc: '火山灰肥，石料 +6/分。', cost: { gold: 660, wood: 80, stone: 80 }, out: { stone: 6 } },
+  { id: 'candlekeep', name: '烛照阁', icon: '🕯️', terrain: 'volcano', req: 22, bonus: { key: 'atk', per: 0.006 },
+    desc: '烛照心火，每级攻击 +0.6%。', cost: { gold: 960, wood: 110, stone: 110 }, out: null },
+  { id: 'magmaforge', name: '岩浆炉', icon: '⚒️', terrain: 'volcano', req: 28, bonus: { key: 'atk', per: 0.008 },
+    desc: '岩浆淬兵，每级攻击 +0.8%。', cost: { gold: 1260, wood: 140, stone: 140 }, out: null },
+  { id: 'obsidianhall', name: '黑曜堂', icon: '🖤', terrain: 'volcano', req: 34, bonus: { key: 'def', per: 0.008 },
+    desc: '黑曜护体，每级防御 +0.8%。', cost: { gold: 1600, wood: 170, stone: 170 }, out: null },
+  { id: 'flametower', name: '焚天塔', icon: '🔔', terrain: 'volcano', req: 42, bonus: { key: 'atk', per: 0.01 },
+    desc: '焚天炽焰，每级攻击 +1%。', cost: { gold: 2000, wood: 210, stone: 210 }, out: null },
+  { id: 'dragonkiln', name: '龙窑', icon: '🐲', terrain: 'volcano', req: 48,
+    desc: '龙息烧瓷，灵石 +8/分。', cost: { gold: 2450, wood: 240, stone: 240 }, out: { gold: 8 } },
+  { id: 'phoenixnest', name: '凤巢', icon: '🦅', terrain: 'volcano', req: 56, bonus: { key: 'hp', per: 0.015 },
+    desc: '涅槃重生，每级生命上限 +1.5%。', cost: { gold: 2950, wood: 250, stone: 250 }, out: null },
+  { id: 'barracks', name: '演武场', icon: '⚔️', color: '#e07a6a', terrain: 'volcano', req: 60, bonus: { key: 'atk', per: 0.02 },
+    desc: '操练门人武艺，每级攻击与防御 +2%。', cost: { gold: 1800, wood: 180, stone: 180 }, out: null },
+  { id: 'waraltar', name: '战魂坛', icon: '💀', terrain: 'volcano', req: 64, bonus: { key: 'atk', per: 0.012 },
+    desc: '战魂附体，每级攻击 +1.2%。', cost: { gold: 3400, wood: 260, stone: 260 }, out: null },
+  { id: 'hellpit', name: '炎魔窟', icon: '😈', terrain: 'volcano', req: 72, bonus: { key: 'drop', per: 0.012 },
+    desc: '魔窟夺宝，每级掉落率 +1.2%。', cost: { gold: 3900, wood: 270, stone: 270 }, out: null },
+  { id: 'solartemple', name: '大日殿', icon: '☀️', terrain: 'volcano', req: 82, bonus: { key: 'atk', per: 0.014 },
+    desc: '大日焚天，每级攻击 +1.4%。', cost: { gold: 4650, wood: 290, stone: 290 }, out: null },
+
+  /* ------------------------------------------------------------- 雪原 snow */
+  { id: 'icehouse', name: '冰窖', icon: '🧊', terrain: 'snow', req: 4,
+    desc: '藏冰保鲜，粮食 +4/分。', cost: { gold: 180, wood: 22, stone: 22 }, out: { food: 4 } },
+  { id: 'furhut', name: '皮裘屋', icon: '🧥', terrain: 'snow', req: 8, bonus: { key: 'hp', per: 0.01 },
+    desc: '裘衣御寒，每级生命上限 +1%。', cost: { gold: 340, wood: 40, stone: 40 }, out: null },
+  { id: 'glacier', name: '冰川',  icon: '❄️', terrain: 'snow', req: 14,
+    desc: '寒川凝灵，灵力 +4/分、星砂 +1/分。', cost: { gold: 580, wood: 70, stone: 70 }, out: { spirit: 4, stardust: 1 } },
+  { id: 'starwatch', name: '观星哨', icon: '⭐', terrain: 'snow', req: 20, bonus: { key: 'mastery', per: 0.006 },
+    desc: '夜哨观星，每级精通经验 +0.6%。', cost: { gold: 860, wood: 100, stone: 100 }, out: null },
+  { id: 'academy', name: '书院',  icon: '📚', color: '#9a8ce0', terrain: 'snow', req: 24, bonus: { key: 'xp', per: 0.01 },
+    desc: '教习弟子修行，每级全技能经验 +1%。', cost: { gold: 900, wood: 120, stone: 120 }, out: null },
+  { id: 'frostpond', name: '寒潭', icon: '💠', terrain: 'snow', req: 30,
+    desc: '寒潭映月，灵力 +8/分。', cost: { gold: 1400, wood: 150, stone: 150 }, out: { spirit: 8 } },
+  { id: 'observatory', name: '观星台', icon: '🌠', color: '#a98be0', terrain: 'snow', req: 46,
+    desc: '夜观天象推演星轨，被动产出星砂。', cost: { gold: 2400, wood: 200, stone: 200 }, out: { stardust: 4 } },
+  { id: 'aurora', name: '极光台', icon: '🌈', terrain: 'snow', req: 58,
+    desc: '极光垂照，星砂 +6/分。', cost: { gold: 3050, wood: 250, stone: 250 }, out: { stardust: 6 } },
+  { id: 'polestar', name: '北极星台', icon: '✨', terrain: 'snow', req: 64, bonus: { key: 'mastery', per: 0.012 },
+    desc: '众星拱极，每级精通经验 +1.2%。', cost: { gold: 3400, wood: 260, stone: 260 }, out: null },
+  { id: 'library', name: '藏经阁', icon: '📖', color: '#b09ae0', terrain: 'snow', req: 76, bonus: { key: 'mastery', per: 0.03 },
+    desc: '典籍浩如烟海，每级精通经验 +3%。', cost: { gold: 3200, wood: 230, stone: 230 }, out: null },
+  { id: 'voidaltar', name: '太虚台', icon: '🌙', color: '#a9a2e0', terrain: 'snow', req: 86,
+    desc: '引太虚星光落台，被动产出星砂 +12/分。', cost: { gold: 4000, wood: 260, stone: 260 }, out: { stardust: 12 } },
+  { id: 'skypalace', name: '凌霄殿', icon: '☁️', terrain: 'snow', req: 92, bonus: { key: 'xp', per: 0.012 },
+    desc: '云端清修，每级全技能经验 +1.2%。', cost: { gold: 5500, wood: 310, stone: 310 }, out: null },
+
+  /* ----------------------------------------------------------- 秘境 mystic */
+  { id: 'meditationcave', name: '石室', icon: '🕉️', terrain: 'mystic', req: 6, bonus: { key: 'cultxp', per: 0.01 },
+    desc: '僻室静坐，每级打坐修为 +1%。', cost: { gold: 260, wood: 30, stone: 30 }, out: null },
+  { id: 'zen',    name: '静心堂', icon: '📿', color: '#8fb8a8', terrain: 'mystic', req: 12, bonus: { key: 'cultxp', per: 0.02 },
+    desc: '清修静室，每级打坐修为 +2%。', cost: { gold: 500, wood: 70, stone: 70 }, out: null },
+  { id: 'talismanhall', name: '符箓堂', icon: '📜', terrain: 'mystic', req: 18, bonus: { key: 'drop', per: 0.008 },
+    desc: '符箓护身，每级掉落率 +0.8%。', cost: { gold: 760, wood: 90, stone: 90 }, out: null },
+  { id: 'arrayroom', name: '阵眼室', icon: '🔯', terrain: 'mystic', req: 22, bonus: { key: 'speed', per: 0.008 },
+    desc: '阵眼流转，每级动作速度 +0.8%。', cost: { gold: 960, wood: 110, stone: 110 }, out: null },
+  { id: 'gravitytower', name: '引力塔', icon: '🛰️', color: '#7fb0d8', terrain: 'mystic', req: 1, bonus: { key: 'planet', per: 0.01 },
+    desc: '引力牵引天体，每级穿越星球的物品生成速度 +1%。', cost: { gold: 1200, wood: 130, stone: 130 }, out: null },
+  { id: 'runepool', name: '铭文池', icon: '🔷', terrain: 'mystic', req: 32, bonus: { key: 'buildcost', per: 0.008 },
+    desc: '铭文省料，每级建造费用 −0.8%。', cost: { gold: 1500, wood: 160, stone: 160 }, out: null },
+  { id: 'soulwell', name: '养魂井', icon: '🌑', terrain: 'mystic', req: 40, bonus: { key: 'cultxp', per: 0.015 },
+    desc: '养魂聚魄，每级打坐修为 +1.5%。', cost: { gold: 1900, wood: 200, stone: 200 }, out: null },
+  { id: 'treasury', name: '宝库', icon: '💎', color: '#8fd8e0', terrain: 'mystic', req: 44, bonus: { key: 'drop', per: 0.03 },
+    desc: '宝物汇聚之地，每级掉落率 +3%。', cost: { gold: 1700, wood: 160, stone: 170 }, out: null },
+  { id: 'voidgate', name: '虚空门', icon: '🌀', terrain: 'mystic', req: 52, bonus: { key: 'cultxp', per: 0.02 },
+    desc: '虚空吐纳，每级打坐修为 +2%。', cost: { gold: 2700, wood: 240, stone: 240 }, out: null },
+  { id: 'ghostmine', name: '阴矿洞', icon: '👻', terrain: 'mystic', req: 60,
+    desc: '阴矿幽采，石料 +8/分、灵石 +4/分。', cost: { gold: 3150, wood: 250, stone: 250 }, out: { stone: 8, gold: 4 } },
+  { id: 'spiritlantern', name: '灵灯阁', icon: '🏮', terrain: 'mystic', req: 72, bonus: { key: 'spirit', per: 0.015 },
+    desc: '灵灯长明，每级灵力凝聚 +1.5%。', cost: { gold: 3900, wood: 270, stone: 270 }, out: null },
+  { id: 'heavenpillar', name: '通天柱', icon: '⛩️', terrain: 'mystic', req: 90, bonus: { key: 'xp', per: 0.015 },
+    desc: '通天问道，每级全技能经验 +1.5%。', cost: { gold: 5300, wood: 300, stone: 300 }, out: null },
+  { id: 'works', name: '营造司', icon: '🏗️', color: '#c0a878', terrain: 'mystic', req: 96, bonus: { key: 'buildcost', per: 0.015 },
+    desc: '统筹匠作，每级建造费用 −1.5%（至多 −60%）。', cost: { gold: 5900, wood: 320, stone: 320 }, out: null },
+
+  /* ------------------------------------------------------ 信徒招募（特殊） */
+  { id: 'summonhall', name: '招贤殿', icon: '🏛️', color: '#b98ce0', terrain: 'mystic', req: 1,
+    special: 'disciple',
+    desc: '广纳信徒，信徒可入驻上阵；每级信徒仓库 +3，并解锁更高品阶的招募。',
+    cost: { gold: 700, wood: 80, stone: 80 }, out: null }
+];
+
+/* =========================================================================
+ * 信徒（招募 · 上阵）
+ * 信徒视作"装备"：上阵位数 = 招贤殿等级（每级 1 位），各提供不同的常驻加成。
+ * 总数（仓库 + 上阵）受招贤殿等级限制；品阶上限同样由招贤殿等级决定。
+ * ========================================================================= */
+const DISCIPLE = {
+  SLOTS_PER_LVL: 1,      // 上阵位数 = 招贤殿等级 × 该值（未建造时为 0，即无法上阵）
+  BASE_STORE: 2,         // 招贤殿 Lv.1 时的信徒总容量（含上阵）
+  STORE_PER_LVL: 3,      // 每提升一级 +3 容量
+  RECRUIT_BASE: 600,     // 首次招募的灵石花费
+  RECRUIT_GROW: 1.12,    // 每多一位信徒，招募费 ×1.12
+  /* 索引 = 招贤殿等级 − 1，值 = 可招募的最高品阶（超出表长则取末项） */
+  TIER_BY_HALL: [1, 2, 2, 3, 3, 3, 3, 4, 4, 4]
+};
+
+const DISCIPLE_TIERS = {
+  1: { name: '凡品', color: '#8fbf8f', weight: 55 },
+  2: { name: '灵品', color: '#6fb7e0', weight: 30 },
+  3: { name: '仙品', color: '#c58ae0', weight: 12 },
+  4: { name: '神品', color: '#e0b060', weight: 3 }
+};
+
+/* bonus 的 k 支持：speed_<技能ID>（该技能动作速度）、speed（全局动作速度）、
+   atk / def / hit / ev / hp（战斗属性）、xp / cultxp（经验与修为）、
+   gold / sell（灵石收益与出售价）、drop（掉落）、mastery（精通）、double（额外产出）、
+   spirit（灵力凝聚）、regen（脱战回血） */
+const DISCIPLES = [
+  /* ---------------------------------------------------------- 凡品 tier 1 */
+  { id: 'd_wood', name: '山樵客', icon: '🌲', tier: 1, bonus: [{ k: 'speed_woodcutting', v: 0.03 }],
+    desc: '山间老樵，伐木手法利落。' },
+  { id: 'd_fish', name: '溪畔渔翁', icon: '🎣', tier: 1, bonus: [{ k: 'speed_fishing', v: 0.03 }],
+    desc: '垂钓半生，知晓鱼汛。' },
+  { id: 'd_mine', name: '挑山工', icon: '⛏️', tier: 1, bonus: [{ k: 'speed_mining', v: 0.03 }],
+    desc: '肩挑千斤，凿石如泥。' },
+  { id: 'd_herb', name: '药圃童子', icon: '🌿', tier: 1, bonus: [{ k: 'speed_herbalism', v: 0.03 }],
+    desc: '自幼识草，辨药极准。' },
+  { id: 'd_farm', name: '田舍翁', icon: '🌾', tier: 1, bonus: [{ k: 'speed_farming', v: 0.03 }],
+    desc: '耕读传家，田地打理得当。' },
+  { id: 'd_learn', name: '抄经生', icon: '📖', tier: 1, bonus: [{ k: 'xp', v: 0.03 }],
+    desc: '日抄经文，助主上参悟。' },
+
+  /* ---------------------------------------------------------- 灵品 tier 2 */
+  { id: 'd_sword', name: '铸剑侍', icon: '⚔️', tier: 2, bonus: [{ k: 'atk', v: 0.05 }],
+    desc: '随身佩剑，攻伐凌厉。' },
+  { id: 'd_guard', name: '护院武师', icon: '🛡️', tier: 2, bonus: [{ k: 'def', v: 0.05 }],
+    desc: '铁盾护主，临阵不避。' },
+  { id: 'd_alchemy', name: '丹房童子', icon: '⚗️', tier: 2, bonus: [{ k: 'speed_alchemy', v: 0.06 }],
+    desc: '守炉三载，丹火纯熟。' },
+  { id: 'd_smith', name: '炉前匠', icon: '🔥', tier: 2, bonus: [{ k: 'speed_smelting', v: 0.06 }],
+    desc: '控火精准，熔炼极快。' },
+  { id: 'd_gold', name: '账房先生', icon: '📿', tier: 2, bonus: [{ k: 'gold', v: 0.05 }],
+    desc: '精于算计，灵石来路更广。' },
+
+  /* ---------------------------------------------------------- 仙品 tier 3 */
+  { id: 'd_blade', name: '剑奴', icon: '🗡️', tier: 3, bonus: [{ k: 'atk', v: 0.10 }, { k: 'hit', v: 0.04 }],
+    desc: '剑意入骨，一击必中。' },
+  { id: 'd_medic', name: '药王侍', icon: '💊', tier: 3, bonus: [{ k: 'regen', v: 0.10 }, { k: 'hp', v: 0.06 }],
+    desc: '随身百草，气血自复。' },
+  { id: 'd_star', name: '观星道人', icon: '🔭', tier: 3, bonus: [{ k: 'cultxp', v: 0.10 }],
+    desc: '夜观天象，助主上悟道。' },
+  { id: 'd_trade', name: '商盟执事', icon: '💰', tier: 3, bonus: [{ k: 'gold', v: 0.10 }, { k: 'sell', v: 0.05 }],
+    desc: '八面玲珑，货卖善价。' },
+  { id: 'd_array', name: '阵眼守卫', icon: '🔯', tier: 3, bonus: [{ k: 'ev', v: 0.08 }, { k: 'def', v: 0.06 }],
+    desc: '守阵不移，身法飘忽。' },
+
+  /* ---------------------------------------------------------- 神品 tier 4 */
+  { id: 'd_incense', name: '香火金身', icon: '✨', tier: 4, bonus: [{ k: 'xp', v: 0.15 }],
+    desc: '受万家香火，道韵加身。' },
+  { id: 'd_thunder', name: '雷部力士', icon: '⚡', tier: 4, bonus: [{ k: 'atk', v: 0.18 }, { k: 'hit', v: 0.08 }],
+    desc: '雷法在身，出手如霆。' },
+  { id: 'd_crane', name: '白鹤童子', icon: '🕊️', tier: 4, bonus: [{ k: 'speed', v: 0.12 }],
+    desc: '御鹤随行，万事皆快。' },
+  { id: 'd_immortal', name: '剑仙遗蜕', icon: '🌠', tier: 4, bonus: [{ k: 'mastery', v: 0.20 }, { k: 'double', v: 0.05 }],
+    desc: '一缕剑仙残念，助你精进诸艺。' }
+];
+
+function findDisciple(id) {
+  for (let i = 0; i < DISCIPLES.length; i++) if (DISCIPLES[i].id === id) return DISCIPLES[i];
+  return null;
+}
+
+/* 招贤殿等级 → 可招募的最高品阶（0 级 = 未解锁） */
+function discipleTierByHall(lv) {
+  const n = Math.floor(lv) || 0;
+  if (n <= 0) return 0;
+  const i = Math.min(n - 1, DISCIPLE.TIER_BY_HALL.length - 1);
+  return DISCIPLE.TIER_BY_HALL[i];
+}
+
+function findBuilding(id) {
+  for (let i = 0; i < BUILDINGS.length; i++) if (BUILDINGS[i].id === id) return BUILDINGS[i];
+  return null;
+}
+
+function findTerrain(id) {
+  for (let i = 0; i < TERRAINS.length; i++) if (TERRAINS[i].id === id) return TERRAINS[i];
+  return null;
+}
+
+/* 地形解锁门槛 = 该地形内最低的建筑门槛 */
+function terrainReq(tid) {
+  let n = Infinity;
+  for (let i = 0; i < BUILDINGS.length; i++) {
+    if (BUILDINGS[i].terrain === tid && BUILDINGS[i].req < n) n = BUILDINGS[i].req;
+  }
+  return isFinite(n) ? n : 1;
+}
+
+/* 从 lvl 级升到 lvl+1 级的造价（0 级即首次建造）
+   只有"开局就能建"的资源建筑（门槛 req ≤ 1，如灵田 / 民居 / 伐木坊 / 招贤殿）
+   首次建造免木材与石料、只收灵石；其余建筑首建照常收取三资源，
+   否则洞天开局没有木/石产出，会被卡死在第一座产石建筑之前。 */
+function buildCost(b, lvl) {
+  const m = Math.pow(WORLD.COST_MUL, lvl);
+  const out = {
+    gold: Math.floor(b.cost.gold * m),
+    wood: Math.floor(b.cost.wood * m),
+    stone: Math.floor(b.cost.stone * m)
+  };
+  if (lvl <= 0 && b.req <= 1) {
+    out.wood = 0;
+    out.stone = 0;
+  }
+  return out;
 }
 
 /* =========================================================================
@@ -1068,15 +1604,19 @@ function itemIcon(id) { return ITEMS[id] ? ITEMS[id].icon : '❔'; }
 function randInt(a, b) { return a + Math.floor(Math.random() * (b - a + 1)); }
 
 function realmInfo(lvl) {
-  const idx = Math.max(0, Math.min(Math.floor(lvl) - 1, STAGES.length - 1));
-  return STAGES[idx];
+  const n = Math.max(1, Math.min(Math.floor(lvl) || 1, TOTAL_STAGES));
+  if (n <= STAGES.length) return STAGES[n - 1];
+  return taishangStage(n - STAGES.length - 1);
 }
 
-/* 第 idx 阶（0 起）的突破信息，最高阶返回 null */
+/* 第 idx 阶（0 起）的突破信息，终点阶（太上境最高层）返回 null */
 function breakInfo(idx) {
-  const st = STAGES[idx];
-  if (!st || st.isMax) return null;
-  return st.breakInfo;
+  if (idx < 0 || idx >= TOTAL_STAGES) return null;
+  if (idx < STAGES.length) {
+    const st = STAGES[idx];
+    return st.isMax ? null : st.breakInfo;
+  }
+  return taishangStage(idx - STAGES.length).breakInfo;
 }
 
 /* 动作/配方统一查询：先查采集动作，再查配方 */
@@ -1106,3 +1646,53 @@ function findTask(id) {
   for (let i = 0; i < TASKS.length; i++) if (TASKS[i].id === id) return TASKS[i];
   return null;
 }
+
+/* =========================================================================
+ * 穿越星球（主动动作 · 小游戏式收益）
+ * 在面板点击「开启运转」后占用全局动作槽，四周生成灵石 / 星砂 / 已解锁材料；
+ * 抵达星球时消耗 SPIRIT_COST 灵力并入账，灵力不足则停在星球边缘等待恢复。
+ * 点击面板可让生成与飞行速度翻倍，每次 +BOOST_ADD 秒，仅在运转期间生效。
+ * 加速上限 = BOOST_BASE_CAP + BOOST_GT_BONUS × 引力塔等级（未建造时按 0 级计算）。
+ * 三种产物的权重：灵石 50% / 星砂 30% / 已解锁材料 20%。
+ * ========================================================================= */
+const PLANET = {
+  SPAWN_BASE: 1.8,        /* 基础生成间隔（秒） */
+  FLIGHT_TIME: 4.8,       /* 基础飞行时长（秒） */
+  MAX_ITEMS: 24,          /* 同屏最多飞行中的物品数 */
+  BOOST_MULT: 2,          /* 加速倍率（生成与飞行都翻倍） */
+  BOOST_ADD: 4,           /* 每次点击增加秒数 */
+  BOOST_BASE_CAP: 60,     /* 基础加速时长上限（秒，未建引力塔时） */
+  BOOST_GT_BONUS: 5,      /* 引力塔每级增加的加速上限（秒） */
+  SPIRIT_COST: 0.5,       /* 每吸收 1 件物品消耗的灵力（调平衡只改这里） */
+  /* 灵气浓度：独立于灵力的第二资源，每次「生成」物品时消耗，触底停止生成。
+     上限与恢复速率随洞天「引力塔」等级成长，避免后期成为硬卡点。 */
+  AURA_CAP_BASE: 100,     /* 灵气浓度上限基础值（未建引力塔） */
+  AURA_CAP_GT: 20,        /* 引力塔每级 +20 上限 */
+  AURA_REGEN_BASE: 2.0,   /* 每秒基础恢复（不占用动作槽，未运转时也会恢复） */
+  AURA_REGEN_GT: 0.2,     /* 引力塔每级 +0.2/s 恢复 */
+  AURA_COST: 2,           /* 每生成 1 件飞行物消耗的浓度 */
+  AURA_MIN: 1,            /* 非零下限：浓度永远不会到 0，触底后停止生成并提示 */
+  /* 穿越价格：1000 × 1.6^(n-1)，第 10 次起改为 ×1.12 的缓坡。
+     n = 本次是第几次穿越（1 起算）。见 document/机制-穿越星球.md。 */
+  CROSS_BASE: 1000,
+  CROSS_KNEE: 10,         /* 前 10 次用快速段 */
+  CROSS_GROW_EARLY: 1.6,
+  CROSS_GROW_LATE: 1.12,
+  W_GOLD: 0.5,            /* 灵石权重 */
+  W_STAR: 0.3,            /* 星砂权重 */
+  W_MAT: 0.2,             /* 材料权重 */
+  GOLD_MIN: 2,
+  GOLD_MAX: 6,
+  STAR_MIN: 1,
+  STAR_MAX: 2,
+  MAT_MIN: 1,
+  MAT_MAX: 2
+};
+
+/* 朝代序列：索引 = 穿越次数（0 = 起始清朝）。
+   索引 10 为夏朝；之后按 古一纪 / 古二纪 / … 由 planetDynastyName 数值生成，
+   不在此处写死有限列表。 */
+const DYNASTY_NAMES = [
+  '清朝', '明朝', '元朝', '宋朝', '唐朝', '南北朝',
+  '两晋', '三国', '周朝', '商朝', '夏朝'
+];

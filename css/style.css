@@ -112,6 +112,31 @@ body {
 
 .topright { display: flex; align-items: center; gap: 10px; }
 
+/* ---- Electron 桌面壳（preload 打上 .electron-shell）----
+   右上角是系统绘制的最小化/最大化/关闭按钮，这里预留位置；顶栏同时作为拖拽区 */
+.electron-shell #topbar {
+  padding-right: 152px;
+  -webkit-app-region: drag;
+}
+.electron-shell #topbar .btn,
+.electron-shell #topbar button,
+.electron-shell #topbar input,
+.electron-shell #topbar a { -webkit-app-region: no-drag; }
+
+/* 版本号：左下角常驻角标，低调、可复制 */
+.vertag {
+  position: fixed;
+  left: 14px; bottom: 8px; z-index: 6;
+  font-size: 11px; line-height: 1;
+  color: var(--muted); opacity: .75;
+  padding: 3px 7px; border-radius: 6px;
+  border: 1px solid var(--line2);
+  background: rgba(14, 18, 27, .86);
+  font-variant-numeric: tabular-nums;
+  user-select: text; cursor: default;
+}
+.vertag:hover { opacity: 1; }
+
 .toggle {
   display: flex; align-items: center; gap: 6px;
   font-size: 12px; color: var(--muted);
@@ -136,6 +161,7 @@ main {
   display: flex; flex-direction: column; gap: 8px;
   overflow-y: auto;
   overflow-x: hidden;
+  padding-bottom: 18px; /* 给左下角版本角标留位，避免遮住最后一个技能按钮 */
 }
 
 .skillbtn {
@@ -160,18 +186,6 @@ main {
 .skillbtn .sico { font-size: 20px; width: 24px; text-align: center; }
 .skillbtn .sinfo { flex: 1; min-width: 0; }
 .skillbtn .sname { font-size: 13px; font-weight: 600; }
-.maxtag {
-  display: inline-block;
-  margin-left: 4px;
-  padding: 0 5px;
-  font-size: 10px;
-  font-weight: 700;
-  color: #1a1a1a;
-  background: linear-gradient(135deg, #ffd700, #ffb347);
-  border-radius: 3px;
-  vertical-align: middle;
-  line-height: 1.6;
-}
 .skillbtn .slvl { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .skillbtn .sbar {
   position: absolute; left: 0; bottom: 0; height: 2px; width: 0%;
@@ -315,6 +329,24 @@ main {
 .sellqtybar .qlabel { font-size: 11px; color: var(--muted); margin-right: 2px; }
 .sellqtybar .qhint { font-size: 11px; color: var(--muted); margin-left: auto; opacity: .8; }
 .sellqtybar .chip { min-width: 40px; text-align: center; }
+.qtyinput {
+  width: 62px; margin-left: auto; padding: 3px 6px;
+  font: inherit; font-size: 12px; text-align: center;
+  color: var(--text); background: rgba(0, 0, 0, .25);
+  border: 1px solid var(--line2); border-radius: 6px;
+  font-variant-numeric: tabular-nums;
+}
+.qtyinput:focus { outline: none; border-color: var(--gold); }
+
+/* 弹层内的紧凑版数量条 */
+.sellqtybar.compact {
+  margin: 6px 0 8px; padding: 5px 7px; gap: 4px;
+}
+.sellqtybar.compact .qlabel { font-size: 10px; }
+.sellqtybar.compact .chip {
+  min-width: 0; padding: 2px 5px; font-size: 10px;
+}
+.sellqtybar.compact .qtyinput { width: 48px; margin-left: 0; padding: 2px 4px; font-size: 11px; }
 
 .invgrid {
   display: grid;
@@ -382,6 +414,26 @@ main {
 .fmod .fmval b { color: var(--jade); }
 .fmod .mini { min-width: 62px; }
 .fmod .mini:disabled { opacity: .42; cursor: not-allowed; }
+
+/* ------------------------------------------------------------ 世界（洞天） */
+.wstats { display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); gap: 8px; margin: 4px 0 12px; }
+.wstat { border: 1px solid var(--line); border-radius: 9px; background: rgba(255, 255, 255, .022); padding: 8px 10px; }
+.wstat .wl { font-size: 11px; color: var(--muted); letter-spacing: .5px; }
+.wstat .wv { margin-top: 3px; font-size: 14px; color: var(--gold2); font-variant-numeric: tabular-nums; }
+
+.wpips { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 12px; }
+.wpip { border: 1px solid var(--line2); border-radius: 999px; padding: 4px 11px; font-size: 11px; color: var(--muted); white-space: nowrap; }
+.wpip b { font-variant-numeric: tabular-nums; }
+
+.formcard .fname .blvl { margin-left: 6px; font-size: 11px; font-weight: 500; color: var(--muted); font-variant-numeric: tabular-nums; }
+.bldcard .fmod { align-items: center; }
+.bldbtn {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 3px 9px; font-size: 11px; line-height: 1.5;
+}
+.bldbtn .cst { display: inline-flex; align-items: center; gap: 3px; font-variant-numeric: tabular-nums; }
+.bldbtn .cst i { font-style: normal; font-size: 12px; line-height: 1; }
+.bldbtn:disabled { opacity: .42; cursor: not-allowed; }
 
 /* 背包物品操作弹层 */
 #invPopover {
@@ -490,6 +542,7 @@ main {
   display: block; height: 100%; border-radius: 999px;
   background: linear-gradient(90deg, var(--purple), var(--blue));
 }
+.mline .mfx { margin-left: auto; white-space: nowrap; opacity: .78; }
 
 /* --- 侧栏任务徽标 --- */
 .skillbtn .badge {
@@ -595,6 +648,14 @@ main {
 .shopcats { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 12px; }
 .shopcats .chip { font-size: 12px; padding: 5px 13px; }
 
+/* --- 洞天 · 地形筛选 --- */
+.terrains { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 12px; }
+.terrains .chip { font-size: 12px; padding: 5px 13px; display: inline-flex; align-items: center; gap: 5px; }
+.terrains .chip b { font-size: 10px; opacity: .65; font-weight: 600; }
+.terrains .chip em { font-style: normal; font-size: 10px; opacity: .8; }
+.terrains .chip.locked { opacity: .45; }
+.terrains .chip.locked:hover { opacity: .7; }
+
 .shopgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
 .shopitem {
   display: flex; align-items: center; gap: 10px;
@@ -607,6 +668,41 @@ main {
 .shopitem .sname { font-size: 13px; font-weight: 600; }
 .shopitem .smeta { font-size: 11px; color: var(--muted); line-height: 1.5; margin: 3px 0; display: block; }
 .shopitem .sprice { font-size: 12px; color: var(--gold2); font-variant-numeric: tabular-nums; }
+
+/* --- 信徒 · 招募 --- */
+.discbtn.on { border-color: #b98ce0; }
+.sdbar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 9px 12px; margin-bottom: 12px;
+  border: 1px solid var(--line2); border-left: 3px solid #b98ce0;
+  border-radius: 10px; background: rgba(185, 140, 224, .07);
+}
+.sdbar .sdico { font-size: 20px; }
+.sdbar .sdname { font-size: 13px; font-weight: 600; color: var(--gold2); }
+.sdbar .sdval { font-size: 13px; color: #d8c0f0; font-variant-numeric: tabular-nums; margin-right: 4px; }
+.sdbar .sdnote { font-size: 11px; color: var(--muted); }
+
+.drecruit { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.drecruit .btn:disabled { opacity: .45; cursor: not-allowed; }
+.drecruit .qhint { font-size: 11px; color: var(--muted); }
+
+.dslots { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 8px; margin-bottom: 12px; }
+.dslot {
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 10px 6px; text-align: center;
+  border: 1px solid var(--line2); border-radius: 10px;
+  background: rgba(255, 255, 255, .022);
+}
+.dslot:not(.empty) { border-color: var(--rc, #b98ce0); cursor: pointer; }
+.dslot:not(.empty):hover { background: rgba(185, 140, 224, .1); }
+.dslot.empty { opacity: .55; border-style: dashed; }
+.dslot .dico { font-size: 22px; line-height: 1.1; }
+.dslot .dname { font-size: 12px; font-weight: 600; color: var(--text); }
+.dslot .dnote { font-size: 10px; color: var(--muted); line-height: 1.35; }
+
+.dgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 10px; }
+.dcard .fmod .mini:disabled,
+.dcard .fmod [data-locked="1"] { opacity: .42; cursor: not-allowed; }
 .shopitem .sbuys { display: flex; flex-direction: column; gap: 5px; }
 .shopitem .sbuys .mini { min-width: 52px; }
 .shopitem .sbuys .mini[disabled] { opacity: .45; cursor: not-allowed; }
@@ -669,3 +765,119 @@ main {
   transition: width .35s linear;
 }
 
+
+/* ================================================== 穿越星球 */
+.planetwrap { display: flex; flex-direction: column; gap: 10px; cursor: pointer; user-select: none; }
+.planetwrap .phead { pointer-events: none; }
+
+.planetstage {
+  position: relative; overflow: hidden;
+  height: min(58vh, 520px); min-height: 300px;
+  border-radius: 14px;
+  border: 1px solid var(--line2);
+  background:
+    radial-gradient(circle at 50% 50%, rgba(120,150,220,.18), transparent 58%),
+    radial-gradient(circle at 24% 78%, rgba(160,120,220,.14), transparent 55%),
+    #0b1022;
+  box-shadow: inset 0 0 40px rgba(80,110,200,.25);
+}
+.planetstage::before {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background-image:
+    radial-gradient(1.5px 1.5px at 12% 24%, rgba(255,255,255,.75), transparent),
+    radial-gradient(1px 1px at 58% 14%, rgba(255,255,255,.7), transparent),
+    radial-gradient(1.5px 1.5px at 82% 38%, rgba(255,255,255,.55), transparent),
+    radial-gradient(1px 1px at 24% 88%, rgba(255,255,255,.5), transparent);
+  opacity: .7;
+}
+
+.planetstage .pglow {
+  position: absolute; left: 50%; top: 50%; width: 46%; aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(120,190,255,.35), rgba(120,190,255,.06) 60%, transparent 72%);
+  animation: pglowPulse 4.2s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes pglowPulse { 0%,100% { opacity: .55; transform: translate(-50%,-50%) scale(1); } 50% { opacity: .95; transform: translate(-50%,-50%) scale(1.08); } }
+
+.planetstage .pcore {
+  position: absolute; left: 50%; top: 50%; width: 150px; height: 150px;
+  transform: translate(-50%, -50%); pointer-events: none;
+  display: flex; align-items: center; justify-content: center;
+}
+.planetstage .pball {
+  font-size: 96px; line-height: 1;
+  text-shadow: 0 0 18px rgba(130,190,255,.65);
+  animation: pballSpin 26s linear infinite;
+}
+@keyframes pballSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.planetstage .pring {
+  position: absolute; width: 138px; height: 138px; border-radius: 50%;
+  border: 1px dashed rgba(150,200,255,.55);
+  box-shadow: 0 0 22px rgba(120,180,255,.35) inset;
+  animation: pringSpin 18s linear infinite reverse;
+}
+@keyframes pringSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+/* 飞行物容器：只承载节点，位置由 updatePlanet 逐帧写 transform */
+.planetstage .planetitems { position: absolute; inset: 0; pointer-events: none; }
+
+.pitem {
+  position: absolute; left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 22px; line-height: 1; pointer-events: none;
+  will-change: transform, opacity;
+  text-shadow: 0 0 6px rgba(255,255,255,.25);
+}
+.pitem.k-gold { font-size: 20px; }
+.pitem.k-star { font-size: 20px; }
+.pitem.k-mat { font-size: 22px; }
+
+.planetwrap.boosting .planetstage { box-shadow: inset 0 0 48px rgba(255,210,120,.35); }
+.planetwrap.boosting .pitem { text-shadow: 0 0 10px rgba(255,220,140,.75); }
+
+.planetctrl { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.planetdyn { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.pbtn {
+  padding: 5px 14px; border-radius: 8px; font-size: 12px; cursor: pointer;
+  color: var(--text); background: rgba(120,150,220,.18); border: 1px solid var(--line2);
+}
+.pbtn:hover { background: rgba(120,150,220,.3); }
+.pbtn.stop { color: #e8a0a0; border-color: #b46868; background: rgba(190,100,100,.15); }
+.pbtn.cross { background: rgba(150,115,225,.22); border-color: #7a6bb0; }
+.pbtn.cross:hover { background: rgba(150,115,225,.34); }
+.pbtn.off, .pbtn:disabled {
+  opacity: .45; cursor: not-allowed; color: var(--muted, #9aa4b8);
+  background: rgba(255,255,255,.04); border-color: var(--line2);
+}
+.pbtn.off:hover, .pbtn:disabled:hover { background: rgba(255,255,255,.04); }
+.pbstate { font-size: 12px; color: var(--muted, #9aa4b8); }
+.pbstate.on { color: #7ddc9a; }
+.pbstate.wait { color: #ffd479; }
+
+.planetbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.pbchip {
+  padding: 3px 9px; border-radius: 999px; font-size: 12px;
+  color: var(--text); background: rgba(0,0,0,.25); border: 1px solid var(--line2);
+}
+.pbchip b { color: var(--gold); font-variant-numeric: tabular-nums; }
+.pbchip b.low { color: #e08a8a; }
+.pbchip .pbgt { color: var(--muted, #9aa4b8); font-style: normal; font-size: 11px; }
+.pbboost {
+  margin-left: auto; padding: 3px 10px; border-radius: 999px; font-size: 12px;
+  color: var(--muted, #9aa4b8); border: 1px dashed var(--line2);
+}
+.planetwrap.boosting .pbboost { color: #ffd479; border-color: #ffd479; }
+
+/* 引力塔引导行：点击整行跳转洞天·秘境 */
+.planetgrav {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px 12px; border: 1px dashed var(--line2); border-radius: 8px;
+  font-size: 12px; color: var(--muted, #9aa4b8); line-height: 1.5;
+}
+.planetgrav .pgico { font-size: 15px; }
+.planetgrav .pgtxt b { color: var(--gold); }
+.planetgrav .mini { margin-left: auto; cursor: pointer; }
+
+body.compact .planetstage { height: min(50vh, 420px); }

@@ -53,7 +53,7 @@ function invRemove(id, qty) {
 function sellPrice(id) {
   const it = ITEMS[id];
   if (!it) return 0;
-  return Math.max(1, Math.floor((it.value || 0) * CONFIG.SELL_RATIO * (1 + formBonus('sell'))));
+  return Math.max(1, Math.floor((it.value || 0) * CONFIG.SELL_RATIO * (1 + formBonus('sell') + discipleBonus('sell')) * (1 + worldBonus('sell'))));
 }
 
 /* 出售 qty 个物品（qty 为负数表示全部出售） */
@@ -124,6 +124,16 @@ function formUpgrade(formId, modIndex) {
   const lvl = st.levels[idx] || 0;
   if (lvl >= m.max) { logMsg('「' + f.name + '」· ' + m.name + ' 已臻圆满。', 'warn'); return false; }
 
+  /* 观星精通门槛：阵纹升至 lvl+1 需对应观星精通达到 mper × (lvl+1) */
+  const need = formMasteryReq(f, lvl + 1);
+  const ml = masteryOf(f.obs).lvl;
+  if (ml < need) {
+    const gaze = findActivity('formation', f.obs) || { name: '观星' };
+    logMsg('「' + f.name + '」· ' + m.name + ' 需「' + gaze.name + '」精通 Lv.' + need +
+      '（当前 Lv.' + ml + '）。', 'warn');
+    return false;
+  }
+
   const cost = formCost(f, idx, lvl);
   if (state.stardust < cost) {
     logMsg('星砂不足，「' + f.name + '」· ' + m.name + ' 需 💫 ' + cost + '。', 'warn');
@@ -132,6 +142,240 @@ function formUpgrade(formId, modIndex) {
   state.stardust -= cost;
   st.levels[idx] = lvl + 1;
   logMsg('「' + f.name + '」· ' + m.name + ' 点亮至 Lv.' + (lvl + 1) + '。', 'good');
+  return true;
+}
+
+/* ------------------------------------------------------- 世界 · 洞天营造 */
+/* 建设度 = 1 + 所有建筑等级之和，用作建筑解锁门槛 */
+function worldLevel(s) {
+  const w = (s || state).world;
+  let n = 0;
+  Object.keys(w.buildings).forEach(function (id) { n += w.buildings[id] || 0; });
+  return 1 + n;
+}
+
+function worldPopCap(s) {
+  const w = (s || state).world;
+  let cap = WORLD.BASE_POP_CAP;
+  BUILDINGS.forEach(function (b) {
+    if (!b.popCap) return;
+    cap += b.popCap * (w.buildings[b.id] || 0);
+  });
+  return cap;
+}
+
+/* 人口效率：人越多越接近 100%，无人时保留基础效率 */
+function worldEff() {
+  const w = state.world;
+  const cap = worldPopCap();
+  const full = cap > 0 ? Math.min(1, w.pop / cap) : 0;
+  return WORLD.EFF_BASE + (1 - WORLD.EFF_BASE) * full;
+}
+
+/* 每秒产出（含每秒粮食消耗），已乘以人口效率 */
+function worldRates() {
+  const w = state.world;
+  const eff = worldEff();
+  const out = { food: 0, wood: 0, stone: 0, gold: 0, spirit: 0, stardust: 0 };
+  BUILDINGS.forEach(function (b) {
+    if (!b.out) return;
+    const l = w.buildings[b.id] || 0;
+    if (l <= 0) return;
+    Object.keys(b.out).forEach(function (k) {
+      out[k] = (out[k] || 0) + b.out[k] * l * eff / 60;
+    });
+  });
+  out.foodUse = w.pop * WORLD.FOOD_PER_POP_MIN / 60;
+  return out;
+}
+
+/* 加成型建筑汇总（返回小数，如 0.12 表示 +12%） */
+function worldBonus(key) {
+  let sum = 0;
+  BUILDINGS.forEach(function (b) {
+    if (!b.bonus || b.bonus.key !== key) return;
+    sum += (state.world.buildings[b.id] || 0) * b.bonus.per;
+  });
+  return sum;
+}
+
+/* 实际造价：营造司减免后的建造成本（至多 −60%） */
+function worldBuildCost(b, lvl) {
+  const c = buildCost(b, lvl);
+  const d = Math.min(0.6, worldBonus('buildcost'));
+  if (d <= 0) return c;
+  return {
+    gold: Math.floor(c.gold * (1 - d)),
+    wood: Math.floor(c.wood * (1 - d)),
+    stone: Math.floor(c.stone * (1 - d))
+  };
+}
+
+/* 洞天每 tick 推进：资源产出、灵石/灵力/星砂入库、人口增减 */
+function worldTick(dt) {
+  const w = state.world;
+  if (!w) return;
+  const r = worldRates();
+  const cap = worldCap(worldLevel());
+
+  w.res.food = clamp(w.res.food + (r.food - r.foodUse) * dt, 0, cap.food);
+  w.res.wood = Math.min(cap.wood, w.res.wood + r.wood * dt);
+  w.res.stone = Math.min(cap.stone, w.res.stone + r.stone * dt);
+
+  state.gold += r.gold * dt;
+  state.spirit += r.spirit * dt;
+  state.stardust += r.stardust * dt;
+
+  /* 人口：粮食有盈余时向人口上限增长，断粮则流失 */
+  const popCap = worldPopCap();
+  const netFoodMin = (r.food - r.foodUse) * 60;
+  if (w.res.food > 0 && netFoodMin >= 0) {
+    w.pop = Math.min(popCap, w.pop + (popCap - w.pop) * WORLD.POP_GROWTH * dt);
+  } else if (w.res.food <= 0 && w.pop > 0) {
+    w.pop = Math.max(0, w.pop - w.pop * WORLD.POP_DECAY * dt);
+  }
+  if (w.pop > popCap) w.pop = Math.max(popCap, w.pop - w.pop * 0.05 * dt);
+}
+
+/* 建造 / 升级一栋建筑（瞬时操作，不占用动作槽） */
+function buildBuilding(bid) {
+  const b = findBuilding(bid);
+  if (!b) return false;
+  const w = state.world;
+  const lvl = w.buildings[b.id] || 0;
+
+  if (worldLevel() < b.req) {
+    logMsg('洞天建设度不足，「' + b.name + '」需建设度 ' + b.req + '。', 'warn');
+    return false;
+  }
+  const c = worldBuildCost(b, lvl);
+  if (state.gold < c.gold) { logMsg('灵石不足，营造「' + b.name + '」需 💠' + c.gold + '。', 'warn'); return false; }
+  if (w.res.wood < c.wood) { logMsg('木材不足，营造「' + b.name + '」需 🌲' + c.wood + '。', 'warn'); return false; }
+  if (w.res.stone < c.stone) { logMsg('石料不足，营造「' + b.name + '」需 ⛰️' + c.stone + '。', 'warn'); return false; }
+
+  state.gold -= c.gold;
+  w.res.wood -= c.wood;
+  w.res.stone -= c.stone;
+  w.buildings[b.id] = lvl + 1;
+  if (b.id === 'summonhall') syncDiscipleSlots();   /* 每级 +1 上阵位 */
+
+  logMsg(lvl === 0
+    ? ((b.id === 'summonhall'
+      ? '洞天新成「招贤殿」Lv.1，信徒上阵位 1 个。'
+      : '洞天新成「' + b.name + '」Lv.1。'))
+    : ('「' + b.name + '」升至 Lv.' + (lvl + 1) + '。'), 'good');
+  return true;
+}
+
+/* ------------------------------------------------------- 信徒（招募 · 上阵） */
+function hallLevel() { return (state.world.buildings.summonhall || 0); }
+function discipleUnlocked() { return hallLevel() > 0; }
+
+/* 上阵位数：招贤殿每级 +1，未建造时为 0（此时信徒只能待在仓库） */
+function discipleSlots() { return hallLevel() * DISCIPLE.SLOTS_PER_LVL; }
+
+/* 让 equipped 数组长度与上阵位数一致；缩位时把被挤下的信徒退回仓库 */
+function syncDiscipleSlots() {
+  const eq = state.disciples.equipped;
+  const slots = discipleSlots();
+  while (eq.length < slots) eq.push(null);
+  while (eq.length > slots) {
+    const id = eq.pop();
+    if (id) state.disciples.owned.push(id);
+  }
+}
+
+/* 信徒总容量（含上阵），由招贤殿等级决定 */
+function discipleStoreCap() {
+  const lv = hallLevel();
+  return lv > 0 ? DISCIPLE.BASE_STORE + (lv - 1) * DISCIPLE.STORE_PER_LVL : 0;
+}
+function discipleTierCap() { return discipleTierByHall(hallLevel()); }
+function discipleEquippedCount() {
+  let n = 0;
+  state.disciples.equipped.forEach(function (id) { if (id) n += 1; });
+  return n;
+}
+function discipleTotal() { return state.disciples.owned.length + discipleEquippedCount(); }
+
+/* 招募费随信徒总数递增（1.12 倍/位） */
+function discipleRecruitCost() {
+  return Math.floor(DISCIPLE.RECRUIT_BASE * Math.pow(DISCIPLE.RECRUIT_GROW, discipleTotal()));
+}
+
+/* 上阵信徒的加成汇总（返回小数，如 0.1 表示 +10%） */
+function discipleBonus(key) {
+  let sum = 0;
+  state.disciples.equipped.forEach(function (id) {
+    const d = findDisciple(id);
+    if (!d) return;
+    d.bonus.forEach(function (b) { if (b.k === key) sum += b.v; });
+  });
+  return sum;
+}
+
+/* 招募一位信徒：按品阶权重随机，灵石花费随总数递增 */
+function recruitDisciple() {
+  if (!discipleUnlocked()) {
+    logMsg('尚未营造「招贤殿」，无法招募信徒（世界 · 秘境）。', 'warn');
+    return false;
+  }
+  const cap = discipleStoreCap();
+  if (discipleTotal() >= cap) {
+    logMsg('信徒仓库已满（' + discipleTotal() + ' / ' + cap + '），请先升级招贤殿。', 'warn');
+    return false;
+  }
+  const cost = discipleRecruitCost();
+  if (state.gold < cost) {
+    logMsg('招募需 💠' + cost + ' 灵石，当前不足。', 'warn');
+    return false;
+  }
+
+  const maxTier = discipleTierCap();
+  const pool = DISCIPLES.filter(function (d) { return d.tier <= maxTier; });
+  let total = 0;
+  pool.forEach(function (d) { total += DISCIPLE_TIERS[d.tier].weight; });
+  let r = Math.random() * total;
+  let picked = pool[pool.length - 1];
+  for (let i = 0; i < pool.length; i++) {
+    r -= DISCIPLE_TIERS[pool[i].tier].weight;
+    if (r <= 0) { picked = pool[i]; break; }
+  }
+
+  state.gold -= cost;
+  state.disciples.owned.push(picked.id);
+  logMsg('「' + picked.name + '」（' + DISCIPLE_TIERS[picked.tier].name + '）慕名而来，已入信徒仓库。', 'good');
+  return true;
+}
+
+/* 上阵：自动占用第一个空位 */
+function equipDisciple(id) {
+  const d = findDisciple(id);
+  if (!d) return false;
+  const idx = state.disciples.owned.indexOf(id);
+  if (idx < 0) { logMsg('仓库中没有这位信徒。', 'warn'); return false; }
+  syncDiscipleSlots();
+  const slot = state.disciples.equipped.indexOf(null);
+  if (slot < 0) {
+    logMsg('上阵位已满（招贤殿 Lv.' + hallLevel() + ' 仅提供 ' + discipleSlots() + ' 位），可升级招贤殿。', 'warn');
+    return false;
+  }
+  state.disciples.owned.splice(idx, 1);
+  state.disciples.equipped[slot] = id;
+  logMsg('「' + d.name + '」已入座上阵。', 'good');
+  return true;
+}
+
+/* 卸下：回到仓库（总数不变，故不受容量限制） */
+function unequipDisciple(slot) {
+  const i = Math.floor(Number(slot));
+  if (!(i >= 0 && i < state.disciples.equipped.length)) return false;
+  const id = state.disciples.equipped[i];
+  if (!id) return false;
+  state.disciples.equipped[i] = null;
+  state.disciples.owned.push(id);
+  const d = findDisciple(id);
+  logMsg('「' + (d ? d.name : id) + '」已回到信徒仓库。', 'info');
   return true;
 }
 
@@ -170,8 +414,30 @@ function calcStats() {
   atk = Math.round(atk * (1 + formBonus('atk')));
   def = Math.round(def * (1 + formBonus('def')));
   hit = Math.round(hit * (1 + formBonus('hit')));
-  ev = Math.round(ev * (1 + formBonus('ev')));
+  ev = Math.round(ev * (1 + formBonus('ev') + worldBonus('ev')));
   hp = hp * (1 + formBonus('hp'));
+
+  /* 洞天加持：演武场（攻防）、玄龟壁（防御）、藏兵阁（命中）、药庐（生命） */
+  const wbAtk = worldBonus('atk');
+  const wbDef = worldBonus('def');
+  const wbHit = worldBonus('hit');
+  const wbHp = worldBonus('hp');
+  if (wbAtk > 0) atk = Math.round(atk * (1 + wbAtk));
+  if (wbAtk > 0 || wbDef > 0) def = Math.round(def * (1 + wbAtk + wbDef));
+  if (wbHit > 0) hit = Math.round(hit * (1 + wbHit));
+  if (wbHp > 0) hp = hp * (1 + wbHp);
+
+  /* 信徒加持（视作装备栏，最多 5 位） */
+  const dbAtk = discipleBonus('atk');
+  const dbDef = discipleBonus('def');
+  const dbHit = discipleBonus('hit');
+  const dbEv = discipleBonus('ev');
+  const dbHp = discipleBonus('hp');
+  if (dbAtk > 0) atk = Math.round(atk * (1 + dbAtk));
+  if (dbDef > 0) def = Math.round(def * (1 + dbDef));
+  if (dbHit > 0) hit = Math.round(hit * (1 + dbHit));
+  if (dbEv > 0) ev = Math.round(ev * (1 + dbEv));
+  if (dbHp > 0) hp = hp * (1 + dbHp);
 
   const dr = Math.min(CONFIG.DR_CAP, def / (def + CONFIG.DR_DIVISOR));
 
@@ -183,7 +449,7 @@ function calcStats() {
     hit: hit,
     ev: ev,
     dr: dr,
-    attackTime: CONFIG.PLAYER_ATTACK_TIME
+    attackTime: CONFIG.PLAYER_ATTACK_TIME / (1 + discipleBonus('speed_combat'))
   };
 }
 
@@ -195,9 +461,15 @@ function clampHp() {
   if (state.hp < 0) state.hp = 0;
 }
 
-/* 动作速度：受大境界与疾风阵加成 */
+/* 动作速度：受大境界、疾风阵与风阵坊加成 */
 function speedMul() {
-  return (1 + realmIndex() * CONFIG.SPEED_REALM_BONUS) * (1 + formBonus('speed'));
+  return (1 + realmIndex() * CONFIG.SPEED_REALM_BONUS) *
+    (1 + formBonus('speed') + worldBonus('speed') + discipleBonus('speed'));
+}
+
+/* 单技能动作速度：全局速度 × 该技能专属信徒加成（如「山樵客」只加快伐木） */
+function actionSpeed(skillId) {
+  return speedMul() * (1 + discipleBonus('speed_' + skillId));
 }
 
 /* 技能 → 阵法经验加成通道（阵法自身不受加成） */
@@ -208,11 +480,13 @@ function xpMul(skillId) {
   const ri = realmIndex();
   const grp = XP_GROUP[skillId] || (skillId === 'formation' ? null : 'gather');
   const fb = grp ? (1 + formBonus('xp_' + grp)) : 1;
+  const wb = 1 + worldBonus('xp') + discipleBonus('xp');
   if (skillId === 'cultivation') {
-    /* 悟性每点 +1% 修为收益，叠加境界与阵法加成 */
-    return (1 + ri * CONFIG.CULT_XP_PER_REALM) * (1 + state.insight * 0.01) * fb;
+    /* 悟性每点 +1% 修为收益，叠加境界、阵法、书院、静心堂与信徒加成 */
+    return (1 + ri * CONFIG.CULT_XP_PER_REALM) * (1 + state.insight * 0.01) * fb * wb *
+      (1 + worldBonus('cultxp') + discipleBonus('cultxp'));
   }
-  return (1 + ri * CONFIG.XP_REALM_BONUS) * fb;
+  return (1 + ri * CONFIG.XP_REALM_BONUS) * fb * wb;
 }
 
 /* --------------------------------------------------------------- 经验升级 */
@@ -223,7 +497,6 @@ function levelInfo(skillId) {
     const need = bi ? bi.need : s.xp;
     return { lvl: s.lvl, xp: s.xp, need: need, pct: need > 0 ? Math.min(1, s.xp / need) : 1, max: !bi };
   }
-  if (s.lvl >= CONFIG.SKILL_CAP) return { lvl: s.lvl, xp: 0, need: 0, pct: 1, max: true };
   const need = xpNeed(skillId, s.lvl);
   return { lvl: s.lvl, xp: s.xp, need: need, pct: Math.min(1, s.xp / need), max: false };
 }
@@ -249,12 +522,11 @@ function addXp(skillId, amount) {
 
   s.xp += gain;
   let gained = 0;
-  while (s.xp >= xpNeed(skillId, s.lvl) && gained < 500 && s.lvl < CONFIG.SKILL_CAP) {
+  while (s.xp >= xpNeed(skillId, s.lvl) && gained < 500) {
     s.xp -= xpNeed(skillId, s.lvl);
     s.lvl += 1;
     gained += 1;
   }
-  if (s.lvl >= CONFIG.SKILL_CAP) s.xp = 0;   /* 到达上限后多余经验清空 */
   if (gained > 0) onLevelUp(skillId, gained);
 }
 
@@ -265,9 +537,6 @@ function onLevelUp(skillId, n) {
     logMsg('战斗等级提升至 Lv.' + s.lvl + '，攻防命闪增强。', 'levelup');
   } else {
     logMsg(SKILLS[skillId].name + ' 等级提升至 Lv.' + s.lvl, 'levelup');
-  }
-  if (s.lvl >= CONFIG.SKILL_CAP) {
-    logMsg('🎉 ' + (SKILLS[skillId] ? SKILLS[skillId].name : '战斗') + ' 已达上限 Lv.' + CONFIG.SKILL_CAP + '！', 'levelup');
   }
 }
 
@@ -309,8 +578,13 @@ function effTime(def, id) {
 function doubleChance(id, skillId) {
   const m = masteryOf(id);
   const sk = state.skills[skillId] ? state.skills[skillId].lvl : 1;
-  const c = m.lvl * CONFIG.MASTERY_DOUBLE_PER_LVL + sk * CONFIG.SKILL_DOUBLE_PER_LVL + formBonus('double');
+  const c = m.lvl * CONFIG.MASTERY_DOUBLE_PER_LVL + sk * CONFIG.SKILL_DOUBLE_PER_LVL + formBonus('double') + worldBonus('double') + discipleBonus('double');
   return clamp(c, 0, 0.9);
+}
+
+/* 非物品收益（灵力 / 回复 / 修为）的精通倍率：每级 +0.5%，与额外产出同源 */
+function masteryYield(id) {
+  return 1 + masteryOf(id).lvl * CONFIG.MASTERY_DOUBLE_PER_LVL;
 }
 
 /* ------------------------------------------------------------ 周期动作执行 */
@@ -323,7 +597,7 @@ function matsOk(rec) {
 }
 
 function masteryGain(def) {
-  return Math.max(1, Math.round(def.xp * CONFIG.MASTERY_XP_RATIO * (1 + formBonus('mastery'))));
+  return Math.max(1, Math.round(def.xp * CONFIG.MASTERY_XP_RATIO * (1 + formBonus('mastery') + worldBonus('mastery') + discipleBonus('mastery'))));
 }
 
 /* 入世（红尘历练）单次体验结算：参考梅尔沃盗窃——
@@ -343,12 +617,13 @@ function thievingCycle(def) {
     return false;   /* 返回 false → 中断动作槽 */
   }
 
-  const gold = Math.round(randInt(def.gold[0], def.gold[1]) * (1 + formBonus('gold')));
+  const gold = Math.round(randInt(def.gold[0], def.gold[1]) * masteryYield(def.id) *
+    (1 + formBonus('gold') + worldBonus('gold') + discipleBonus('gold')));
   state.gold += gold;
 
   const got = [];
   const lost = [];
-  const dropMul = 1 + formBonus('drop');
+  const dropMul = 1 + formBonus('drop') + worldBonus('drop') + discipleBonus('drop');
   const dchance = doubleChance(def.id, 'thieving');
   def.loot.forEach(function (l) {
     if (Math.random() >= Math.min(1, l.chance * dropMul)) return;
@@ -379,18 +654,29 @@ function completeActivity(act, def) {
     def.in.forEach(function (m) { invRemove(m.id, m.qty); });
 
     const out = def.out || {};
-    if (out.spirit) state.spirit += out.spirit;
-    else if (out.gold) state.gold += Math.round(out.gold * (1 + formBonus('gold')));
-    else if (out.heal) state.hp = Math.min(maxHp(), state.hp + out.heal);
+    let bonus = '';
+    let shown = out;
+    if (out.spirit) { shown = { spirit: Math.round(out.spirit * masteryYield(def.id)) }; state.spirit += shown.spirit; }
+    else if (out.gold) {
+      shown = { gold: Math.round(out.gold * (1 + formBonus('gold') + worldBonus('gold') + discipleBonus('gold'))) };
+      state.gold += shown.gold;
+    }
+    else if (out.heal) { shown = { heal: Math.round(out.heal * masteryYield(def.id)) }; state.hp = Math.min(maxHp(), state.hp + shown.heal); }
     else if (out.cultXp) addXp('cultivation', out.cultXp);
-    else if (out.id) invAdd(out.id, out.qty || 1);
+    else if (out.id) {
+      /* 精通：成品有概率翻倍（材料只消耗一次） */
+      let qty = out.qty || 1;
+      if (Math.random() < doubleChance(def.id, skillId)) { qty *= 2; bonus = '（精通·双倍）'; }
+      shown = { id: out.id, qty: qty };
+      invAdd(out.id, qty);
+    }
 
     state.stats.crafts += 1;
     if (out.id && ITEMS[out.id] && ITEMS[out.id].type === 'pill') state.stats.pills += 1;
 
     addXp(skillId, def.xp);
     addMastery(def.id, masteryGain(def));
-    if (!OFFLINE_MODE) logMsg('「' + def.name + '」完成，' + recipeOutText(out), 'craft');
+    if (!OFFLINE_MODE) logMsg('「' + def.name + '」完成，' + recipeOutText(shown) + bonus, 'craft');
     return true;
   }
 
@@ -423,9 +709,9 @@ function completeActivity(act, def) {
       }
     });
   }
-  if (out.spirit) state.spirit += out.spirit;
-  if (out.gold) state.gold += Math.round(out.gold * (1 + formBonus('gold')));
-  if (out.heal) state.hp = Math.min(maxHp(), state.hp + out.heal);
+  if (out.spirit) state.spirit += Math.round(out.spirit * masteryYield(def.id));
+  if (out.gold) state.gold += Math.round(out.gold * (1 + formBonus('gold') + worldBonus('gold') + discipleBonus('gold')));
+  if (out.heal) state.hp = Math.min(maxHp(), state.hp + Math.round(out.heal * masteryYield(def.id)));
 
   addXp(skillId, def.xp);
   addMastery(def.id, masteryGain(def));
@@ -444,8 +730,9 @@ function recipeOutText(out) {
 function cycleTick(dt) {
   const act = state.action;
   if (!act) return;
-  /* 战斗动作由 combatTick 独立驱动，不能在这里被当作采集/制作查表，否则会被判为无效动作清空 */
-  if (act.skill === 'combat') return;
+  /* 战斗动作由 combatTick 独立驱动，星球由 planetTick 独立驱动；
+   * 二者都不在 ACTIONS/RECIPES 里查表，必须在 cycleTick 显式跳过，否则会被判为无效动作清空 */
+  if (act.skill === 'combat' || act.skill === 'planet') return;
 
   const def = findActivity(act.skill, act.id);
   if (!def) { state.action = null; state.actionTimer = 0; return; }
@@ -469,7 +756,7 @@ function cycleTick(dt) {
     logMsg('「' + def.name + '」继续运转。', 'info');
   }
 
-  state.actionTimer += dt * speedMul();
+  state.actionTimer += dt * actionSpeed(act.skill);
 
   let guard = 0;
   while (state.actionTimer >= t && guard++ < 200) {
@@ -520,7 +807,7 @@ function dungeonUnlockInfo(dg) {
 
 /* 通关一轮：发放额外奖励并累计通关次数 */
 function dungeonReward(dg) {
-  const gold = Math.round(dg.reward.gold * (1 + formBonus('gold')));
+  const gold = Math.round(dg.reward.gold * (1 + formBonus('gold') + worldBonus('gold') + discipleBonus('gold')));
   state.gold += gold;
   if (dg.reward.xp) addXp('combat', dg.reward.xp);
   const got = [];
@@ -606,18 +893,24 @@ function onMonsterKilled(target) {
   if (!m) { c.target = null; return; }
 
   const dg = c.dungeon ? findDungeon(c.dungeon) : null;
-  const gold = Math.round(randInt(m.gold[0], m.gold[1]) * (dg ? dg.scale.gold : 1) * (1 + formBonus('gold')));
+  const gold = Math.round(randInt(m.gold[0], m.gold[1]) * (dg ? dg.scale.gold : 1) *
+    masteryYield(m.id) * (1 + formBonus('gold') + worldBonus('gold') + discipleBonus('gold')));
   state.gold += gold;
   state.stats.kills += 1;
   addXp('combat', Math.round(m.xp * (dg ? dg.scale.xp : 1)));
-  addMastery(m.id, Math.max(1, Math.round(m.xp * CONFIG.MASTERY_XP_RATIO * (1 + formBonus('mastery')))));
+  addMastery(m.id, Math.max(1, Math.round(m.xp * CONFIG.MASTERY_XP_RATIO * (1 + formBonus('mastery') + worldBonus('mastery')))));
 
   const drops = [];
-  const dropMul = 1 + formBonus('drop');
+  const dropMul = 1 + formBonus('drop') + worldBonus('drop') + discipleBonus('drop');
+  const dbl = doubleChance(m.id, 'combat');
   m.drops.forEach(function (d) {
     if (Math.random() < Math.min(1, d.chance * dropMul)) {
-      invAdd(d.id, d.qty);
-      drops.push(d.qty + ' × ' + itemIcon(d.id) + itemName(d.id));
+      /* 精通：该妖兽的掉落有概率翻倍 */
+      let qty = d.qty || 1;
+      let tag = '';
+      if (Math.random() < dbl) { qty *= 2; tag = '（精通·双倍）'; }
+      invAdd(d.id, qty);
+      drops.push(qty + ' × ' + itemIcon(d.id) + itemName(d.id) + tag);
     }
   });
 
@@ -661,7 +954,9 @@ function onPlayerDeath(target) {
 /* ------------------------------------------------------------ 常驻被动 */
 function growPlots(dt) {
   const fs = state.skills.farming;
-  const mul = 1 + formBonus('growth');
+  /* 生长加速：阵法/洞天，以及「播种」精通（每级 -0.2% 生长时间，上限 -20%） */
+  const mul = (1 + formBonus('growth') + worldBonus('growth')) *
+    (1 + Math.min(0.20, masteryOf('farm_plant').lvl * CONFIG.MASTERY_TIME_PER_LVL));
   const np = FARMING_PLOT_REQS.length;
   for (let i = 0; i < np; i++) {
     const p = state.plots[i];
@@ -681,7 +976,7 @@ function passiveTick(dt) {
   }
 
   /* 灵力自然凝聚（不占用动作槽，受聚灵阵加成） */
-  state.spirit += CONFIG.SPIRIT_PER_SEC * (1 + formBonus('spirit')) * dt;
+  state.spirit += CONFIG.SPIRIT_PER_SEC * (1 + formBonus('spirit') + worldBonus('spirit') + discipleBonus('spirit')) * dt;
 
   /* 灵植地块：被动生长，离线同样推进 */
   growPlots(dt);
@@ -693,7 +988,7 @@ function passiveTick(dt) {
     while (state.regenTimer >= CONFIG.HP_REGEN_INTERVAL && guard++ < 50) {
       state.regenTimer -= CONFIG.HP_REGEN_INTERVAL;
       if (state.hp < maxHp()) {
-        const h = Math.max(1, Math.round(maxHp() * CONFIG.HP_REGEN_RATIO * (1 + formBonus('regen'))));
+        const h = Math.max(1, Math.round(maxHp() * CONFIG.HP_REGEN_RATIO * (1 + formBonus('regen') + worldBonus('regen') + discipleBonus('regen'))));
         state.hp = Math.min(maxHp(), state.hp + h);
       }
     }
@@ -722,18 +1017,32 @@ function autoEatTick() {
   if (state.hp / maxHp() > state.ui.eatRatio) return;
   const id = chooseFood();
   if (!id) return;
-  eatFood(id, true);
+  eatFood(id, 1, true);
 }
 
-function eatFood(itemId, silent) {
+function eatFood(itemId, qty, silent) {
   const it = ITEMS[itemId];
-  if (!it || it.type !== 'food' || invCount(itemId) < 1) return false;
-  invRemove(itemId, 1);
-  const heal = it.heal || 0;
-  state.hp = Math.min(maxHp(), state.hp + heal);
-  if (!silent) logMsg('食用「' + it.name + '」，恢复 ' + heal + ' 点生命。', 'heal');
+  if (!it || it.type !== 'food') return 0;
+  const have = invCount(itemId);
+  if (have < 1) return 0;
+  const healPer = it.heal || 0;
+
+  /* 批量食用：只吃到满血为止，多吃的部分是浪费 */
+  let n = (qty === -1 || qty === undefined) ? have : Math.floor(Number(qty) || 1);
+  n = Math.min(n, have);
+  if (healPer > 0) {
+    const need = Math.ceil((maxHp() - state.hp) / healPer);
+    if (need < 1) { logMsg('生命已满，无需进食。', 'info'); return 0; }
+    n = Math.min(n, need);
+  }
+  if (n < 1) return 0;
+
+  invRemove(itemId, n);
+  state.hp = Math.min(maxHp(), state.hp + healPer * n);
+  const heal = healPer * n;
+  if (!silent) logMsg('食用「' + it.name + '」×' + n + '，恢复 ' + heal + ' 点生命。', 'heal');
   else if (!OFFLINE_MODE) logMsg('自动进食「' + it.name + '」，恢复 ' + heal + ' 点生命。', 'heal');
-  return true;
+  return n;
 }
 
 function healWithSpirit() {
@@ -749,29 +1058,44 @@ function healWithSpirit() {
 }
 
 /* ------------------------------------------------------------ 丹药使用 */
-function usePill(itemId) {
+/* qty：要服用的枚数；-1 = 全部。返回实际消耗的枚数。 */
+function usePill(itemId, qty) {
   const it = ITEMS[itemId];
-  if (!it || it.type !== 'pill' || invCount(itemId) < 1) return false;
+  if (!it || it.type !== 'pill') return 0;
 
   if (it.use === 'break') {
     logMsg('「' + it.name + '」需在「修炼」面板冲击境界时自动消耗。', 'info');
-    return false;
+    return 0;
   }
-  invRemove(itemId, 1);
+
+  const have = invCount(itemId);
+  if (have < 1) return 0;
+  let n = (qty === -1 || qty === undefined) ? have : Math.floor(Number(qty) || 1);
+  n = Math.min(n, have);
+
   if (it.use === 'cult') {
-    const gain = Math.round(40 * (1 + realmIndex() * 4));
-    /* 除以加成后再交给 addXp，保证实际注入的修为恰好为 gain */
-    addXp('cultivation', gain / xpMul('cultivation'));
-    logMsg('服下「' + it.name + '」，修为 +' + gain + '。', 'levelup');
+    const gainPer = Math.round(40 * (1 + realmIndex() * 4));
+    invRemove(itemId, n);
+    /* 除以加成后再交给 addXp，保证实际注入的修为恰好为 gainPer × n */
+    addXp('cultivation', gainPer * n / xpMul('cultivation'));
+    logMsg('服下「' + it.name + '」×' + n + '，修为 +' + (gainPer * n) + '。', 'levelup');
   } else if (it.use === 'heal') {
-    const heal = Math.round(maxHp() * 0.65);
-    state.hp = Math.min(maxHp(), state.hp + heal);
-    logMsg('服下「' + it.name + '」，恢复 ' + heal + ' 点生命。', 'heal');
+    const healPer = Math.round(maxHp() * 0.65);
+    const need = Math.ceil((maxHp() - state.hp) / healPer);
+    if (need < 1) { logMsg('生命已满，无需服用。', 'info'); return 0; }
+    n = Math.min(n, need);
+    invRemove(itemId, n);
+    state.hp = Math.min(maxHp(), state.hp + healPer * n);
+    logMsg('服下「' + it.name + '」×' + n + '，恢复 ' + (healPer * n) + ' 点生命。', 'heal');
   } else if (it.use === 'wudao') {
-    state.insight += 1;
-    logMsg('服下「' + it.name + '」，悟性提升至 ' + state.insight + '（修炼 +' + state.insight + '% / 突破 +' + state.insight + '%）。', 'levelup');
+    invRemove(itemId, n);
+    state.insight += n;
+    logMsg('服下「' + it.name + '」×' + n + '，悟性提升至 ' + state.insight +
+      '（修炼 +' + state.insight + '% / 突破 +' + state.insight + '%）。', 'levelup');
+  } else {
+    return 0;
   }
-  return true;
+  return n;
 }
 
 /* ------------------------------------------------------------ 玩家操作接口 */
@@ -814,7 +1138,7 @@ function harvestPlot(plotIdx) {
 
   let qty = seed.yield;
   let bonus = '';
-  if (Math.random() < doubleChance('harvest_' + seed.id, 'farming')) { qty *= 2; bonus = '（精通·双倍）'; }
+  if (Math.random() < doubleChance('farm_harvest', 'farming')) { qty *= 2; bonus = '（精通·双倍）'; }
   invAdd(seed.outId, qty);
   state.stats.gathered += 1;
   state.stats.perSkill.farming = (state.stats.perSkill.farming || 0) + 1;
@@ -849,7 +1173,8 @@ function startAction(skillId, actionId) {
   }
   if (skillId === 'combat') return;   /* 战斗走 startCombat */
 
-  /* 切换动作前先彻底结束战斗，避免战斗在后台继续 */
+  /* 切换动作前先彻底结束战斗与星球巡航，避免它们在后台继续 */
+  planetInterrupt();
   cancelCombat();
   state.action = { skill: skillId, id: actionId };
   state.actionTimer = 0;
@@ -872,6 +1197,7 @@ function cancelCombat() {
 
 /* silent=true 时不写日志（材料耗尽中止、切换动作等） */
 function stopAction(silent) {
+  planetInterrupt();
   cancelCombat();
   state.action = null;
   state.actionTimer = 0;
@@ -885,6 +1211,9 @@ function startCombat(monsterId) {
 
   /* 眩晕中无法进入战斗 */
   if (state.stun > 0) { logMsg('眩晕中，还需 ' + Math.ceil(state.stun) + ' 秒才能行动。', 'warn'); return; }
+
+  /* 进入战斗会占用动作槽，先结束星球巡航并清空其飞行队列 */
+  planetInterrupt();
 
   /* 再次点击同一目标 → 停止 */
   if (state.action && state.action.skill === 'combat' && state.action.id === monsterId) {
@@ -919,6 +1248,9 @@ function startDungeon(dungeonId) {
     logMsg('进入「' + dg.name + '」需战斗 Lv.' + dg.req + '，当前 Lv.' + state.skills.combat.lvl + '。', 'warn');
     return;
   }
+
+  /* 进入秘境会占用动作槽，先结束星球巡航并清空其飞行队列 */
+  planetInterrupt();
 
   /* 再次点击同一秘境 → 停止 */
   if (state.action && state.action.skill === 'combat' && state.action.id === dg.id) {
@@ -973,7 +1305,7 @@ function wuxingNeed() {
 function breakthrough() {
   const s = state.skills.cultivation;
   const bi = breakInfo(s.lvl - 1);
-  if (!bi) { logMsg('已臻炼虚圆满，仙途巅峰。', 'warn'); return false; }
+  if (!bi) { logMsg('已臻修行尽头，再无瓶颈。', 'warn'); return false; }
   if (s.xp < bi.need) {
     logMsg('修为不足，尚需 ' + Math.ceil(bi.need - s.xp) + ' 点修为方可冲击瓶颈。', 'warn');
     return false;
@@ -1069,12 +1401,274 @@ function unequipSlot(slot) {
   return true;
 }
 
+/* ------------------------------------------------------------ 穿越星球 */
+/* 是否为当前占用动作槽的星球巡航（动作 id 用 orbit，避免与技能动作混淆） */
+function planetRunning() {
+  return !!(state.action && state.action.skill === 'planet' && state.action.id === 'orbit');
+}
+
+/* 清空星球瞬态（飞行队列 / 本局收获 / 加速 / 等待）。open 仅作旧存档兼容的镜像标志。
+   注意：灵气浓度 aura 与穿越次数 cross 是长期进度，不在这里清空。 */
+function planetReset() {
+  const p = state.planet;
+  p.open = false;
+  p.items = [];
+  p.timer = PLANET.SPAWN_BASE;
+  p.boost = 0;
+  p.waitReason = '';
+  p.session = { gold: 0, star: 0, mat: 0, count: 0 };
+}
+
+/* ---------------------------------------------------------- 灵气浓度 */
+/* 上限：基础 100，引力塔每级 +20（跟着洞天成长，后期不会成为硬卡点） */
+function planetAuraCap(s) {
+  const st = s || state;
+  const gtLv = (st.world && st.world.buildings && st.world.buildings.gravitytower) || 0;
+  return PLANET.AURA_CAP_BASE + PLANET.AURA_CAP_GT * gtLv;
+}
+
+/* 恢复：基础 2.0/s，引力塔每级 +0.2/s；被动恢复，不占用动作槽 */
+function planetAuraRegen(s) {
+  const st = s || state;
+  const gtLv = (st.world && st.world.buildings && st.world.buildings.gravitytower) || 0;
+  return PLANET.AURA_REGEN_BASE + PLANET.AURA_REGEN_GT * gtLv;
+}
+
+/* ---------------------------------------------------------- 穿越朝代 */
+/* 中文数字（1~99）：古一纪 / 古十纪 / 古二十三纪… 更大时退回阿拉伯数字 */
+function cnNum(n) {
+  const d = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
+  n = Math.floor(Number(n) || 0);
+  if (n <= 0) return '零';
+  if (n < 10) return d[n];
+  if (n < 20) return '十' + (n % 10 ? d[n % 10] : '');
+  if (n < 100) return d[Math.floor(n / 10)] + '十' + (n % 10 ? d[n % 10] : '');
+  return String(n);
+}
+
+/* 朝代名：0 = 清朝，10 = 夏朝，11 = 古一纪，12 = 古二纪…（按数值生成，不写死有限列表） */
+function planetDynastyName(n) {
+  n = Math.max(0, Math.min(10000, Math.floor(Number(n) || 0)));
+  if (n < DYNASTY_NAMES.length) return DYNASTY_NAMES[n];
+  return '古' + cnNum(n - DYNASTY_NAMES.length + 1) + '纪';
+}
+
+/* 第 n 次穿越的灵力价格（n 从 1 起算）：
+   前 10 次 1000 × 1.6^(n-1)，第 11 次起再接 ×1.12 的缓坡，避免 2^n 爆炸。 */
+function planetCrossCost(n) {
+  n = Math.max(1, Math.min(10000, Math.floor(Number(n) || 1)));
+  const steps = n - 1;
+  const fast = Math.min(steps, PLANET.CROSS_KNEE - 1);
+  let cost = PLANET.CROSS_BASE * Math.pow(PLANET.CROSS_GROW_EARLY, fast);
+  if (steps > fast) cost *= Math.pow(PLANET.CROSS_GROW_LATE, steps - fast);
+  return Math.floor(cost);
+}
+
+/* 穿越：只扣灵力、只推进朝代与次数，不重置星球产出与本局收获 */
+function planetCross() {
+  const p = state.planet;
+  if (!p) return false;
+  if (state.stun > 0) {
+    logMsg('眩晕中，还需 ' + Math.ceil(state.stun) + ' 秒才能穿越。', 'warn');
+    return false;
+  }
+  const n = Math.max(0, Math.floor(Number(p.cross) || 0)) + 1;
+  const cost = planetCrossCost(n);
+  if (state.spirit < cost) {
+    logMsg('灵力不足，第 ' + n + ' 次穿越需 ⚡ ' + cost + '（当前 ' + Math.floor(state.spirit) + '）。', 'warn');
+    return false;
+  }
+  state.spirit = Math.max(0, state.spirit - cost);
+  p.cross = n;
+  logMsg('穿越成功：抵达「' + planetDynastyName(n) + '」，第 ' + n + ' 次穿越，消耗 ⚡ ' + cost + ' 灵力。', 'good');
+  return true;
+}
+
+/* 开启 / 停止星球巡航：占用全局动作槽，切换其它动作时由 planetInterrupt 兜底清理 */
+function planetStart() {
+  if (state.stun > 0) { logMsg('眩晕中，还需 ' + Math.ceil(state.stun) + ' 秒才能行动。', 'warn'); return; }
+  if (planetRunning()) { planetStop(); return; }
+
+  cancelCombat();
+  planetReset();
+  state.action = { skill: 'planet', id: 'orbit' };
+  state.actionTimer = 0;
+  state.actionWaiting = false;
+  state.planet.open = true;
+  logMsg('开始「穿越星球」：每吸收 1 件消耗 ⚡ ' + PLANET.SPIRIT_COST +
+    ' 灵力，每生成 1 件消耗 💧 ' + PLANET.AURA_COST + ' 灵气浓度。', 'info');
+}
+
+function planetStop(silent) {
+  if (!planetRunning()) { planetReset(); return; }
+  planetReset();
+  state.action = null;
+  state.actionTimer = 0;
+  state.actionWaiting = false;
+  if (!silent) logMsg('已停止「穿越星球」，未吸收的物品已清空。', 'info');
+}
+
+/* 切换到其它动作 / 进入战斗前调用：结束星球并清空飞行队列 */
+function planetInterrupt() {
+  if (!planetRunning()) return;
+  planetReset();
+  state.actionWaiting = false;
+}
+
+/* 当前加速上限：基础 60 秒 + 引力塔每级 5 秒（未建造按 0 级） */
+function planetBoostCap() {
+  const gtLv = (state.world && state.world.buildings && state.world.buildings.gravitytower) || 0;
+  return PLANET.BOOST_BASE_CAP + PLANET.BOOST_GT_BONUS * gtLv;
+}
+
+/* 点击面板：加速时长叠加，上限随引力塔等级提升；仅在星球运转期间生效 */
+function planetBoost() {
+  if (!planetRunning()) {
+    logMsg('「穿越星球」尚未开启，先点击「开启运转」。', 'warn');
+    return;
+  }
+  const p = state.planet;
+  p.boost = Math.min(planetBoostCap(), Math.max(0, p.boost) + PLANET.BOOST_ADD);
+}
+
+/* 已解锁材料池：采集技能等级已满足其门槛的物资（矿、鱼、木、草药等） */
+function planetMaterials() {
+  const pool = [];
+  ['woodcutting', 'fishing', 'mining', 'herbalism'].forEach(function (sk) {
+    const lv = state.skills[sk] ? state.skills[sk].lvl : 1;
+    (ACTIONS[sk] || []).forEach(function (a) {
+      if (a.req > lv) return;
+      const id = a.out && a.out.id;
+      if (!id || !ITEMS[id] || ITEMS[id].type !== 'material') return;
+      if (pool.indexOf(id) < 0) pool.push(id);
+    });
+  });
+  return pool;
+}
+
+/* 按 50% / 30% / 20% 权重抽一件产物 */
+function planetPick() {
+  const r = Math.random();
+  if (r < PLANET.W_GOLD) return { kind: 'gold' };
+  if (r < PLANET.W_GOLD + PLANET.W_STAR) return { kind: 'star' };
+  const pool = planetMaterials();
+  if (!pool.length) return { kind: 'gold' };
+  return { kind: 'mat', id: pool[Math.floor(Math.random() * pool.length)] };
+}
+
+/* 生成一件飞行物：起点在星球外圈（极坐标，角度随机，半径 0.36~0.5） */
+function planetSpawn() {
+  const p = state.planet;
+  const pick = planetPick();
+  p.items.push({
+    pid: p.seq++,
+    kind: pick.kind,
+    id: pick.id || null,
+    ang: Math.random() * Math.PI * 2,
+    rad: 0.36 + Math.random() * 0.14,
+    prog: 0
+  });
+}
+
+/* 抵达星球：结算奖励 */
+function planetGrant(it) {
+  const s = state.planet.session;
+  if (it.kind === 'gold') {
+    const g = randInt(PLANET.GOLD_MIN, PLANET.GOLD_MAX);
+    state.gold += g; s.gold += g;
+  } else if (it.kind === 'star') {
+    const v = randInt(PLANET.STAR_MIN, PLANET.STAR_MAX);
+    state.stardust += v; s.star += v;
+  } else if (it.kind === 'mat') {
+    const q = randInt(PLANET.MAT_MIN, PLANET.MAT_MAX);
+    if (invAdd(it.id, q)) s.mat += q;
+  }
+  s.count += 1;
+}
+
+function planetTick(dt) {
+  const p = state.planet;
+  if (!p) return;
+
+  /* 灵气浓度被动恢复：无论是否运转都会恢复（不占动作槽），钳制到上限且不低于非零下限 */
+  const auraCap = planetAuraCap();
+  const auraNow = isFinite(p.aura) ? Number(p.aura) : auraCap;
+  p.aura = Math.min(auraCap, Math.max(PLANET.AURA_MIN, auraNow + planetAuraRegen() * dt));
+
+  /* 星球是动作槽里的主动行为：只有 state.action 指向它时才运转 */
+  if (!planetRunning()) return;
+
+  /* 加速只作用于生成与飞行，计时本身按真实时间扣除 */
+  if (p.boost > 0) p.boost = Math.max(0, p.boost - dt);
+  const sdt = dt * (p.boost > 0 ? PLANET.BOOST_MULT : 1);
+
+  /* 先推进已在飞行的物品，再生成新物品（新物品从下一 tick 起才移动）。
+   * 抵达时扣灵力：不足则停在星球边缘等待恢复，不中断、不失败，灵力不会为负。 */
+  const stay = [];
+  let spiritShort = false;
+  const cost = PLANET.SPIRIT_COST;
+  for (let i = 0; i < p.items.length; i++) {
+    const it = p.items[i];
+    it.prog += sdt / PLANET.FLIGHT_TIME;
+    if (it.prog < 1) { stay.push(it); continue; }
+    it.prog = 1;
+    if (state.spirit >= cost) {
+      state.spirit = Math.max(0, state.spirit - cost);
+      planetGrant(it);
+    } else {
+      spiritShort = true;
+      stay.push(it);   /* 原地悬停，等灵力恢复后由后续 tick 吸收 */
+    }
+  }
+  p.items = stay;
+
+  /* 引力塔：每级生成速度 +1%（缩短等待间隔，不影响飞行时长）。
+   * 生成时先扣灵气浓度；不足则不再生成，但已有飞行物照常吸收。
+   * 判断用「浓度 ≥ 单价 + 下限」，保证扣完仍留下 AURA_MIN，永远不到 0。 */
+  let auraShort = false;
+  const grav = 1 + worldBonus('planet');
+  p.timer -= sdt * grav;
+  while (p.timer <= 0) {
+    if (p.items.length < PLANET.MAX_ITEMS) {
+      if (p.aura >= PLANET.AURA_COST + PLANET.AURA_MIN) {
+        p.aura -= PLANET.AURA_COST;
+        planetSpawn();
+      } else {
+        auraShort = true;
+      }
+    }
+    p.timer += PLANET.SPAWN_BASE;
+  }
+
+  /* 与其它动作一致的「缺料等待」：灵力 / 浓度任一不足都只记一次日志，恢复后自动继续。
+   * 浓度在两次生成之间没有「生成尝试」，因此用 p.waitReason 保持触底等待状态，
+   * 直到浓度重新高于「单价 + 下限」才解除，避免状态文案在生成间隔里闪烁。 */
+  const auraLow = p.aura < PLANET.AURA_COST + PLANET.AURA_MIN;
+  const auraBlocked = auraShort || (p.waitReason === 'aura' && auraLow);
+  const waitReason = spiritShort ? 'spirit' : (auraBlocked ? 'aura' : '');
+  if (waitReason) {
+    if (!state.actionWaiting || p.waitReason !== waitReason) {
+      state.actionWaiting = true;
+      p.waitReason = waitReason;
+      logMsg(waitReason === 'spirit'
+        ? '灵力不足，「穿越星球」等待灵力恢复…'
+        : '灵气浓度不足，「穿越星球」暂停生成，等待浓度恢复…', 'warn');
+    }
+  } else if (state.actionWaiting) {
+    state.actionWaiting = false;
+    p.waitReason = '';
+    logMsg('资源恢复，「穿越星球」继续运转。', 'info');
+  }
+}
+
 /* ------------------------------------------------------------------ 主循环 */
 function tick(dt) {
   if (!state) return;
   passiveTick(dt);
+  worldTick(dt);
   cycleTick(dt);
   combatTick(dt);
+  planetTick(dt);
   autoEatTick();
   clampHp();
 
