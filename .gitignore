@@ -3,3 +3,7 @@ packaging/
 
 # 存档调试
 *.log
+
+# 临时分享包产物
+.trae-html-share-packages/
+.screenshots/
