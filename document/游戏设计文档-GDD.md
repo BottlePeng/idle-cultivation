@@ -1,6 +1,6 @@
 # 游戏设计文档（GDD）· 仙途挂机
 
-> 版本：v4（含入世、五行灵根与悟性）｜ 最后更新：随代码同步 ｜ 对应代码：`js/data.js` `js/state.js` `js/engine.js` `js/ui.js` `js/main.js`
+> 版本：v5（含入世、太上境、世界洞天）｜ 最后更新：随代码同步 ｜ 对应代码：`js/data.js` `js/state.js` `js/engine.js` `js/ui.js` `js/main.js`
 
 ---
 
@@ -20,7 +20,7 @@
 1. **一句话上手**：点击即挂机，离开也在变强。
 2. **单一动作槽**：同一时间只做一件事，选择即取舍，避免多线程挂机的通胀。
 3. **离线收益与在线一致**：离线用同一套 `tick` 快进模拟，数值口径完全一致。
-4. **长线成长曲线**：10 大技能 + 33 阶境界 + 精通 + 阵法 + 灵植，形成多轴养成。
+4. **长线成长曲线**：10 大技能 + 33 阶基础境界 + 太上境 96,500 层 + 精通 + 阵法 + 灵植 + 洞天，形成多轴养成。
 5. **零素材 / 零构建**：图标用 Emoji，纯原生 JS，所有数值集中在 `data.js`。
 
 ---
@@ -52,16 +52,18 @@
 | 2 | 离线收益 | `simulateOffline` 以 0.5s 步长快进 `tick` | `CONFIG.OFFLINE_CAP_H` | [动作槽与离线收益](./机制-动作槽与离线收益.md) |
 | 3 | 技能 | 10 技能，经验曲线 `base*lvl^pow` | `SKILLS/SKILL_ORDER` | [技能与精通](./机制-技能与精通.md) |
 | 4 | 精通 | 每个动作独立成长，上限 99 | `state.mastery` | [技能与精通](./机制-技能与精通.md) |
-| 5 | 修炼境界 | 五行灵根 + 悟性 + 33 阶境界 + 突破（终局：化神大圆满→炼虚大圆满需五行全 Lv.100） | `WUXING/REALM_DEFS` | [修炼与境界](./机制-修炼与境界.md) |
+| 5 | 修炼境界 | 五行灵根 + 悟性 + 33 阶基础境界 + 太上境 96,500 层 + 突破（32→33 需五行全 Lv.100） | `WUXING/REALM_DEFS/TAISHANG_DEF` | [修炼与境界](./机制-修炼与境界.md) |
 | 6 | 战斗 | 命中制、属性、妖兽、自动进食 | `MONSTERS/CONFIG` | [战斗系统](./机制-战斗系统.md) |
 | 7 | 生产技能 | 伐木 / 钓鱼 / 采矿 / 炼器 / 炼丹 | `ACTIONS/RECIPES` | [生产技能](./机制-生产技能.md) |
 | 8 | 装备 | 六部位法宝，属性加成 | `ITEMS.type='equip'` | [装备系统](./机制-装备系统.md) |
-| 9 | 阵法 | 观星取星砂 → 点亮阵纹 → 全局加成 | `FORMATIONS` | [阵法系统](./机制-阵法系统.md) |
+| 9 | 阵法 | 21 门观星各对应 1 座阵法；观星取星砂 → 精通达标后点亮阵纹 → 全局加成 | `FORM_SPECS/FORMATIONS` | [阵法系统](./机制-阵法系统.md) |
 | 10 | 灵植 | 地块被动生长，参考梅尔沃种植 | `FARM_SEEDS/FARMING_PLOT_REQS` | [灵植系统](./机制-灵植系统.md) |
 | 11 | 任务 | 成就式条件 + 奖励领取 | `TASKS` | [任务系统](./机制-任务系统.md) |
 | 12 | 背包 | 100 格种类上限、操作菜单、出售模式 | `CONFIG.INV_SLOTS` | [背包系统](./机制-背包系统.md) |
 | 13 | 市集 | 四店铺采购，加价购入 / 折价出售 | `SHOPS` | [市集系统](./机制-市集系统.md) |
 | 14 | 入世 | 红尘百业职业体验，概率成败，参考梅尔沃盗窃 | `ACTIONS.thieving/state.stun` | [入世系统](./机制-入世系统.md) |
+| 15 | 世界 · 洞天 | 8 种地形 × 共 100 种建筑营造、被动产出、人口效率、17 条全局加成通道（修为/速度/掉落/精通等），参考梅尔沃城镇 | `TERRAINS/BUILDINGS/state.world` | [世界洞天](./机制-世界洞天.md) |
+| 16 | 穿越星球 | 占用动作槽的主动小游戏：生成灵石/星砂/材料，吸收耗灵力、生成耗灵气浓度；灵力穿越朝代（清 → … → 夏 → 古N纪） | `PLANET/DYNASTY_NAMES/state.planet` | [穿越星球](./机制-穿越星球.md) |
 
 ---
 
@@ -123,8 +125,23 @@
 ### 4.3 成长速度参考（定性）
 
 - **等级**：技能等级无上限（`addXp` 循环扣减，单帧保护 500 级），需求随等级近似多项式增长。
-- **境界**：共 6 大境界 × 若干小境界 = **33 阶**，最终阶 `炼虚期 大圆满` 为封顶。
-- **精通**：单个动作最高 Lv.99，耗时最多 -20%，额外产出最多 +49.5%。
+- **境界**：6 大境界 × 若干小境界 = **33 阶基础境界**，其上为 `太上境` **96,500 层**，合计 **96,533 阶**；终点为 `太上境 九万六千五百层`。前六境的需求曲线按「纯修炼挂机约 500 小时晋入太上境一层」定标（v1.9.4，标定方法与分段数据见 [修炼与境界 · 附录 A](./机制-修炼与境界.md#附录-a500-小时定标数据)）。
+- **精通**：每个动作独立成长，最高 Lv.99；耗时最多 -20%、物品额外产出最多 +49.5%、灵力/回复/灵石等非物品收益最多 ×1.495。观星精通同时是阵纹升级门槛（阵纹 Lv.N 需精通 Lv.4N）。
+
+### 4.4 穿越星球（`PLANET`）
+
+| 键 | 值 | 含义 |
+| --- | --- | --- |
+| `SPAWN_BASE` / `FLIGHT_TIME` | 1.8s / 4.8s | 生成间隔 / 飞行时长 |
+| `SPIRIT_COST` | 0.5 | 每吸收 1 件消耗灵力 |
+| `AURA_CAP_BASE` / `AURA_CAP_GT` | 100 / +20 每级 | 灵气浓度上限；引力塔每级 +20 |
+| `AURA_REGEN_BASE` / `AURA_REGEN_GT` | 2.0/s / +0.2/s 每级 | 浓度被动恢复 |
+| `AURA_COST` / `AURA_MIN` | 2 / 1 | 每生成 1 件消耗 / 非零下限 |
+| `CROSS_BASE` / `CROSS_KNEE` | 1000 / 10 | 穿越基价 / 前 10 次快速段 |
+| `CROSS_GROW_EARLY` / `CROSS_GROW_LATE` | 1.6 / 1.12 | 前段 / 后段增长率 |
+
+- 浓度触底时**停止生成**并显示「灵气浓度不足，等待中」，扣除后至少保留 1，永远不会为 0 或负数。
+- 穿越价格：第 1~10 次 `1000 × 1.6^(n-1)`，第 11 次起再接 `×1.12^(n-10)`；n=1/5/10/20/50 分别为 1,000 / 6,553 / 68,719 / 213,432 / 6,394,413（推荐理由与挂机时长见 [穿越星球](./机制-穿越星球.md#32-价格曲线推荐值)）。
 
 ---
 
@@ -147,6 +164,8 @@ state
 ├─ formations{ id:{levels:[]} }  阵纹等级
 ├─ plots[{seedId,growth,ready}]  灵植地块
 ├─ stun             眩晕剩余秒数（入世被识破，期间无法开始新动作）
+├─ world{ buildings,pop,res }  洞天：建筑等级 / 人口 / 粮食木材石料存量
+├─ planet{ aura,cross }  穿越星球：灵气浓度 / 穿越次数（open/items/boost/session 为瞬态）
 ├─ action{skill,id} / actionTimer / actionWaiting   单一动作槽
 ├─ regenTimer / taskTimer   被动与任务计时
 ├─ tasks{ id:{done,claimed} }   任务进度
@@ -162,10 +181,12 @@ state
 - 数值字段 `gold/spirit/stardust/hp` 非负钳制。
 - `inv` 只保留合法物品 id 且数量 > 0 的项。
 - `equip` 校验物品存在且 `type === 'equip'`。
-- `skills` 按 `SKILL_ORDER` 迁移；修炼等级钳制到 `STAGES.length`，修为钳制到当前瓶颈。
+- `skills` 按 `SKILL_ORDER` 迁移；修炼等级钳制到 `TOTAL_STAGES`（96,533），修为钳制到当前瓶颈；普通技能等级无上限，仅做非负取整。
 - `mastery` / `formations` / `plots` 按当前配置**裁剪**（删除已下线的动作 / 阵法 / 种子）。
 - `action` 校验 `findActivity` 存在，否则回落默认。
-- `tasks` 按 `TASKS` 迁移；`ui.active` 校验白名单。
+- `world` 按 `BUILDINGS` 裁剪建筑等级（等级无上限，原样保留），资源钳制到 `worldCap(建设度)`（上限随建设度增长），人口钳制到当前人口上限。
+- `planet` 只恢复 `aura` / `cross`：旧档缺省为满浓度 / 0 次，`aura` 钳制到 `[1, 当前上限]`，`cross` 取整并钳制到 `[0,10000]`；飞行队列等瞬态一律重置，且不恢复星球动作（读档保持未开启）。
+- `tasks` 按 `TASKS` 迁移；`ui.active` 校验白名单（含 `world`）。
 
 > **原则**：任何新引入的配置表，都要在 `mergeState` 中做裁剪与钳制，保证旧存档不崩。
 
@@ -177,7 +198,7 @@ state
 
 | 层 | 文件 | 职责 |
 | --- | --- | --- |
-| 数据层 | `js/data.js` | 纯配置（`CONFIG`/`ITEMS`/`SKILLS`/`ACTIONS`/`RECIPES`/`MONSTERS`/`FORMATIONS`/`FARM_SEEDS`/`TASKS`/`SHOPS`/`WUXING`/`REALM_DEFS`）+ 纯函数工具 |
+| 数据层 | `js/data.js` | 纯配置（`CONFIG`/`ITEMS`/`SKILLS`/`ACTIONS`/`RECIPES`/`MONSTERS`/`FORMATIONS`/`FARM_SEEDS`/`TASKS`/`SHOPS`/`WUXING`/`REALM_DEFS`/`WORLD`/`BUILDINGS`）+ 纯函数工具 |
 | 状态层 | `js/state.js` | 唯一存档对象 `state`、`defaultState`、`mergeState`、`save/load/reset` |
 | 引擎层 | `js/engine.js` | `tick(dt)` 唯一时间入口；动作 / 战斗 / 被动 / 精通 / 任务 / 离线结算 |
 | 界面层 | `js/ui.js` | DOM 渲染 + 增量刷新（签名缓存） |
@@ -193,7 +214,7 @@ setInterval(renderAll,        RENDER_MS)   // 结构刷新：重绘面板
 setInterval(saveState,        AUTOSAVE_MS) // 自动存档
 ```
 
-`tick(dt)` 顺序：`passiveTick → cycleTick → combatTick → autoEatTick → clampHp → taskTimer/checkTasks`。
+`tick(dt)` 顺序：`passiveTick → worldTick → cycleTick → combatTick → planetTick → autoEatTick → clampHp → taskTimer/checkTasks`。
 
 ### 6.3 渲染防抖动（关键约定）
 
@@ -207,6 +228,7 @@ setInterval(saveState,        AUTOSAVE_MS) // 自动存档
   - `updateXpText()` / `updateXpBars()`（经验文本与进度条）
   - `updateFormState()`（阵法星砂与按钮可用性）
   - `updatePlotGrowth()`（灵植生长条）
+  - `updateWorldState()`（洞天人口 / 资源 / 产出 / 建造按钮可用性）
 - 悬停反馈用 `box-shadow` 内描边，**避免 `translateX/Y`** 撑大滚动区。
 
 ---
@@ -226,7 +248,7 @@ setInterval(saveState,        AUTOSAVE_MS) // 自动存档
 └────────────┴──────────────────┴─────────────────┘
 ```
 
-- 侧栏顺序：任务 → 背包 → 市集 → 修炼 → 战斗 → 其余技能（按 `SKILL_ORDER`）。
+- 侧栏顺序：任务 → 背包 → 市集 → 修炼 → 战斗 → 其余技能（按 `SKILL_ORDER`）→ 世界（洞天）。
 - 底部动作条：显示当前动作名与进度，并提供「停止」。
 - 灵植地块为响应式网格 `grid-template-columns: repeat(auto-fill, minmax(140px,1fr))`。
 
