@@ -2,7 +2,7 @@
 'use strict';
 
 /* =========================================================================
- * 仙途挂机 · 版本号工具
+ * 穿越星球 · 版本号工具
  * 版本号的唯一来源是 js/data.js 里的 const VERSION = 'x.y.z';
  * 本脚本只做三件事：读取、按规则递增、同步到 Electron 打包配置。
  *
@@ -37,7 +37,7 @@ function writeVersion(v) {
 }
 
 /* 把版本写进 Electron 的 package.json —— electron-builder 的 artifactName
-   用的是 ${version}，所以 exe 文件名会自动变成 IdleCultivation-<ver>-Portable.exe */
+   用的是 ${version}，所以 exe 文件名会自动变成 PlanetCrossing-<ver>-Portable.exe */
 function syncElectron(text) {
   if (!fs.existsSync(ELECTRON_PKG)) return null;
   /* 去掉可能的 UTF-8 BOM —— Windows 编辑器另存有时会加，JSON.parse 会报错 */
