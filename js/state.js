@@ -1,7 +1,7 @@
 'use strict';
 
 /* =========================================================================
- * 仙途挂机 · 状态与存档层
+ * 穿越星球 · 状态与存档层
  * state 是唯一的"存档对象"，所有层都读写它。
  * v2 结构：单一动作槽（梅尔沃放置式）+ 境界/灵根 + 精通 + 任务
  * ========================================================================= */
@@ -37,7 +37,11 @@ function defaultState() {
 
     /* 穿越星球：仅面板打开时运转（items 为飞行中的物品，瞬态不落存档）
        aura 为灵气浓度（长期进度，不随开关清空），cross 为穿越次数 */
-    planet: { open: false, timer: PLANET.SPAWN_BASE, boost: 0, seq: 1, items: [], session: { gold: 0, star: 0, mat: 0, count: 0 }, aura: PLANET.AURA_CAP_BASE, cross: 0, waitReason: '' },
+    planet: { open: false, timer: PLANET.SPAWN_BASE, boost: 0, seq: 1, items: [], session: { gold: 0, star: 0, mat: 0, count: 0 }, aura: Math.round(PLANET.AURA_CAP_BASE * PLANET.AURA_START_RATIO), auraVer: 1, cross: 0, waitReason: '' },
+
+    /* 锁妖塔：current 当前层 / best 最高已通关层 / pending 待领取层（false = 无）
+       failed 仅用于界面显示「已阵亡」，读档不恢复；层数永不回退 */
+    tower: { current: 1, best: 1, pending: false, failed: false },
 
     /* 单一动作槽：同一时刻只能进行一件事 */
     action: { skill: 'cultivation', id: 'meditate' },
@@ -59,8 +63,8 @@ function defaultState() {
     s.skills[id] = { lvl: 1, xp: 0 };
     s.stats.perSkill[id] = 0;
   });
-  /* 战斗技能额外字段（dungeon/floor 为秘境进度） */
-  Object.assign(s.skills.combat, { monster: null, target: null, playerTimer: 0, monsterTimer: 0, respawn: 0, dungeon: null, floor: 0 });
+  /* 战斗技能额外字段（dungeon/floor 为秘境进度，tower 为锁妖塔当前挑战层，0 表示不在塔内） */
+  Object.assign(s.skills.combat, { monster: null, target: null, playerTimer: 0, monsterTimer: 0, respawn: 0, dungeon: null, floor: 0, tower: 0 });
   /* 修炼瓶颈标记（修为封顶时提示一次） */
   s.skills.cultivation.capped = false;
 
@@ -148,6 +152,9 @@ function mergeState(def, saved) {
         c.floor = isFinite(cs.floor) ? Math.max(0, Math.min(dg.floors.length - 1, Math.floor(cs.floor))) : 0;
         c.monster = dg.floors[c.floor];
       }
+      /* 锁妖塔战斗是瞬态：读档一律不恢复，避免离线继续打塔 / 残留塔内目标 */
+      c.tower = 0;
+      if (cs.tower) { c.monster = null; c.target = null; }
     }
   }
 
@@ -252,6 +259,28 @@ function mergeState(def, saved) {
     if (out.disciples.owned.length > storeRoom) out.disciples.owned.length = storeRoom;
   }
 
+  /* 锁妖塔：current/best 永久保存且只增不减；pending 必须是「当前层」的待领奖标记。
+     旧档无此字段 → 1 / 1 / false；非法值一律钳制到合法范围。 */
+  out.tower = { current: 1, best: 1, pending: false, failed: false };
+  {
+    const st = (saved.tower && typeof saved.tower === 'object') ? saved.tower : null;
+    if (st) {
+      if (isFinite(st.current)) {
+        out.tower.current = Math.max(1, Math.min(TOWER.MAX_FLOOR, Math.floor(Number(st.current))));
+      }
+      if (isFinite(st.best)) {
+        out.tower.best = Math.max(1, Math.min(TOWER.MAX_FLOOR, Math.floor(Number(st.best))));
+      }
+      if (st.pending !== false && st.pending != null && isFinite(st.pending)) {
+        const pf = Math.floor(Number(st.pending));
+        if (pf >= 1 && pf === out.tower.current) out.tower.pending = pf;
+      }
+    }
+    /* best 定义为「最高已通关层」：当前层最多领先 1 层；旧档异常值要收敛 */
+    out.tower.best = Math.max(out.tower.best, out.tower.current - 1);
+    out.tower.best = Math.min(TOWER.MAX_FLOOR, out.tower.best);
+  }
+
   /* 动作槽合法性校验（防止旧存档引用已删除的动作） */
   if (saved.action && typeof saved.action === 'object' && saved.action.skill && saved.action.id) {
     if (findActivity(saved.action.skill, saved.action.id)) {
@@ -263,7 +292,7 @@ function mergeState(def, saved) {
 
   /* 星球是主动动作，但不在 ACTIONS/RECIPES 表内：读档一律不恢复，
      保持「未开启」，也避免 defaultState 的打坐动作顶替它偷偷占槽 */
-  if (saved.action && saved.action.skill === 'planet') {
+  if (saved.action && (saved.action.skill === 'planet' || saved.action.skill === 'tower')) {
     out.action = null;
     out.actionTimer = 0;
     out.actionWaiting = false;
@@ -282,7 +311,7 @@ function mergeState(def, saved) {
 
   /* UI 偏好 */
   if (saved.ui && typeof saved.ui === 'object') {
-    if (SKILL_ORDER.indexOf(saved.ui.active) >= 0 || saved.ui.active === 'tasks' || saved.ui.active === 'shop' || saved.ui.active === 'bag' || saved.ui.active === 'world' || saved.ui.active === 'disciples' || saved.ui.active === 'planet') out.ui.active = saved.ui.active;
+    if (SKILL_ORDER.indexOf(saved.ui.active) >= 0 || saved.ui.active === 'tasks' || saved.ui.active === 'shop' || saved.ui.active === 'bag' || saved.ui.active === 'world' || saved.ui.active === 'disciples' || saved.ui.active === 'planet' || saved.ui.active === 'tower') out.ui.active = saved.ui.active;
     if (typeof saved.ui.autoEat === 'boolean') out.ui.autoEat = saved.ui.autoEat;
     if (typeof saved.ui.eatFood === 'string') out.ui.eatFood = saved.ui.eatFood;
     if (isFinite(saved.ui.eatRatio)) out.ui.eatRatio = Math.max(0.1, Math.min(0.9, Number(saved.ui.eatRatio)));
@@ -299,23 +328,29 @@ function mergeState(def, saved) {
   }
 
   /* 穿越星球：飞行中的物品 / 加速 / 本局收获是瞬态数据，读档一律从空盘开始（防止离线白拿）。
-     灵气浓度与穿越次数是长期进度：旧存档缺失时给满浓度 / 0 次，并钳制到当前上限，
-     保证不会出现负值、NaN 或超过上限的数值。 */
+     灵气浓度与穿越次数是长期进度：先恢复 cross，再按新的上限公式换算 aura。
+     auraVer 用于区分 v1.9.8 旧档（旧档的 100 上限数值在新体系里没有意义，按新档 30% 起始）；
+     已有 auraVer 的存档只做有限值校验与 [AURA_MIN, 上限] 钳制，保证不为负、不为 NaN、不超上限。 */
   out.planet = {
     open: false, timer: PLANET.SPAWN_BASE, boost: 0, seq: 1, items: [],
     session: { gold: 0, star: 0, mat: 0, count: 0 },
-    aura: planetAuraCap(out), cross: 0, waitReason: ''
+    aura: Math.round(PLANET.AURA_CAP_BASE * PLANET.AURA_START_RATIO),
+    auraVer: 1, cross: 0, waitReason: ''
   };
   {
     const sp = (saved.planet && typeof saved.planet === 'object') ? saved.planet : null;
-    if (sp) {
-      const cap = planetAuraCap(out);
-      const aura = isFinite(sp.aura) ? Number(sp.aura) : cap;
-      out.planet.aura = Math.max(PLANET.AURA_MIN, Math.min(cap, aura));
-      if (isFinite(sp.cross)) {
-        out.planet.cross = Math.max(0, Math.min(10000, Math.floor(Number(sp.cross))));
-      }
+    if (sp && isFinite(sp.cross)) {
+      out.planet.cross = Math.max(0, Math.min(10000, Math.floor(Number(sp.cross))));
     }
+    /* cross 先落位，上限与恢复才会按正确的穿越次数计算 */
+    const cap = planetAuraCap(out);
+    const isMigrated = !sp || !isFinite(sp.auraVer);
+    if (isMigrated || !sp || !isFinite(sp.aura)) {
+      out.planet.aura = planetAuraStart(out);
+    } else {
+      out.planet.aura = Math.max(PLANET.AURA_MIN, Math.min(cap, Number(sp.aura)));
+    }
+    out.planet.auraVer = 1;
   }
 
   /* 统计 */

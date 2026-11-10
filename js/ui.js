@@ -1,7 +1,7 @@
 'use strict';
 
 /* =========================================================================
- * 仙途挂机 · UI 层
+ * 穿越星球 · UI 层
  * 纯 DOM 渲染，无框架。renderAll() 负责"结构 + 数据"，
  * updateBars() 由 tick 高频调用，只改进度条宽度（避免整树重绘）。
  * ========================================================================= */
@@ -43,6 +43,18 @@ function fmtNum(n) {
   return String(Math.floor(n));
 }
 
+/* 灵气浓度数值：早期保留整数，后期用 k/M 缩写，保证 (当前/上限) 不撑爆面板 */
+function fmtAuraNum(n) {
+  n = Math.max(0, Math.round(Number(n) || 0));
+  return n >= 100000 ? fmtNum(n) : String(n);
+}
+
+/* 每秒恢复速率：小数值保留 1 位小数，大数值用缩写 */
+function fmtRate(v) {
+  v = Number(v) || 0;
+  return v >= 1000 ? fmtNum(v) : (Math.round(v * 10) / 10).toFixed(1);
+}
+
 /* 灵石数量：低阶为主，超过 100 枚低阶时折算中阶显示 */
 function fmtStones(n) {
   n = Number(n) || 0;
@@ -72,10 +84,24 @@ function currentProgress() {
   if (!act) return null;
   if (act.skill === 'planet') {
     const p = state.planet;
+    const need = PLANET.SPAWN_BASE;
+    /* 用引擎在回填生成周期之前记录的取样值，避免 100ms 采样错过满格 */
+    const raw = isFinite(p.cycleCur) ? p.cycleCur : (need - (isFinite(p.timer) ? p.timer : need));
+    const cur = Math.max(0, Math.min(need, raw));
     return {
       skill: 'planet', name: '穿越星球 · 巡航', icon: '🪐',
-      pct: state.actionWaiting ? 1 : Math.max(0, Math.min(1, 1 - p.timer / PLANET.SPAWN_BASE)),
+      pct: state.actionWaiting ? 1 : cur / need,
+      cur: state.actionWaiting ? need : cur, need: need,
       waiting: state.actionWaiting
+    };
+  }
+  if (act.skill === 'tower') {
+    const c = state.skills.combat;
+    const t = c.target;
+    /* 用「已打掉的血量比例」表示本层进度；层数切换由面板增量刷新 */
+    return {
+      skill: 'tower', name: '锁妖塔 · 第 ' + c.tower + ' 层', icon: '🗼',
+      pct: t && t.maxHp > 0 ? Math.max(0, Math.min(1, 1 - t.hp / t.maxHp)) : 0
     };
   }
   if (act.skill === 'combat') {
@@ -89,9 +115,12 @@ function currentProgress() {
   const def = findActivity(act.skill, act.id);
   if (!def) return null;
   const t = effTime(def, act.id);
+  const raw = isFinite(state.actionCur) ? state.actionCur : state.actionTimer;
+  const cur = Math.max(0, Math.min(t, raw));
   return {
     skill: act.skill, name: def.name, icon: def.icon,
-    pct: state.actionWaiting ? 1 : Math.min(1, state.actionTimer / t),
+    pct: state.actionWaiting ? 1 : cur / t,
+    cur: state.actionWaiting ? t : cur, need: t,
     waiting: state.actionWaiting
   };
 }
@@ -181,6 +210,18 @@ function renderSidebar() {
     '<span class="sinfo"><span class="sname">' + comb.name + '</span><br>' +
     '<span class="slvl">Lv.' + combS.lvl + busyComb + '</span></span>' +
     '<span class="sbar" data-bar="combat"></span>' +
+    '</button>';
+
+  /* 5.5 锁妖塔（紧随战斗；层数永久累积，待领奖时给出感叹号） */
+  const onTower = state.ui.active === 'tower' ? ' on' : '';
+  const busyTower = towerRunning() ? '<span class="dot"></span>' : '';
+  const towerBadge = state.tower.pending ? ' <span class="badge">!</span>' : '';
+  html +=
+    '<button class="skillbtn towerbtn' + onTower + '" data-act="select" data-skill="tower">' +
+    '<span class="sico">🗼</span>' +
+    '<span class="sinfo"><span class="sname">锁妖塔</span><br>' +
+    '<span class="slvl">第 ' + state.tower.current + ' 层 · 最高 ' + state.tower.best +
+    busyTower + towerBadge + '</span></span>' +
     '</button>';
 
   /* 其余技能（跳过 cultivation / combat，已在上面单独渲染） */
@@ -547,7 +588,8 @@ function renderPlanet() {
   return '<div class="planetwrap" data-act="planetboost">' +
     '<div class="phead"><h2>🪐 穿越星球</h2>' +
     '<span class="pdesc">开启后占用动作槽，每吸收 1 件消耗 ✨ <b data-pg="cost">0</b> 灵力；' +
-    '每生成 1 件消耗 💧 <b data-pg="auracost">0</b> 灵气浓度（浓度有非零下限，触底暂停生成）。' +
+    '巡航时每生成 1 件消耗 💧 <b data-pg="auracost">0</b> 灵气浓度（穿越后逐次 -10%，下限 ' +
+    PLANET.AURA_COST_MIN + '）；停止运转后浓度才恢复。' +
     '点击界面加速：生成与飞行 ×' + PLANET.BOOST_MULT +
     '（每次 +' + PLANET.BOOST_ADD + ' 秒，上限 ' + PLANET.BOOST_BASE_CAP + ' 秒 + ' +
     PLANET.BOOST_GT_BONUS + ' 秒 × 引力塔等级）</span></div>' +
@@ -555,7 +597,7 @@ function renderPlanet() {
     '<div class="planetdyn">' +
     '<span class="pbchip">当前朝代 <b data-pg="dynasty">清朝</b></span>' +
     '<span class="pbchip">穿越次数 <b data-pg="cross">0</b></span>' +
-    '<span class="pbchip">灵气浓度 <b data-pg="aura">0</b> / <b data-pg="auracap">0</b>' +
+    '<span class="pbchip">灵气浓度 <b data-pg="aura">0.0% (0/0)</b>' +
     '<span class="pbgt" data-pg="aurahint"></span></span>' +
     '<button class="pbtn cross" data-act="planetcross" data-planetcross disabled>穿越</button>' +
     '<span class="pbstate" data-pg="crossnote"></span>' +
@@ -585,11 +627,138 @@ function renderPlanet() {
     '<button class="mini" data-planetgravbtn data-act="goto" data-skill="world" data-id="mystic">前往建造</button>' +
     '</div>' +
     '<div class="shopnote">四周随机生成：灵石 50% · 星砂 30% · 已解锁材料 20%（矿石 / 鱼 / 木头 / 草药等）。' +
-    '生成时消耗灵气浓度，抵达星球时消耗灵力并入账；任一资源不足都会原地等待恢复，切换其它动作会中断巡航。' +
-    '灵气浓度上限与恢复速率随洞天「引力塔」等级成长（每级 +20 上限 / +0.2 每秒恢复）。' +
-    '「穿越」只改变朝代与次数，不改变星球产出。' +
+    '巡航时生成消耗灵气浓度、吸收消耗灵力；浓度不足会暂停生成，停止运转后浓度才恢复。' +
+    '「穿越」消耗灵气浓度（首次 💧 10000，之后按 1.6 倍 / 第 11 次起 1.12 倍递增），并让单件浓度消耗逐次 -10%（下限 ' +
+    PLANET.AURA_COST_MIN + '）。浓度上限与恢复随引力塔等级和穿越次数一起成长。' +
     '</div>' +
     '</div>';
+}
+
+/* ================================================================== 锁妖塔 */
+/* 静态骨架 + data-tower 占位；层数/敌人/按钮状态/奖励预览全部增量写入，
+   高频刷新不会触发 #content 子节点重建 */
+function renderTower() {
+  return '<div class="towerwrap">' +
+    '<div class="phead"><h2>🗼 锁妖塔</h2>' +
+    '<span class="pdesc">无尽层挑战：每层一场独立战斗，击败后先领奖再进入下一层。' +
+    '层数与难度永久累积、永不重置；阵亡只判本次失败，不降层，可原地重试。' +
+    '挑战占用全局动作槽：开始时会中断其它动作，切换到其它动作会中断挑战。</span></div>' +
+    '<div class="planetdyn">' +
+    '<span class="pbchip">当前层 <b data-tower="floor">1</b></span>' +
+    '<span class="pbchip">最高已通关 <b data-tower="best">1</b></span>' +
+    '<span class="pbchip">状态 <b data-tower="state">未开始</b></span>' +
+    '<span class="pbchip">战斗等级 Lv.<b data-tower="clvl">1</b></span>' +
+    '</div>' +
+    '<div class="towerstage">' +
+    '<div class="towerfoe">' +
+    '<span class="teicon" data-tower="eicon">👹</span>' +
+    '<div class="tebody">' +
+    '<div class="tename"><b data-tower="ename">—</b><span data-tower="elvl">第 1 层</span></div>' +
+    '<div class="towerhp"><i data-tower="ehpfill"></i></div>' +
+    '<div class="tenum" data-tower="ehp">—</div>' +
+    '<div class="testats" data-tower="estats">—</div>' +
+    '</div></div>' +
+    '<div class="toweract">' +
+    '<button class="pbtn" data-act="towerstart" data-tower="startbtn">挑战第 1 层</button>' +
+    '<button class="pbtn cross" data-act="towerclaim" data-tower="claimbtn">领取奖励</button>' +
+    '<span class="pbstate" data-tower="note"></span>' +
+    '</div>' +
+    '</div>' +
+    '<div class="towerrewhead"><span class="secttl" data-tower="rewtitle">第 1 层奖励预览</span>' +
+    '<span class="pbchip" data-tower="rewtag"></span></div>' +
+    '<div class="towerreward" data-tower="reward"></div>' +
+    '<div class="secttl">里程碑与规则</div>' +
+    '<div class="shopnote">每 5 层为里程碑：灵石 ×2.5、星砂 ×3，并必掉 1 颗丹药；每 10 层额外追加材料（数量随层数提高）。' +
+    '灵石奖励吃阵法 / 洞天 / 信徒的灵石加成，战斗经验走正常经验通道。领取前可预览，领取后不可重复领取；待领奖期间不能开启下一层。</div>' +
+    '<div class="secttl">成长公式</div>' +
+    '<div class="shopnote">第 f 层妖物（t = f-1）：生命 26×(1+0.30t+0.010×t<sup>1.9</sup>)，' +
+    '攻击 5~9×(1+0.03t+0.005×t<sup>1.5</sup>)，命中 14+2.0t，闪避 8+1.2t，' +
+    '减伤 min(35%, 2%+0.4%t)，出手间隔 max(1.8s, 2.8-0.002t)。属性只由层数决定，可反复预览。</div>' +
+    '</div>';
+}
+
+let _towerRewardKey = '';
+
+function towerRewardHTML(rw) {
+  const parts = [
+    '💠 灵石 <b>+' + fmtNum(rw.gold) + '</b>',
+    '💫 星砂 <b>+' + fmtNum(rw.star) + '</b>',
+    '⚔️ 战斗经验 <b>+' + fmtNum(rw.xp) + '</b>'
+  ];
+  rw.items.forEach(function (it) {
+    parts.push(itemIcon(it.id) + ' ' + itemName(it.id) + ' <b>×' + it.qty + '</b>');
+  });
+  return '<div class="trewline">' + parts.join('<span class="trediv">·</span>') + '</div>' +
+    (rw.milestone ? '<div class="trewtip">🎖 里程碑：灵石 ×' + TOWER.MILESTONE_GOLD +
+      ' · 星砂 ×' + TOWER.MILESTONE_STAR + ' · 必掉丹药</div>' : '');
+}
+
+/* force=true：面板刚重建，需要重新填充奖励容器 */
+function updateTower(force) {
+  if (state.ui.active !== 'tower') return;
+  const root = document.querySelector('.towerwrap');
+  if (!root) { _towerRewardKey = ''; return; }
+
+  const t = state.tower;
+  const running = towerRunning();
+  const c = state.skills.combat;
+  const live = running && c.target ? c.target : null;
+  const floor = live ? c.tower : (t.pending || t.current);
+  const foe = live || towerEnemy(floor);
+  const st = calcStats();
+
+  function tw(key, txt) {
+    const el = root.querySelector('[data-tower="' + key + '"]');
+    if (el && el.textContent !== txt) el.textContent = txt;
+  }
+
+  tw('floor', String(t.current));
+  tw('best', String(t.best));
+  tw('clvl', String(state.skills.combat.lvl));
+  tw('state', running ? '挑战中' : (t.pending ? '可领奖' : (t.failed ? '已阵亡 · 可重试' : '未开始')));
+  tw('eicon', foe.icon);
+  tw('ename', foe.name);
+  tw('elvl', '第 ' + floor + ' 层');
+  tw('ehp', '生命 ' + Math.max(0, Math.ceil(foe.hp)) + ' / ' + foe.maxHp);
+  tw('estats', '攻击 ' + foe.atkMin + '~' + foe.atkMax + ' · 命中 ' + Math.round(foe.hit) +
+    ' · 闪避 ' + Math.round(foe.ev) + ' · 减伤 ' + Math.round(foe.dr * 100) + '%' +
+    ' · 出手 ' + foe.interval.toFixed(1) + 's · 我方命中 ' + Math.round(hitChance(st.hit, foe.ev) * 100) + '%');
+
+  const fill = root.querySelector('[data-tower="ehpfill"]');
+  if (fill) fill.style.width = (live ? Math.max(0, Math.min(1, foe.hp / foe.maxHp)) * 100 : 100).toFixed(1) + '%';
+
+  const startBtn = root.querySelector('[data-tower="startbtn"]');
+  if (startBtn) {
+    const label = running ? '停止挑战' : ('挑战第 ' + t.current + ' 层');
+    if (startBtn.textContent !== label) startBtn.textContent = label;
+    startBtn.disabled = !running && !!t.pending;
+  }
+  const claimBtn = root.querySelector('[data-tower="claimbtn"]');
+  if (claimBtn) {
+    const label = t.pending ? ('领取第 ' + t.pending + ' 层奖励') : '领取奖励';
+    if (claimBtn.textContent !== label) claimBtn.textContent = label;
+    claimBtn.disabled = !t.pending;
+  }
+
+  tw('note', running
+    ? '挑战中：击败本层后进入「可领奖」；切换到伐木 / 星球等其它动作会中断挑战。'
+    : (t.pending
+      ? '已通关第 ' + t.pending + ' 层，领取后进入第 ' + Math.min(TOWER.MAX_FLOOR, t.pending + 1) + ' 层。'
+      : (t.failed
+        ? '上次挑战阵亡，层数不降、未产生待领奖；疗伤后可再次挑战第 ' + t.current + ' 层。'
+        : '层数与最高层永久保存，不因停止、切面板、关游戏或读档重置。')));
+
+  const rwFloor = t.pending || t.current;
+  const rw = towerReward(rwFloor);
+  tw('rewtitle', '第 ' + rwFloor + ' 层奖励预览');
+  tw('rewtag', rw.milestone ? '里程碑层' : (rw.decade ? '材料层' : '常规层'));
+  const key = rwFloor + '|' + rw.gold + '|' + rw.star + '|' + rw.xp + '|' +
+    rw.items.map(function (it) { return it.id + 'x' + it.qty; }).join(',');
+  if (force || key !== _towerRewardKey) {
+    const box = root.querySelector('[data-tower="reward"]');
+    if (box) box.innerHTML = towerRewardHTML(rw);
+    _towerRewardKey = key;
+  }
 }
 
 /* 星球视图缓存：几何尺寸、节点引用、文本刷新节流 */
@@ -606,8 +775,9 @@ function resetPlanetGeo() {
   _planetGeo = null;
 }
 
-/* rAF 高频刷新：每帧只写 transform + opacity，不碰 left/top，不重建 DOM */
-function updatePlanet() {
+/* rAF 高频刷新：每帧只写 transform + opacity，不碰 left/top，不重建 DOM。
+   force=true 时跳过 10Hz 文本节流（穿越等关键操作后立即刷新百分比/按钮）。 */
+function updatePlanet(force) {
   if (state.ui.active !== 'planet') return;
   const stage = document.getElementById('planetStage');
   const box = document.getElementById('planetItems');
@@ -675,7 +845,7 @@ function updatePlanet() {
   }
 
   /* 文本类数据 10Hz 刷新即可，避免每帧触发额外的排版 */
-  if (now - _planetTextAt < 100) return;
+  if (!force && now - _planetTextAt < 100) return;
   _planetTextAt = now;
 
   const wrap = stage.closest('.planetwrap');
@@ -692,7 +862,7 @@ function updatePlanet() {
   if (stateEl) {
     const stxt = running
       ? (p.waitReason === 'spirit' ? '灵力不足，等待中'
-        : p.waitReason === 'aura' ? '灵气浓度不足，等待中'
+        : p.waitReason === 'aura' ? '浓度不足 · 停止运转可恢复'
           : '运转中')
       : '未开启';
     if (stateEl.textContent !== stxt) stateEl.textContent = stxt;
@@ -713,27 +883,31 @@ function updatePlanet() {
     if (spiritEl.textContent !== stxt) spiritEl.textContent = stxt;
   }
 
-  /* 灵气浓度：数值 / 上限 / 生成单价 / 恢复速率，全部走 data-* 增量刷新 */
+  /* 灵气浓度：百分比 + (当前/上限) + 当前单件消耗 + 恢复速率，全部走 data-* 增量刷新。
+     百分比与括号里的数值都基于同一个整数 current / cap，保证换算一致。 */
+  const cross = planetCrossCount();
+  const auraCost = planetAuraCost(cross);
+  const auraCostTxt = String(Math.round(auraCost * 1000) / 1000);
   const auraCostEl = document.querySelector('[data-pg="auracost"]');
-  if (auraCostEl && auraCostEl.textContent !== String(PLANET.AURA_COST)) auraCostEl.textContent = String(PLANET.AURA_COST);
+  if (auraCostEl && auraCostEl.textContent !== auraCostTxt) auraCostEl.textContent = auraCostTxt;
   const auraCap = planetAuraCap();
-  const aura = isFinite(p.aura) ? Number(p.aura) : auraCap;
+  const aura = Math.max(0, Math.min(auraCap, isFinite(p.aura) ? Number(p.aura) : planetAuraStart()));
+  const auraInt = Math.floor(aura);
+  const auraPct = auraCap > 0 ? Math.min(100, Math.max(0, auraInt / auraCap * 100)) : 0;
   const auraEl = document.querySelector('[data-pg="aura"]');
   if (auraEl) {
-    const atxt = aura.toFixed(1);
+    const atxt = auraPct.toFixed(1) + '% (' + fmtAuraNum(auraInt) + '/' + fmtAuraNum(auraCap) + ')';
     if (auraEl.textContent !== atxt) auraEl.textContent = atxt;
-    auraEl.classList.toggle('low', aura < PLANET.AURA_COST + PLANET.AURA_MIN);
+    auraEl.classList.toggle('low', aura < auraCost + PLANET.AURA_MIN);
   }
-  const auraCapEl = document.querySelector('[data-pg="auracap"]');
-  if (auraCapEl && auraCapEl.textContent !== String(auraCap)) auraCapEl.textContent = String(auraCap);
   const auraHintEl = document.querySelector('[data-pg="aurahint"]');
   if (auraHintEl) {
-    const htxt = '生成 −' + PLANET.AURA_COST + ' · 恢复 +' + planetAuraRegen().toFixed(1) + '/s · 下限 ' + PLANET.AURA_MIN;
+    const htxt = '单件 −' + auraCostTxt + ' · 恢复 +' + fmtRate(planetAuraRegen()) + '/s（停止运转）';
     if (auraHintEl.textContent !== htxt) auraHintEl.textContent = htxt;
   }
 
-  /* 朝代 / 穿越次数 / 穿越价格与差额：只改文本与按钮可用性，不重建面板 */
-  const cross = Math.max(0, Math.floor(Number(p.cross) || 0));
+  /* 朝代 / 穿越次数 / 穿越所需浓度与差额：只改文本与按钮可用性，不重建面板。
+     穿越的唯一门槛是灵气浓度（不再看灵力），判定与扣除都至少保留 AURA_MIN。 */
   const dynEl = document.querySelector('[data-pg="dynasty"]');
   const dynTxt = planetDynastyName(cross);
   if (dynEl && dynEl.textContent !== dynTxt) dynEl.textContent = dynTxt;
@@ -741,19 +915,22 @@ function updatePlanet() {
   if (crossEl && crossEl.textContent !== String(cross)) crossEl.textContent = String(cross);
   const nextN = cross + 1;
   const crossCost = planetCrossCost(nextN);
+  const crossNeed = crossCost + PLANET.AURA_MIN;
+  const canCross = aura >= crossNeed;
   const crossBtn = document.querySelector('[data-planetcross]');
   if (crossBtn) {
-    const poor = state.spirit < crossCost;
+    const poor = !canCross;
     if (crossBtn.disabled !== poor) crossBtn.disabled = poor;
     crossBtn.classList.toggle('off', poor);
-    crossBtn.title = poor ? '灵力不足' : ('穿越至「' + planetDynastyName(nextN) + '」');
+    crossBtn.title = poor ? '灵气浓度不足' : ('穿越至「' + planetDynastyName(nextN) + '」');
   }
   const crossNoteEl = document.querySelector('[data-pg="crossnote"]');
   if (crossNoteEl) {
-    const diff = crossCost - state.spirit;
+    const diff = Math.max(0, crossNeed - aura);
     const ntxt = diff > 0
-      ? '灵力不足，还差 ⚡ ' + fmtNum(Math.ceil(diff))
-      : '消耗 ⚡ ' + fmtNum(crossCost) + ' → ' + planetDynastyName(nextN);
+      ? '需 💧 ' + fmtAuraNum(crossCost) + ' · 还差 ' + fmtAuraNum(Math.ceil(diff)) +
+        (running ? '（停止运转后才能恢复）' : '')
+      : '消耗 💧 ' + fmtAuraNum(crossCost) + ' → ' + planetDynastyName(nextN);
     if (crossNoteEl.textContent !== ntxt) crossNoteEl.textContent = ntxt;
     crossNoteEl.classList.toggle('wait', diff > 0);
   }
@@ -787,9 +964,13 @@ function updatePlanet() {
   const grav = worldBonus('planet');
   const gtxt = gtLv > 0
     ? '引力塔 Lv.' + gtLv + ' · 生成速度 <b>' + pctText(grav) + '</b> · 加速上限 +' +
-      (gtLv * PLANET.BOOST_GT_BONUS) + ' 秒（每级 +1% / +' + PLANET.BOOST_GT_BONUS + ' 秒）'
+      (gtLv * PLANET.BOOST_GT_BONUS) + ' 秒 · 浓度上限 +' + (gtLv * PLANET.AURA_CAP_GT) +
+      ' / 恢复 +' + fmtRate((PLANET.AURA_REGEN_GT * gtLv) * planetAuraScale()) + '/s' +
+      '（每级 +1% / +' + PLANET.BOOST_GT_BONUS + ' 秒 / +' + PLANET.AURA_CAP_GT + ' / +' +
+      PLANET.AURA_REGEN_GT + '/s）'
     : '可在洞天「🌀 秘境」营造「引力塔」：每级生成速度 +1%、点击加速上限 +' +
-      PLANET.BOOST_GT_BONUS + ' 秒';
+      PLANET.BOOST_GT_BONUS + ' 秒、浓度上限 +' + PLANET.AURA_CAP_GT + '、停止恢复 +' +
+      PLANET.AURA_REGEN_GT + '/s（再乘穿越系数）';
   if (gtxt !== _planetGravTxt) {
     const el = document.querySelector('[data-pg="grav"]');
     if (el) el.innerHTML = gtxt;
@@ -1144,7 +1325,8 @@ function currentBarHTML() {
     : p.skill === 'planet' ? (p.waiting ? '等待资源恢复' : '星球运转中')
       : (p.waiting ? '等待材料' : '进行中');
   return '<div class="activebar">' +
-    '<div class="row"><span class="now">' + label + '<b>' + esc(p.name) + '</b> <span class="none">(' + note + ')</span></span>' + stopBtn + '</div>' +
+    '<div class="row"><span class="now">' + label + '<b>' + esc(p.name) + '</b> <span class="none">(' + note + ')</span>' +
+    ' <span class="none" data-bar="actnum">0.0%</span></span>' + stopBtn + '</div>' +
     '<div class="bar"><i class="actfill" data-bar="active" style="width:' + (p.pct * 100).toFixed(1) + '%"></i></div>' +
     '</div>';
 }
@@ -1382,6 +1564,7 @@ function renderContent() {
   if (id === 'tasks') { setHTML('#content', renderTasks()); return; }
   if (id === 'shop') { setHTML('#content', renderShop()); return; }
   if (id === 'planet') { setHTML('#content', renderPlanet() + currentBarHTML()); updatePlanet(); return; }
+  if (id === 'tower') { setHTML('#content', renderTower() + currentBarHTML()); updateTower(true); return; }
   if (id === 'bag') { setHTML('#content', renderBag()); updateInvQty(); return; }
   if (id === 'world') { setHTML('#content', renderWorld() + currentBarHTML()); updateWorldState(); return; }
   if (id === 'disciples') { setHTML('#content', renderDisciples()); updateDiscipleState(); return; }
@@ -1768,6 +1951,17 @@ function updateBars() {
   const ab = document.querySelector('[data-bar="active"]');
   if (ab) ab.style.width = ((p ? p.pct : 0) * 100).toFixed(1) + '%';
 
+  /* 当前进度数值：给进度条补上“最小值/当前值”，避免只有百分比看不出起点 */
+  const an = document.querySelector('[data-bar="actnum"]');
+  if (an) {
+    if (!p) an.textContent = '';
+    else if (isFinite(p.cur) && isFinite(p.need) && p.need > 0) {
+      an.textContent = p.cur.toFixed(2) + ' / ' + p.need.toFixed(2) + ' 秒 · ' + (p.pct * 100).toFixed(1) + '%';
+    } else {
+      an.textContent = (p.pct * 100).toFixed(1) + '%';
+    }
+  }
+
   /* 数量类信息增量刷新，避免重建可点击行 */
   updateInvQty();
   updateMatNeeds();
@@ -1777,6 +1971,7 @@ function updateBars() {
   updatePlotGrowth();
   updateWorldState();
   updateDiscipleState();
+  updateTower();
 
   /* 战斗血条（对战视图） */
   const content = $('#content');

@@ -1,7 +1,7 @@
 'use strict';
 
 /* =========================================================================
- * 仙途挂机 · 引擎层
+ * 穿越星球 · 引擎层
  * 主循环 tick(dt) 是唯一的时间推进入口，游戏里所有变化都由此产生。
  * 好处：离线收益 = 用同样的 tick 快速跑 N 步，数值口径完全一致。
  * ========================================================================= */
@@ -732,7 +732,7 @@ function cycleTick(dt) {
   if (!act) return;
   /* 战斗动作由 combatTick 独立驱动，星球由 planetTick 独立驱动；
    * 二者都不在 ACTIONS/RECIPES 里查表，必须在 cycleTick 显式跳过，否则会被判为无效动作清空 */
-  if (act.skill === 'combat' || act.skill === 'planet') return;
+  if (act.skill === 'combat' || act.skill === 'planet' || act.skill === 'tower') return;
 
   const def = findActivity(act.skill, act.id);
   if (!def) { state.action = null; state.actionTimer = 0; return; }
@@ -744,6 +744,7 @@ function cycleTick(dt) {
   const bagFull = !!(def.out && def.out.id && !invCanAdd(def.out.id, def.out.qty || 1));
   if (matShort || bagFull) {
     state.actionTimer = t;
+    state.actionCur = t;
     if (!state.actionWaiting) {
       state.actionWaiting = true;
       const why = matShort ? '材料不足' : '背包已满';
@@ -757,6 +758,10 @@ function cycleTick(dt) {
   }
 
   state.actionTimer += dt * actionSpeed(act.skill);
+
+  /* 界面取样必须在回填完成周期之前：100ms 心跳下，若先回填，
+   * 采样永远只看到剩下的零头，进度条会在 ~90% 处“重置”，到不了满格。 */
+  state.actionCur = Math.min(t, state.actionTimer);
 
   let guard = 0;
   while (state.actionTimer >= t && guard++ < 200) {
@@ -820,6 +825,153 @@ function dungeonReward(dg) {
     '（累计通关 ' + state.dungeons[dg.id] + ' 次）', 'good');
 }
 
+/* ---------------------------------------------------------------- 锁妖塔 */
+/* 层数钳制：所有入口统一走这里，避免存档/外部调用传入 0、负数、NaN */
+function towerFloorClamp(f) {
+  f = Math.floor(Number(f));
+  if (!isFinite(f)) f = 1;
+  return Math.max(1, Math.min(TOWER.MAX_FLOOR, f));
+}
+
+/* 按层数分档取奖励物品（TOWER.PILLS / TOWER.MATS 的 min 升序） */
+function towerPickTier(list, f) {
+  let pick = list[0];
+  for (let i = 0; i < list.length; i++) if (f >= list[i].min) pick = list[i];
+  return pick;
+}
+
+/* 第 f 层妖物属性：纯层数函数，同一层可重复预览且完全一致 */
+function towerEnemy(floor) {
+  const f = towerFloorClamp(floor);
+  const t = f - 1;
+  const hp = Math.round(TOWER.HP_BASE * (1 + TOWER.HP_LIN * t + TOWER.HP_POW * Math.pow(t, TOWER.HP_EXP)));
+  const atkMul = 1 + TOWER.ATK_LIN * t + TOWER.ATK_POW * Math.pow(t, TOWER.ATK_EXP);
+  const mob = TOWER.MOBS[(f - 1) % TOWER.MOBS.length];
+  const boss = f % TOWER.MILESTONE_EVERY === 0;
+  return {
+    id: '__tower__', name: (boss ? '妖将 · ' : '') + mob.name, icon: boss ? '👺' : mob.icon,
+    lvl: f, hp: hp, maxHp: hp,
+    hit: TOWER.HIT_BASE + TOWER.HIT_LIN * t,
+    ev: TOWER.EV_BASE + TOWER.EV_LIN * t,
+    atkMin: Math.round(TOWER.ATK_MIN * atkMul),
+    atkMax: Math.round(TOWER.ATK_MAX * atkMul),
+    dr: Math.min(TOWER.DR_CAP, TOWER.DR_BASE + TOWER.DR_LIN * t),
+    interval: Math.max(TOWER.INTERVAL_MIN, TOWER.INTERVAL_BASE - TOWER.INTERVAL_DECAY * t),
+    dungeon: null, floor: -1, tower: f
+  };
+}
+
+/* 第 f 层奖励：与领取时完全同口径，领取前即可准确预览 */
+function towerReward(floor) {
+  const f = towerFloorClamp(floor);
+  const milestone = f % TOWER.MILESTONE_EVERY === 0;
+  const decade = f % TOWER.DECADE_EVERY === 0;
+  let gold = Math.round(TOWER.GOLD_BASE * Math.pow(f, TOWER.GOLD_POW));
+  if (milestone) gold = Math.round(gold * TOWER.MILESTONE_GOLD);
+  gold = Math.round(gold * (1 + formBonus('gold') + worldBonus('gold') + discipleBonus('gold')));
+  let star = Math.max(1, Math.round(TOWER.STAR_BASE * Math.pow(f, TOWER.STAR_POW)));
+  if (milestone) star *= TOWER.MILESTONE_STAR;
+  const xp = Math.round(TOWER.XP_BASE * Math.pow(f, TOWER.XP_POW));
+  const pill = towerPickTier(TOWER.PILLS, f);
+  const mat = towerPickTier(TOWER.MATS, f);
+  const items = [];
+  if (milestone) items.push({ id: pill.id, qty: 1 });
+  if (decade) {
+    items.push({ id: pill.id, qty: 1 });
+    items.push({ id: mat.id, qty: 1 + Math.floor(f / 50) });
+  }
+  return { floor: f, gold: gold, star: star, xp: xp, items: items, milestone: milestone, decade: decade };
+}
+
+function towerRunning() {
+  return !!(state.action && state.action.skill === 'tower');
+}
+
+/* 开始 / 停止挑战：占用全局单一动作槽，开始前中断星球与其它战斗 */
+function startTower() {
+  if (state.stun > 0) { logMsg('眩晕中，还需 ' + Math.ceil(state.stun) + ' 秒才能行动。', 'warn'); return; }
+  if (towerRunning()) { stopAction(); return; }
+
+  const t = state.tower;
+  if (t.pending) {
+    logMsg('第 ' + t.pending + ' 层奖励尚未领取，请先领取后再继续挑战。', 'warn');
+    return;
+  }
+
+  const floor = towerFloorClamp(t.current);
+  planetInterrupt();
+  cancelCombat();
+
+  const c = state.skills.combat;
+  c.tower = floor;
+  c.monster = '__tower__';     /* 占位：让脱战回血等被动把它视为战斗中 */
+  c.dungeon = null;
+  c.floor = 0;
+  c.target = towerEnemy(floor);
+  c.playerTimer = 0;
+  c.monsterTimer = 0;
+  c.respawn = 0;
+
+  t.failed = false;
+  state.action = { skill: 'tower', id: 'floor' };
+  state.actionTimer = 0;
+  state.actionCur = 0;
+  state.actionWaiting = false;
+  logMsg('开始挑战锁妖塔第 ' + floor + ' 层「' + c.target.name + '」。', 'info');
+}
+
+/* 击败该层：进入待领奖，立刻释放动作槽；层数此时不推进 */
+function towerCleared(floor, target) {
+  const t = state.tower;
+  t.pending = towerFloorClamp(floor);
+  t.best = Math.max(t.best, t.pending);
+  t.failed = false;
+  logMsg('击败锁妖塔第 ' + t.pending + ' 层「' + target.name + '」！奖励待领取，领取后进入第 ' +
+    Math.min(TOWER.MAX_FLOOR, t.pending + 1) + ' 层。', 'good');
+  stopAction(true);
+}
+
+/* 领取当前层奖励；成功后层数 +1，pending 清空，不可重复领取 */
+function towerClaim() {
+  const t = state.tower;
+  if (!t.pending) { logMsg('当前没有可领取的锁妖塔奖励。', 'warn'); return false; }
+  const floor = towerFloorClamp(t.pending);
+  const rw = towerReward(floor);
+
+  /* 背包预检：材料/丹药没有新槽位时整单拒绝，避免领取后静默丢物品 */
+  const unique = {};
+  rw.items.forEach(function (it) { unique[it.id] = true; });
+  let needSlots = 0;
+  Object.keys(unique).forEach(function (id) { if (invCount(id) <= 0) needSlots += 1; });
+  if (invSlotsUsed() + needSlots > CONFIG.INV_SLOTS) {
+    logMsg('背包已满，无法领取第 ' + floor + ' 层奖励（需 ' + needSlots + ' 个空位）。', 'warn');
+    return false;
+  }
+
+  state.gold += rw.gold;
+  state.stardust = (state.stardust || 0) + rw.star;
+  addXp('combat', rw.xp);
+  const got = [];
+  rw.items.forEach(function (it) {
+    invAdd(it.id, it.qty);
+    got.push(it.qty + ' × ' + itemIcon(it.id) + itemName(it.id));
+  });
+
+  t.pending = false;
+  t.best = Math.max(t.best, floor);
+  t.current = Math.min(TOWER.MAX_FLOOR, Math.max(t.current, floor) + 1);
+  t.failed = false;
+  logMsg('领取锁妖塔第 ' + floor + ' 层奖励：灵石 +' + rw.gold + '、星砂 +' + rw.star +
+    '、战斗经验 +' + rw.xp + (got.length ? '、' + got.join('、') : '') +
+    '。下一层：第 ' + t.current + ' 层。', 'good');
+  return true;
+}
+
+/* 点「挑战」= 开始/停止；点「领取」走 towerClaim */
+function towerToggle() {
+  startTower();
+}
+
 function spawnTarget() {
   const c = state.skills.combat;
   const m = findMonster(c.monster);
@@ -842,18 +994,26 @@ function spawnTarget() {
 
 function combatTick(dt) {
   const c = state.skills.combat;
-  /* 动作槽不在战斗 → 战斗必须停止（防止切换技能后仍在后台打怪） */
-  if (!state.action || state.action.skill !== 'combat') {
-    if (c.monster || c.target || c.dungeon) cancelCombat();
+  /* 动作槽不在战斗/锁妖塔 → 战斗必须停止（防止切换技能后仍在后台打怪） */
+  const towerMode = !!(state.action && state.action.skill === 'tower');
+  if (!state.action || (state.action.skill !== 'combat' && !towerMode)) {
+    if (c.monster || c.target || c.dungeon || c.tower) cancelCombat();
     return;
   }
-  if (!c.monster) { c.target = null; return; }
 
-  if (!c.target || c.target.hp <= 0) {
-    c.target = null;
-    c.respawn -= dt;
-    if (c.respawn <= 0) { c.respawn = 0; spawnTarget(); }
-    return;
+  /* 锁妖塔：一层一只，不刷新、不循环；目标死亡后等待结算/领奖 */
+  if (towerMode) {
+    if (!c.tower) { c.target = null; return; }
+    if (!c.target || c.target.hp <= 0) { c.target = null; return; }
+  } else {
+    if (!c.monster) { c.target = null; return; }
+
+    if (!c.target || c.target.hp <= 0) {
+      c.target = null;
+      c.respawn -= dt;
+      if (c.respawn <= 0) { c.respawn = 0; spawnTarget(); }
+      return;
+    }
   }
 
   const st = calcStats();
@@ -888,8 +1048,14 @@ function combatTick(dt) {
 }
 
 function onMonsterKilled(target) {
-  const m = findMonster(target.id);
   const c = state.skills.combat;
+  /* 锁妖塔：击杀只解锁「可领奖」，实际奖励在玩家点击领取时结算 */
+  if (c.tower || (state.action && state.action.skill === 'tower')) {
+    towerCleared(target.tower || c.tower, target);
+    return;
+  }
+
+  const m = findMonster(target.id);
   if (!m) { c.target = null; return; }
 
   const dg = c.dungeon ? findDungeon(c.dungeon) : null;
@@ -940,14 +1106,20 @@ function onPlayerDeath(target) {
   if (!target) { c.target = null; return; }
   state.hp = 1;
   state.stats.deaths += 1;
+  const towerFloor = c.tower;
   const dg = c.dungeon ? findDungeon(c.dungeon) : null;
-  if (dg) {
+  if (towerFloor) {
+    /* 阵亡只判本次挑战失败：层数不降、不产生 pending，可直接重试同一层 */
+    state.tower.failed = true;
+    logMsg('在锁妖塔第 ' + towerFloor + ' 层被「' + target.name + '」击退，本次挑战失败；' +
+      '层数不降，疗伤后可再次挑战第 ' + towerFloor + ' 层。', 'bad');
+  } else if (dg) {
     logMsg('在秘境「' + dg.name + '」第 ' + (c.floor + 1) + ' 波被「' + target.name + '」击退，秘境挑战失败。', 'bad');
   } else {
     logMsg('你被「' + target.name + '」击退，重伤返回洞府。先疗伤或备好食物再战。', 'bad');
   }
-  /* 战败自动退出战斗动作槽并疗伤；秘境同时判定为失败 */
-  if (state.action && state.action.skill === 'combat') stopAction(true);
+  /* 战败自动退出战斗动作槽并疗伤；秘境 / 锁妖塔同时判定为失败 */
+  if (state.action && (state.action.skill === 'combat' || state.action.skill === 'tower')) stopAction(true);
   cancelCombat();
 }
 
@@ -1178,6 +1350,7 @@ function startAction(skillId, actionId) {
   cancelCombat();
   state.action = { skill: skillId, id: actionId };
   state.actionTimer = 0;
+  state.actionCur = 0;
   state.actionWaiting = false;
   logMsg('开始「' + def.name + '」', 'info');
   if (def.in && def.in.length && !matsOk(def)) logMsg('材料不足，「' + def.name + '」正在等待材料…', 'warn');
@@ -1190,6 +1363,7 @@ function cancelCombat() {
   c.target = null;
   c.dungeon = null;
   c.floor = 0;
+  c.tower = 0;          /* 锁妖塔挑战同样属于战斗瞬态，一并清空 */
   c.playerTimer = 0;
   c.monsterTimer = 0;
   c.respawn = 0;
@@ -1201,6 +1375,7 @@ function stopAction(silent) {
   cancelCombat();
   state.action = null;
   state.actionTimer = 0;
+  state.actionCur = 0;
   state.actionWaiting = false;
   if (!silent) logMsg('已停止当前动作。', 'info');
 }
@@ -1222,6 +1397,8 @@ function startCombat(monsterId) {
   }
 
   const c = state.skills.combat;
+  /* 从锁妖塔切到普通战斗：塔的战况是瞬态，直接清空，不残留塔内目标 */
+  if (c.tower || (state.action && state.action.skill === 'tower')) cancelCombat();
   if (state.action && state.action.skill === 'combat' && state.action.id !== monsterId) cancelCombat();
   c.monster = monsterId;
   c.respawn = 0;
@@ -1414,24 +1591,59 @@ function planetReset() {
   p.open = false;
   p.items = [];
   p.timer = PLANET.SPAWN_BASE;
+  p.cycleCur = 0;
   p.boost = 0;
   p.waitReason = '';
   p.session = { gold: 0, star: 0, mat: 0, count: 0 };
 }
 
 /* ---------------------------------------------------------- 灵气浓度 */
-/* 上限：基础 100，引力塔每级 +20（跟着洞天成长，后期不会成为硬卡点） */
+/* 当前穿越次数（钳制到 0~10000，防止异常存档参与幂运算） */
+function planetCrossCount(s) {
+  const st = s || state;
+  const n = st && st.planet ? Number(st.planet.cross) : 0;
+  return Math.max(0, Math.min(10000, Math.floor(isFinite(n) ? n : 0)));
+}
+
+/* 浓度成长系数：下一次穿越价格 / 初始价格。
+   0 次穿越 = 1；10 次穿越（下次为第 11 次）= 76.9658；之后按 1.12 继续增长。
+   上限与恢复都乘这个系数，保证每一轮攒够价格的时长基本恒定。 */
+function planetAuraScale(s) {
+  const next = planetCrossCost(planetCrossCount(s) + 1);
+  return next / PLANET.CROSS_BASE;
+}
+
+/* 上限：至少装得下下一次穿越价格（×1.5），再叠加引力塔等级加成。
+   0 次穿越：Lv0=15000 / Lv20=17000 / Lv100=25000。 */
 function planetAuraCap(s) {
   const st = s || state;
   const gtLv = (st.world && st.world.buildings && st.world.buildings.gravitytower) || 0;
-  return PLANET.AURA_CAP_BASE + PLANET.AURA_CAP_GT * gtLv;
+  const next = planetCrossCost(planetCrossCount(st) + 1);
+  const base = Math.max(PLANET.AURA_CAP_BASE, next * PLANET.AURA_CAP_RATIO);
+  return Math.ceil(base) + PLANET.AURA_CAP_GT * gtLv;
 }
 
-/* 恢复：基础 2.0/s，引力塔每级 +0.2/s；被动恢复，不占用动作槽 */
+/* 恢复（每秒，停止运转时）：基础 + 引力塔加成，再乘以浓度成长系数。
+   0 次穿越：Lv0=2.0/s / Lv20=12.0/s / Lv100=52.0/s。 */
 function planetAuraRegen(s) {
   const st = s || state;
   const gtLv = (st.world && st.world.buildings && st.world.buildings.gravitytower) || 0;
-  return PLANET.AURA_REGEN_BASE + PLANET.AURA_REGEN_GT * gtLv;
+  return (PLANET.AURA_REGEN_BASE + PLANET.AURA_REGEN_GT * gtLv) * planetAuraScale(st);
+}
+
+/* 巡航时每生成 1 件消耗的浓度：2 × 0.9^cross，下限 0.2。
+   0 次=2 → 1 次=1.8 → 2 次=1.62 … 第 22 次触底 0.2，永不变成 0。 */
+function planetAuraCost(cross) {
+  const n = (cross === undefined || cross === null)
+    ? planetCrossCount()
+    : Math.max(0, Math.min(10000, Math.floor(Number(cross) || 0)));
+  const v = PLANET.AURA_COST * Math.pow(PLANET.AURA_COST_DECAY, n);
+  return Math.max(PLANET.AURA_COST_MIN, Math.round(v * 1000) / 1000);
+}
+
+/* 新档 / 旧档迁移时的起始浓度：上限的 30% */
+function planetAuraStart(s) {
+  return Math.round(planetAuraCap(s) * PLANET.AURA_START_RATIO);
 }
 
 /* ---------------------------------------------------------- 穿越朝代 */
@@ -1453,34 +1665,34 @@ function planetDynastyName(n) {
   return '古' + cnNum(n - DYNASTY_NAMES.length + 1) + '纪';
 }
 
-/* 第 n 次穿越的灵力价格（n 从 1 起算）：
-   前 10 次 1000 × 1.6^(n-1)，第 11 次起再接 ×1.12 的缓坡，避免 2^n 爆炸。 */
+/* 第 n 次穿越的灵气浓度价格（n 从 1 起算）：
+   前 10 次 10000 × 1.6^(n-1)，第 11 次起再接 ×1.12 的缓坡，避免 2^n 爆炸。 */
 function planetCrossCost(n) {
   n = Math.max(1, Math.min(10000, Math.floor(Number(n) || 1)));
   const steps = n - 1;
   const fast = Math.min(steps, PLANET.CROSS_KNEE - 1);
   let cost = PLANET.CROSS_BASE * Math.pow(PLANET.CROSS_GROW_EARLY, fast);
   if (steps > fast) cost *= Math.pow(PLANET.CROSS_GROW_LATE, steps - fast);
+  if (!isFinite(cost) || cost > PLANET.CROSS_MAX) cost = PLANET.CROSS_MAX;
   return Math.floor(cost);
 }
 
-/* 穿越：只扣灵力、只推进朝代与次数，不重置星球产出与本局收获 */
+/* 穿越：只扣灵气浓度、只推进朝代与次数，不扣灵力、不重置星球产出与本局收获。
+   判定与扣除都保证剩余不低于 AURA_MIN，浓度不会为负或到 0。 */
 function planetCross() {
   const p = state.planet;
   if (!p) return false;
-  if (state.stun > 0) {
-    logMsg('眩晕中，还需 ' + Math.ceil(state.stun) + ' 秒才能穿越。', 'warn');
-    return false;
-  }
-  const n = Math.max(0, Math.floor(Number(p.cross) || 0)) + 1;
+  const n = planetCrossCount() + 1;
   const cost = planetCrossCost(n);
-  if (state.spirit < cost) {
-    logMsg('灵力不足，第 ' + n + ' 次穿越需 ⚡ ' + cost + '（当前 ' + Math.floor(state.spirit) + '）。', 'warn');
+  const need = cost + PLANET.AURA_MIN;
+  const aura = isFinite(p.aura) ? Number(p.aura) : 0;
+  if (aura < need) {
+    logMsg('灵气浓度不足，第 ' + n + ' 次穿越需 💧 ' + cost + '（当前 ' + Math.floor(aura) + '，至少需 ' + need + '）。', 'warn');
     return false;
   }
-  state.spirit = Math.max(0, state.spirit - cost);
+  p.aura = Math.max(PLANET.AURA_MIN, aura - cost);
   p.cross = n;
-  logMsg('穿越成功：抵达「' + planetDynastyName(n) + '」，第 ' + n + ' 次穿越，消耗 ⚡ ' + cost + ' 灵力。', 'good');
+  logMsg('穿越成功：抵达「' + planetDynastyName(n) + '」，第 ' + n + ' 次穿越，消耗 💧 ' + cost + ' 灵气浓度。', 'good');
   return true;
 }
 
@@ -1489,6 +1701,16 @@ function planetStart() {
   if (state.stun > 0) { logMsg('眩晕中，还需 ' + Math.ceil(state.stun) + ' 秒才能行动。', 'warn'); return; }
   if (planetRunning()) { planetStop(); return; }
 
+  /* 巡航中浓度只降不升：浓度不足以生成时直接拒绝开启，避免玩家开着空转等一个不会来的恢复 */
+  const p = state.planet;
+  const auraCost = planetAuraCost();
+  const aura = isFinite(p.aura) ? Number(p.aura) : 0;
+  if (aura < auraCost + PLANET.AURA_MIN) {
+    logMsg('灵气浓度不足，无法开启运转（每件需 💧 ' + auraCost + '，当前 ' + Math.floor(aura) +
+      '）；停止运转时浓度按 +' + planetAuraRegen().toFixed(1) + '/s 恢复。', 'warn');
+    return;
+  }
+
   cancelCombat();
   planetReset();
   state.action = { skill: 'planet', id: 'orbit' };
@@ -1496,7 +1718,8 @@ function planetStart() {
   state.actionWaiting = false;
   state.planet.open = true;
   logMsg('开始「穿越星球」：每吸收 1 件消耗 ⚡ ' + PLANET.SPIRIT_COST +
-    ' 灵力，每生成 1 件消耗 💧 ' + PLANET.AURA_COST + ' 灵气浓度。', 'info');
+    ' 灵力，每生成 1 件消耗 💧 ' + auraCost + ' 灵气浓度（穿越后逐次降低）；' +
+    '停止运转后浓度按 +' + planetAuraRegen().toFixed(1) + '/s 恢复。', 'info');
 }
 
 function planetStop(silent) {
@@ -1590,13 +1813,17 @@ function planetTick(dt) {
   const p = state.planet;
   if (!p) return;
 
-  /* 灵气浓度被动恢复：无论是否运转都会恢复（不占动作槽），钳制到上限且不低于非零下限 */
+  /* 浓度钳制：先保证是有限值，再夹到 [下限, 上限]。
+     未运转时被动恢复（离线结算同样生效）；巡航中只消耗不恢复，
+     否则 10000 量级的恢复速率会让单件消耗永远压不下去。 */
   const auraCap = planetAuraCap();
-  const auraNow = isFinite(p.aura) ? Number(p.aura) : auraCap;
-  p.aura = Math.min(auraCap, Math.max(PLANET.AURA_MIN, auraNow + planetAuraRegen() * dt));
-
-  /* 星球是动作槽里的主动行为：只有 state.action 指向它时才运转 */
-  if (!planetRunning()) return;
+  const auraNow = isFinite(p.aura) ? Number(p.aura) : planetAuraStart();
+  const auraBase = Math.min(auraCap, Math.max(PLANET.AURA_MIN, auraNow));
+  if (!planetRunning()) {
+    p.aura = Math.min(auraCap, auraBase + planetAuraRegen() * dt);
+    return;
+  }
+  p.aura = auraBase;
 
   /* 加速只作用于生成与飞行，计时本身按真实时间扣除 */
   if (p.boost > 0) p.boost = Math.max(0, p.boost - dt);
@@ -1623,15 +1850,18 @@ function planetTick(dt) {
   p.items = stay;
 
   /* 引力塔：每级生成速度 +1%（缩短等待间隔，不影响飞行时长）。
-   * 生成时先扣灵气浓度；不足则不再生成，但已有飞行物照常吸收。
+   * 生成时先扣灵气浓度（单价随穿越次数递减）；不足则不再生成，但已有飞行物照常吸收。
    * 判断用「浓度 ≥ 单价 + 下限」，保证扣完仍留下 AURA_MIN，永远不到 0。 */
   let auraShort = false;
+  const auraCost = planetAuraCost();
   const grav = 1 + worldBonus('planet');
   p.timer -= sdt * grav;
+  /* 同动作槽：取样必须在回填 BASE 之前，否则界面永远错过满格那一帧 */
+  p.cycleCur = Math.max(0, Math.min(PLANET.SPAWN_BASE, PLANET.SPAWN_BASE - p.timer));
   while (p.timer <= 0) {
     if (p.items.length < PLANET.MAX_ITEMS) {
-      if (p.aura >= PLANET.AURA_COST + PLANET.AURA_MIN) {
-        p.aura -= PLANET.AURA_COST;
+      if (p.aura >= auraCost + PLANET.AURA_MIN) {
+        p.aura -= auraCost;
         planetSpawn();
       } else {
         auraShort = true;
@@ -1640,10 +1870,11 @@ function planetTick(dt) {
     p.timer += PLANET.SPAWN_BASE;
   }
 
-  /* 与其它动作一致的「缺料等待」：灵力 / 浓度任一不足都只记一次日志，恢复后自动继续。
+  /* 与其它动作一致的「缺料等待」：灵力 / 浓度任一不足都只记一次日志。
    * 浓度在两次生成之间没有「生成尝试」，因此用 p.waitReason 保持触底等待状态，
-   * 直到浓度重新高于「单价 + 下限」才解除，避免状态文案在生成间隔里闪烁。 */
-  const auraLow = p.aura < PLANET.AURA_COST + PLANET.AURA_MIN;
+   * 直到浓度重新高于「单价 + 下限」才解除，避免状态文案在生成间隔里闪烁。
+   * 巡航中浓度不恢复，所以提示玩家停止运转才能恢复。 */
+  const auraLow = p.aura < auraCost + PLANET.AURA_MIN;
   const auraBlocked = auraShort || (p.waitReason === 'aura' && auraLow);
   const waitReason = spiritShort ? 'spirit' : (auraBlocked ? 'aura' : '');
   if (waitReason) {
@@ -1652,7 +1883,8 @@ function planetTick(dt) {
       p.waitReason = waitReason;
       logMsg(waitReason === 'spirit'
         ? '灵力不足，「穿越星球」等待灵力恢复…'
-        : '灵气浓度不足，「穿越星球」暂停生成，等待浓度恢复…', 'warn');
+        : '灵气浓度不足，「穿越星球」暂停生成；停止运转后浓度按 +' +
+          planetAuraRegen().toFixed(1) + '/s 恢复。', 'warn');
     }
   } else if (state.actionWaiting) {
     state.actionWaiting = false;

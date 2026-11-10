@@ -1,7 +1,7 @@
 'use strict';
 
 /* =========================================================================
- * 仙途挂机 · 入口层
+ * 穿越星球 · 入口层
  * 负责：启动、主循环、事件绑定、自动存档。
  * ========================================================================= */
 
@@ -34,12 +34,14 @@ function handleClick(e) {
     case 'planetrun':
       planetStart();
       renderAll();
+      updatePlanet(true);
       return;
 
-    /* 穿越星球：穿越朝代（消耗灵力，只改朝代与次数） */
+    /* 穿越星球：穿越朝代（消耗灵气浓度，只改朝代与次数） */
     case 'planetcross':
       planetCross();
       renderAll();
+      updatePlanet(true);
       return;
 
     /* 面板跳转（星球面板 → 洞天秘境营造引力塔） */
@@ -57,6 +59,10 @@ function handleClick(e) {
 
     /* 进入秘境 */
     case 'dungeon': startDungeon(id); break;
+
+    /* 锁妖塔：开始/停止挑战、领取当前层奖励（同属单一动作槽） */
+    case 'towerstart': towerToggle(); renderAll(); updateTower(true); return;
+    case 'towerclaim': towerClaim(); renderAll(); updateTower(true); return;
 
     case 'stop': stopAction(); break;
 
@@ -238,7 +244,7 @@ function boot() {
     verTag.textContent = 'v' + ver;
     verTag.title = '游戏版本 v' + ver;
   }
-  document.title = '仙途挂机 v' + ver + ' · Idle Cultivation';
+  document.title = '穿越星球 v' + ver + ' · Planet Crossing';
 
   const offlineSeconds = loadState();
   clampHp();
