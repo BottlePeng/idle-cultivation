@@ -1,4 +1,4 @@
-# 游戏设计文档（GDD）· 仙途挂机
+# 游戏设计文档（GDD）· 穿越星球
 
 > 版本：v5（含入世、太上境、世界洞天）｜ 最后更新：随代码同步 ｜ 对应代码：`js/data.js` `js/state.js` `js/engine.js` `js/ui.js` `js/main.js`
 
@@ -8,7 +8,7 @@
 
 | 项 | 内容 |
 | --- | --- |
-| 名称 | 仙途挂机 · Idle Cultivation |
+| 名称 | 穿越星球 · Planet Crossing |
 | 题材 | 东方修仙 |
 | 类型 | 放置 / 挂机（Idle）模拟经营 + 角色成长 |
 | 平台 | 纯静态网页（PC 优先），双击 `index.html` 即运行 |
@@ -63,7 +63,8 @@
 | 13 | 市集 | 四店铺采购，加价购入 / 折价出售 | `SHOPS` | [市集系统](./机制-市集系统.md) |
 | 14 | 入世 | 红尘百业职业体验，概率成败，参考梅尔沃盗窃 | `ACTIONS.thieving/state.stun` | [入世系统](./机制-入世系统.md) |
 | 15 | 世界 · 洞天 | 8 种地形 × 共 100 种建筑营造、被动产出、人口效率、17 条全局加成通道（修为/速度/掉落/精通等），参考梅尔沃城镇 | `TERRAINS/BUILDINGS/state.world` | [世界洞天](./机制-世界洞天.md) |
-| 16 | 穿越星球 | 占用动作槽的主动小游戏：生成灵石/星砂/材料，吸收耗灵力、生成耗灵气浓度；灵力穿越朝代（清 → … → 夏 → 古N纪） | `PLANET/DYNASTY_NAMES/state.planet` | [穿越星球](./机制-穿越星球.md) |
+| 16 | 穿越星球 | 占用动作槽的主动小游戏：生成灵石/星砂/材料，吸收耗灵力、生成耗灵气浓度；穿越只消耗灵气浓度（首次 10000），朝代清 → … → 夏 → 古N纪 | `PLANET/DYNASTY_NAMES/state.planet` | [穿越星球](./机制-穿越星球.md) |
+| 17 | 锁妖塔 | 无尽层单场战斗：层数幂律成长、击败后先领奖再进层、每 5 层里程碑；层数永不重置，阵亡不降层；占用动作槽且无离线收益 | `TOWER/state.tower` | [锁妖塔](./机制-锁妖塔.md) |
 
 ---
 
@@ -134,14 +135,41 @@
 | --- | --- | --- |
 | `SPAWN_BASE` / `FLIGHT_TIME` | 1.8s / 4.8s | 生成间隔 / 飞行时长 |
 | `SPIRIT_COST` | 0.5 | 每吸收 1 件消耗灵力 |
-| `AURA_CAP_BASE` / `AURA_CAP_GT` | 100 / +20 每级 | 灵气浓度上限；引力塔每级 +20 |
-| `AURA_REGEN_BASE` / `AURA_REGEN_GT` | 2.0/s / +0.2/s 每级 | 浓度被动恢复 |
-| `AURA_COST` / `AURA_MIN` | 2 / 1 | 每生成 1 件消耗 / 非零下限 |
-| `CROSS_BASE` / `CROSS_KNEE` | 1000 / 10 | 穿越基价 / 前 10 次快速段 |
-| `CROSS_GROW_EARLY` / `CROSS_GROW_LATE` | 1.6 / 1.12 | 前段 / 后段增长率 |
+| `AURA_CAP_BASE` / `AURA_CAP_GT` | 15000 / +100 每级 | 0 次穿越时的浓度上限；引力塔每级额外 +100 |
+| `AURA_CAP_RATIO` | 1.5 | 上限至少为下一次穿越价格的 1.5 倍 |
+| `AURA_START_RATIO` | 0.3 | 新档 / 旧档迁移的起始浓度比例 |
+| `AURA_REGEN_BASE` / `AURA_REGEN_GT` | 2.0/s / +0.5/s 每级 | 停止运转时的基础恢复；再乘穿越成长系数 |
+| `AURA_COST` / `AURA_COST_DECAY` / `AURA_COST_MIN` | 2 / 0.9 / 0.2 | 初始单件消耗 / 每次穿越 ×0.9 / 下限 |
+| `AURA_MIN` | 1 | 非零下限；扣除后至少保留 1 |
+| `CROSS_BASE` / `CROSS_KNEE` | 10000 / 10 | 穿越基价 / 前 10 次快速段 |
+| `CROSS_GROW_EARLY` / `CROSS_GROW_LATE` / `CROSS_MAX` | 1.6 / 1.12 / 1e15 | 前段 / 后段增长率 / 价格封顶 |
 
-- 浓度触底时**停止生成**并显示「灵气浓度不足，等待中」，扣除后至少保留 1，永远不会为 0 或负数。
-- 穿越价格：第 1~10 次 `1000 × 1.6^(n-1)`，第 11 次起再接 `×1.12^(n-10)`；n=1/5/10/20/50 分别为 1,000 / 6,553 / 68,719 / 213,432 / 6,394,413（推荐理由与挂机时长见 [穿越星球](./机制-穿越星球.md#32-价格曲线推荐值)）。
+- 上限与恢复都按「下一次穿越价格」放大：`cap = ceil(max(15000, next × 1.5)) + 100×引力塔`，`regen = (2.0 + 0.5×引力塔) × next / 10000`。0 次穿越：Lv0=15000/+2.0s、Lv20=17000/+12.0s、Lv100=25000/+52.0s。
+- 浓度显示为 `xx.x% (当前/上限)`；巡航中只降不升，停止运转才恢复；触底停止生成，扣除后至少保留 1，永远不会为 0 或负数。
+- 单件消耗 `max(0.2, 2 × 0.9^cross)`：0 次=2、1 次=1.8、2 次=1.62……第 22 次触底 0.2，穿越越多同样浓度越耐用。
+- 穿越价格：第 1~10 次 `10000 × 1.6^(n-1)`，第 11 次起再接 `×1.12^(n-10)`；n=1/5/10/20/50 分别为 10,000 / 65,536 / 687,194 / 2,134,322 / 63,944,139。穿越只扣灵气浓度，不扣灵力、不受眩晕影响（详见 [穿越星球](./机制-穿越星球.md)）。
+
+### 4.5 锁妖塔（`TOWER`）
+
+| 键 | 值 | 含义 |
+| --- | --- | --- |
+| `MAX_FLOOR` | 100000 | 层数 / 最高层上限（防极端存档溢出） |
+| `HP_BASE` / `HP_LIN` / `HP_POW` / `HP_EXP` | 26 / 0.30 / 0.010 / 1.9 | 生命 = `round(26×(1+0.30t+0.010×t^1.9))`，`t=f-1` |
+| `ATK_MIN` / `ATK_MAX` | 5 / 9 | 攻击基础区间 |
+| `ATK_LIN` / `ATK_POW` / `ATK_EXP` | 0.03 / 0.005 / 1.5 | 攻击 = `5~9×(1+0.03t+0.005×t^1.5)` |
+| `HIT_BASE` / `HIT_LIN` | 14 / 2.0 | 命中 = `14+2.0t` |
+| `EV_BASE` / `EV_LIN` | 8 / 1.2 | 闪避 = `8+1.2t` |
+| `DR_BASE` / `DR_LIN` / `DR_CAP` | 0.02 / 0.004 / 0.35 | 减伤 = `min(35%, 2%+0.4%t)` |
+| `INTERVAL_*` | 2.8 / 0.002 / 1.8 | 出手间隔 = `max(1.8s, 2.8-0.002t)` |
+| `XP_BASE` / `XP_POW` | 38 / 1.75 | 通关经验 = `round(38×f^1.75)` |
+| `GOLD_BASE` / `GOLD_POW` | 12 / 1.7 | 灵石 = `round(12×f^1.7)` × 里程碑 × 灵石加成 |
+| `STAR_BASE` / `STAR_POW` | 1.2 / 0.9 | 星砂 = `max(1, round(1.2×f^0.9))` × 里程碑 |
+| `MILESTONE_EVERY` / `MILESTONE_GOLD` / `MILESTONE_STAR` | 5 / 2.5 / 3 | 每 5 层灵石 ×2.5、星砂 ×3、必掉丹药 |
+| `DECADE_EVERY` | 10 | 每 10 层追加 1 颗丹药 + 材料（数量 `1+floor(f/50)`） |
+
+- 战斗复用现有命中 / 闪避 / 减伤公式与 `combatTick`，仅用 `state.skills.combat.tower` 标记塔内目标；`cancelCombat()` 会清空该标记。
+- 击败 → `pending`；领取 → 发奖并 `current+1`；阵亡 → 层数不降、可重试；`current/best` 永久保存。
+- 挑战占用单一动作槽，开始会中断星球 / 战斗 / 秘境，切换其它动作会中断挑战；塔战不参与离线结算（详见 [锁妖塔](./机制-锁妖塔.md)）。
 
 ---
 
@@ -158,14 +186,15 @@ state
 ├─ equip{ slot:id } 六部位装备
 ├─ insight          悟性（每点 修炼速度+1% / 突破成功率+1%）
 ├─ skills{ id:{lvl,xp} }   各技能等级与经验
-│   └─ combat 额外: monster/target/playerTimer/monsterTimer/respawn
+│   └─ combat 额外: monster/target/playerTimer/monsterTimer/respawn/tower
 │   └─ cultivation 额外: capped（瓶颈提示标记）
 ├─ mastery{ id:{lvl,xp} }  精通表
 ├─ formations{ id:{levels:[]} }  阵纹等级
 ├─ plots[{seedId,growth,ready}]  灵植地块
 ├─ stun             眩晕剩余秒数（入世被识破，期间无法开始新动作）
 ├─ world{ buildings,pop,res }  洞天：建筑等级 / 人口 / 粮食木材石料存量
-├─ planet{ aura,cross }  穿越星球：灵气浓度 / 穿越次数（open/items/boost/session 为瞬态）
+├─ planet{ aura,auraVer,cross }  穿越星球：灵气浓度 / 迁移标记 / 穿越次数（open/items/boost/session 为瞬态）
+├─ tower{ current,best,pending }  锁妖塔：当前层 / 最高已通关层 / 待领奖层（false 为无）
 ├─ action{skill,id} / actionTimer / actionWaiting   单一动作槽
 ├─ regenTimer / taskTimer   被动与任务计时
 ├─ tasks{ id:{done,claimed} }   任务进度
@@ -185,8 +214,9 @@ state
 - `mastery` / `formations` / `plots` 按当前配置**裁剪**（删除已下线的动作 / 阵法 / 种子）。
 - `action` 校验 `findActivity` 存在，否则回落默认。
 - `world` 按 `BUILDINGS` 裁剪建筑等级（等级无上限，原样保留），资源钳制到 `worldCap(建设度)`（上限随建设度增长），人口钳制到当前人口上限。
-- `planet` 只恢复 `aura` / `cross`：旧档缺省为满浓度 / 0 次，`aura` 钳制到 `[1, 当前上限]`，`cross` 取整并钳制到 `[0,10000]`；飞行队列等瞬态一律重置，且不恢复星球动作（读档保持未开启）。
-- `tasks` 按 `TASKS` 迁移；`ui.active` 校验白名单（含 `world`）。
+- `planet` 只恢复 `aura` / `auraVer` / `cross`：先恢复 `cross` 再按新公式算上限；旧档（无 `auraVer`）给新上限的 30%，其余存档把 `aura` 钳制到 `[1, 当前上限]`，`cross` 取整并钳制到 `[0,10000]`；飞行队列等瞬态一律重置，且不恢复星球动作（读档保持未开启）。
+- `tasks` 按 `TASKS` 迁移；`ui.active` 校验白名单（含 `world` / `planet` / `tower`）。
+- `tower` 无字段时兜底 `current=1 / best=1 / pending=false`；`current/best` 夹到 `[1, TOWER.MAX_FLOOR]`，`pending` 必须等于 `current` 才恢复，否则置 `false`；`best` 收敛为至少 `current-1`。
 
 > **原则**：任何新引入的配置表，都要在 `mergeState` 中做裁剪与钳制，保证旧存档不崩。
 
