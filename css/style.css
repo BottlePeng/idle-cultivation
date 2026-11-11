@@ -924,3 +924,122 @@ body.compact .planetstage { height: min(50vh, 420px); }
 .trediv { color: var(--muted, #9aa4b8); margin: 0 4px; }
 .trewtip { margin-top: 4px; font-size: 12px; color: #ffd479; }
 .skillbtn.towerbtn.on { box-shadow: inset 3px 0 0 #ff9d6b; }
+
+/* ============================================================== 异界裂缝 */
+/* 星球面板内的入口卡片 */
+.riftcard {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 12px; border-radius: 10px; cursor: pointer;
+  border: 1px solid #6a5aa0;
+  background: linear-gradient(90deg, rgba(120,90,200,.18), rgba(60,40,110,.10));
+  transition: background .15s ease, border-color .15s ease, transform .12s ease;
+}
+.riftcard:hover { background: linear-gradient(90deg, rgba(130,100,220,.28), rgba(70,48,128,.16)); transform: translateY(-1px); }
+.riftcard .rfico {
+  display: grid; place-items: center; width: 38px; height: 38px; flex: 0 0 38px;
+  font-size: 22px; border-radius: 10px; border: 1px solid rgba(180,150,255,.45);
+  background: radial-gradient(circle at 50% 35%, rgba(160,110,255,.30), rgba(0,0,0,.28));
+}
+.riftcard.open { border-color: #a97be0; box-shadow: inset 0 0 18px rgba(150,110,255,.10); }
+.riftcard.open .rfico { animation: riftPulse 2.2s ease-in-out infinite; }
+.riftcard.fixed { opacity: .72; border-style: dashed; }
+.riftcard .rfmain { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.riftcard .rfmain b { font-size: 14px; color: #d8c7ff; }
+.riftcard .rfsub { font-size: 12px; color: var(--muted, #9aa4b8); line-height: 1.4; }
+.riftcard .rfgo { flex: 0 0 auto; font-size: 12px; color: #c8a8ff; }
+@keyframes riftPulse {
+  0%, 100% { transform: scale(1); filter: drop-shadow(0 0 0 rgba(170,130,255,0)); }
+  50% { transform: scale(1.08); filter: drop-shadow(0 0 8px rgba(170,130,255,.65)); }
+}
+
+/* 裂缝战斗视图：复用锁妖塔战斗骨架，换成虚空紫配色 */
+.riftwrap { display: flex; flex-direction: column; gap: 10px; }
+.riftstage {
+  border-color: #6a5aa0;
+  background: linear-gradient(180deg, rgba(120,90,200,.10), rgba(0,0,0,.18));
+}
+.riftstage .towerfoe .teicon {
+  background: radial-gradient(circle at 50% 35%, rgba(160,110,255,.30), rgba(0,0,0,.28));
+  border-color: rgba(180,150,255,.45);
+}
+.riftstage .towerhp i { background: linear-gradient(90deg, #7f5bff, #c39bff); }
+.riftstage .toweract .pbtn:not([disabled]) { border-color: #7a6bb0; background: rgba(150,115,225,.22); }
+.riftstage .toweract .pbtn:not([disabled]):hover { background: rgba(150,115,225,.34); }
+
+/* 五行属性裂缝：星球面板内的 3 格入口 + 独立配色（--ec 由 JS 注入） */
+.elemsec { display: flex; flex-direction: column; gap: 8px; }
+.elemhead { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.elemhead .secttl { margin: 0; }
+.elemgrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+@media (max-width: 920px) { .elemgrid { grid-template-columns: 1fr; } }
+.elemcard {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 12px; border-radius: 10px;
+  border: 1px solid var(--ec, #6a5aa0);
+  border-left: 3px solid var(--ec, #6a5aa0);
+  background: linear-gradient(90deg, rgba(255,255,255,.045), rgba(0,0,0,.12));
+  transition: background .15s ease, transform .12s ease;
+}
+.elemcard.open { cursor: pointer; }
+.elemcard.open:hover { transform: translateY(-1px); background: linear-gradient(90deg, rgba(255,255,255,.09), rgba(0,0,0,.10)); }
+.elemcard .elico {
+  display: grid; place-items: center; width: 34px; height: 34px; flex: 0 0 34px;
+  font-size: 20px; border-radius: 9px; border: 1px solid var(--ec, #6a5aa0);
+  background: rgba(0,0,0,.25);
+}
+.elemcard.fixed, .elemcard.empty { opacity: .55; border-style: dashed; }
+.elemcard .elmain { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.elemcard .elmain b { font-size: 13px; color: var(--ec, #d8c7ff); }
+.elemcard .elsub { font-size: 11px; color: var(--muted, #9aa4b8); line-height: 1.35; }
+.elemcard .elgo { flex: 0 0 auto; font-size: 12px; color: var(--ec, #c8a8ff); }
+
+/* 属性裂缝详情视图：复用锁妖塔骨架，配色跟随五行 */
+.elemwrap { display: flex; flex-direction: column; gap: 10px; }
+.elemstage {
+  border-color: var(--ec, #6a5aa0);
+  background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(0,0,0,.18));
+}
+.elemstage .towerfoe .teicon { border-color: var(--ec, #6a5aa0); }
+.elemstage .towerhp i { background: linear-gradient(90deg, var(--ec, #7f5bff), rgba(255,255,255,.35)); }
+.elemstage .toweract .pbtn:not([disabled]) { border-color: var(--ec, #7a6bb0); }
+.elemstage .toweract .pbtn:not([disabled]):hover { background: rgba(255,255,255,.10); }
+
+/* 裂缝怪物：星球面板入口 + 详情视图（暗红配色，与异界紫 / 五行彩色区分） */
+.rmcard {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 12px; border-radius: 10px; cursor: pointer;
+  border: 1px solid #9a5a5a;
+  border-left: 3px solid #d98a8a;
+  background: linear-gradient(90deg, rgba(210,110,110,.16), rgba(90,40,40,.10));
+  transition: background .15s ease, border-color .15s ease, transform .12s ease;
+}
+.rmcard:hover { background: linear-gradient(90deg, rgba(220,120,120,.26), rgba(110,45,45,.16)); transform: translateY(-1px); }
+.rmcard .rmico {
+  display: grid; place-items: center; width: 38px; height: 38px; flex: 0 0 38px;
+  font-size: 22px; border-radius: 10px; border: 1px solid rgba(230,150,150,.45);
+  background: radial-gradient(circle at 50% 35%, rgba(220,110,110,.28), rgba(0,0,0,.28));
+}
+.rmcard.open { border-color: #c97b7b; box-shadow: inset 0 0 18px rgba(220,110,110,.10); }
+.rmcard.open .rmico { animation: rmPulse 2.4s ease-in-out infinite; }
+.rmcard.fixed { opacity: .62; border-style: dashed; }
+.rmcard .rmmain { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.rmcard .rmmain b { font-size: 14px; color: #f0c2c2; }
+.rmcard .rmsub { font-size: 12px; color: var(--muted, #9aa4b8); line-height: 1.4; }
+.rmcard .rmgo { flex: 0 0 auto; font-size: 12px; color: #e8a0a0; }
+@keyframes rmPulse {
+  0%, 100% { transform: scale(1); filter: drop-shadow(0 0 0 rgba(220,120,120,0)); }
+  50% { transform: scale(1.07); filter: drop-shadow(0 0 8px rgba(220,120,120,.6)); }
+}
+
+.rmwrap { display: flex; flex-direction: column; gap: 10px; }
+.rmstage {
+  border-color: #9a5a5a;
+  background: linear-gradient(180deg, rgba(210,110,110,.10), rgba(0,0,0,.18));
+}
+.rmstage .towerfoe .teicon {
+  background: radial-gradient(circle at 50% 35%, rgba(220,110,110,.28), rgba(0,0,0,.28));
+  border-color: rgba(230,150,150,.45);
+}
+.rmstage .towerhp i { background: linear-gradient(90deg, #b84747, #eaa0a0); }
+.rmstage .toweract .pbtn:not([disabled]) { border-color: #a56a6a; background: rgba(200,100,100,.20); }
+.rmstage .toweract .pbtn:not([disabled]):hover { background: rgba(200,100,100,.32); }

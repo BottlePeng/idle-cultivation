@@ -20,6 +20,8 @@ function handleClick(e) {
     /* 侧栏切换面板 */
     case 'select':
       state.ui.active = el.dataset.skill;
+      /* 从侧栏进入穿越星球时回到主视图（裂缝视图内另有返回按钮） */
+      if (el.dataset.skill === 'planet') state.ui.planetView = 'main';
       hideInvPopover();
       /* 星球已改为动作槽行为：仅切面板不启停，由面板按钮控制 */
       break;
@@ -42,6 +44,49 @@ function handleClick(e) {
       planetCross();
       renderAll();
       updatePlanet(true);
+      return;
+
+    /* 异界裂缝：打开战斗视图 / 返回星球 / 开始或停止修复（同属单一动作槽） */
+    case 'riftopen':
+      state.ui.planetView = 'rift';
+      hideInvPopover();
+      break;
+    case 'riftback':
+      state.ui.planetView = 'main';
+      hideInvPopover();
+      break;
+    case 'riftstart':
+      startRift();
+      renderAll();
+      updateRift(true);
+      return;
+    case 'elemopen':
+      state.ui.planetView = 'elem';
+      state.ui.elemSlot = Math.max(0, Math.min(ELEM_RIFT.SLOTS - 1, Math.floor(Number(el.dataset.idx) || 0)));
+      hideInvPopover();
+      break;
+    case 'elemback':
+      state.ui.planetView = 'main';
+      hideInvPopover();
+      break;
+    case 'elemstart':
+      startElemRift(state.ui.elemSlot | 0);
+      renderAll();
+      updateElemRift(true);
+      return;
+    /* 裂缝怪物：打开详情视图 / 返回星球 / 开始或停止挑战 */
+    case 'rmopen':
+      state.ui.planetView = 'riftmon';
+      hideInvPopover();
+      break;
+    case 'rmback':
+      state.ui.planetView = 'main';
+      hideInvPopover();
+      break;
+    case 'rmstart':
+      startRiftMon();
+      renderAll();
+      updateRiftMon(true);
       return;
 
     /* 面板跳转（星球面板 → 洞天秘境营造引力塔） */

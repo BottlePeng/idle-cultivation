@@ -104,6 +104,36 @@ function currentProgress() {
       pct: t && t.maxHp > 0 ? Math.max(0, Math.min(1, 1 - t.hp / t.maxHp)) : 0
     };
   }
+  if (act.skill === 'rift') {
+    const c = state.skills.combat;
+    const t = c.target;
+    /* 裂缝同样用「已打掉的血量比例」表示修复进度，进度条可正常走到 100% */
+    return {
+      skill: 'rift', name: '异界裂缝 · 第 ' + (c.rift >= 0 ? c.rift : state.rift.tier) + ' 层', icon: '🌀',
+      pct: t && t.maxHp > 0 ? Math.max(0, Math.min(1, 1 - t.hp / t.maxHp)) : 0
+    };
+  }
+  if (act.skill === 'elem') {
+    const c = state.skills.combat;
+    const t = c.target;
+    const slot = state.elemRifts && state.elemRifts.slots ? state.elemRifts.slots[c.elem] : null;
+    const el = findElemRift(t && t.elem) || findElemRift(slot && slot.elem) || ELEM_RIFT.ELEMENTS[0];
+    /* 属性裂缝同样用「已打掉的血量比例」表示修复进度，可正常走到 100% */
+    return {
+      skill: 'elem', name: el.name + '·时空裂缝', icon: el.icon,
+      pct: t && t.maxHp > 0 ? Math.max(0, Math.min(1, 1 - t.hp / t.maxHp)) : 0
+    };
+  }
+  if (act.skill === 'riftmon') {
+    const c = state.skills.combat;
+    const t = c.target;
+    const tier = c.riftMon >= 0 ? c.riftMon : (state.riftMon ? riftMonTierClamp(state.riftMon.tier) : 0);
+    /* 裂缝怪物同样用「已打掉的血量比例」表示修复进度，可正常走到 100% */
+    return {
+      skill: 'riftmon', name: RIFT_MON.NAME + ' · 强度 ' + tier, icon: RIFT_MON.ICON,
+      pct: t && t.maxHp > 0 ? Math.max(0, Math.min(1, 1 - t.hp / t.maxHp)) : 0
+    };
+  }
   if (act.skill === 'combat') {
     const c = state.skills.combat;
     if (!c.monster) return null;
@@ -178,12 +208,13 @@ function renderSidebar() {
 
   /* 3.5 穿越星球（紧随市集，点击面板可加速） */
   const onPlanet = state.ui.active === 'planet' ? ' on' : '';
-  const busyPlanet = (state.action && state.action.skill === 'planet') ? '<span class="dot"></span>' : '';
+  const busyPlanet = (state.action && (state.action.skill === 'planet' || state.action.skill === 'rift' || state.action.skill === 'elem' || state.action.skill === 'riftmon')) ? '<span class="dot"></span>' : '';
+  const riftBadge = ((state.rift && state.rift.open) || riftMonAlive()) ? ' <span class="badge">!</span>' : '';
   html +=
     '<button class="skillbtn planetbtn' + onPlanet + '" data-act="select" data-skill="planet">' +
     '<span class="sico">🪐</span>' +
     '<span class="sinfo"><span class="sname">穿越星球</span><br>' +
-    '<span class="slvl">灵石 · 星砂 · 材料' + busyPlanet + '</span></span>' +
+    '<span class="slvl">灵石 · 星砂 · 材料' + busyPlanet + riftBadge + '</span></span>' +
     '</button>';
 
   /* 4. 修炼 */
@@ -590,6 +621,7 @@ function renderPlanet() {
     '<span class="pdesc">开启后占用动作槽，每吸收 1 件消耗 ✨ <b data-pg="cost">0</b> 灵力；' +
     '巡航时每生成 1 件消耗 💧 <b data-pg="auracost">0</b> 灵气浓度（穿越后逐次 -10%，下限 ' +
     PLANET.AURA_COST_MIN + '）；停止运转后浓度才恢复。' +
+    '每次穿越成功后生成异界裂缝，修复后才能继续穿越。' +
     '点击界面加速：生成与飞行 ×' + PLANET.BOOST_MULT +
     '（每次 +' + PLANET.BOOST_ADD + ' 秒，上限 ' + PLANET.BOOST_BASE_CAP + ' 秒 + ' +
     PLANET.BOOST_GT_BONUS + ' 秒 × 引力塔等级）</span></div>' +
@@ -602,6 +634,27 @@ function renderPlanet() {
     '<button class="pbtn cross" data-act="planetcross" data-planetcross disabled>穿越</button>' +
     '<span class="pbstate" data-pg="crossnote"></span>' +
     '</div>' +
+    /* 异界裂缝入口：未修复时穿越被锁定，点击进入裂缝战斗视图 */
+    (function () {
+      const r = state.rift || { open: true, tier: 0 };
+      const open = !!r.open;
+      const tier = riftTierClamp(r.tier);
+      const next = Math.min(RIFT.MAX_TIER, planetCrossCount() + 1);
+      return '<div class="riftcard ' + (open ? 'open' : 'fixed') + '" data-act="riftopen" title="' +
+        (open ? '需先修复异界裂缝' : '裂缝已修复，点击查看') + '">' +
+        '<span class="rfico">🌀</span>' +
+        '<span class="rfmain"><b>异界裂缝 · 第 ' + (open ? tier : next) + ' 层' +
+        (open ? '' : '（下一道）') + '</b>' +
+        '<span class="rfsub">' + (open
+          ? '未修复 · 穿越已锁定，点击进入裂缝修复'
+          : '已修复 · 穿越成功后将生成第 ' + next + ' 层裂缝') + '</span></span>' +
+        '<span class="rfgo">进入 ›</span>' +
+        '</div>';
+    })() +
+    /* 裂缝怪物：存在时锁定星球运转（不锁穿越），击败后可正常运转 */
+    riftMonCardHTML() +
+    /* 五行属性裂缝：3 个位置常驻，每 3 小时整轮刷新；修复后该位置留空 */
+    elemRiftCardsHTML() +
     '<div class="planetctrl">' +
     '<button class="pbtn" data-act="planetrun" data-planetrun>开启运转</button>' +
     '<span class="pbstate" data-pg="runstate">未开启</span>' +
@@ -630,6 +683,7 @@ function renderPlanet() {
     '巡航时生成消耗灵气浓度、吸收消耗灵力；浓度不足会暂停生成，停止运转后浓度才恢复。' +
     '「穿越」消耗灵气浓度（首次 💧 10000，之后按 1.6 倍 / 第 11 次起 1.12 倍递增），并让单件浓度消耗逐次 -10%（下限 ' +
     PLANET.AURA_COST_MIN + '）。浓度上限与恢复随引力塔等级和穿越次数一起成长。' +
+    '穿越成功后立刻生成异界裂缝；裂缝未修复时穿越按钮置灰，需先修复。' +
     '</div>' +
     '</div>';
 }
@@ -761,6 +815,460 @@ function updateTower(force) {
   }
 }
 
+/* =============================================================== 异界裂缝 */
+/* 独立视图（仍属于穿越星球面板）：静态骨架 + data-rift 占位，增量刷新 */
+function renderRift() {
+  return '<div class="riftwrap">' +
+    '<div class="phead"><h2>🌀 异界裂缝</h2>' +
+    '<span class="pdesc">穿越成功后出现的异界裂隙。击败裂缝中的妖物即可完成修复；未修复时无法进行下一次穿越。' +
+    '战斗占用全局动作槽，阵亡不惩罚、裂缝保持未修复，疗伤后可原地重试。</span></div>' +
+    '<div class="planetdyn">' +
+    '<span class="pbchip">裂缝层级 <b data-rift="tier">第 0 层</b></span>' +
+    '<span class="pbchip">状态 <b data-rift="state">未修复</b></span>' +
+    '<span class="pbchip">穿越限制 <b data-rift="gate">需先修复</b></span>' +
+    '<button class="pbtn" data-act="riftback">返回星球</button>' +
+    '</div>' +
+    '<div class="towerstage riftstage">' +
+    '<div class="towerfoe">' +
+    '<span class="teicon" data-rift="eicon">🌀</span>' +
+    '<div class="tebody">' +
+    '<div class="tename"><b data-rift="ename">—</b><span data-rift="elvl">第 0 层</span></div>' +
+    '<div class="towerhp"><i data-rift="ehpfill"></i></div>' +
+    '<div class="tenum" data-rift="ehp">—</div>' +
+    '<div class="testats" data-rift="estats">—</div>' +
+    '</div></div>' +
+    '<div class="toweract">' +
+    '<button class="pbtn" data-act="riftstart" data-rift="startbtn">进入裂缝修复</button>' +
+    '<button class="pbtn cross" data-act="riftback">返回星球</button>' +
+    '<span class="pbstate" data-rift="note"></span>' +
+    '</div>' +
+    '</div>' +
+    '<div class="towerrewhead"><span class="secttl" data-rift="rewtitle">修复奖励预览</span>' +
+    '<span class="pbchip" data-rift="rewtag"></span></div>' +
+    '<div class="towerreward" data-rift="reward"></div>' +
+    '<div class="secttl">规则</div>' +
+    '<div class="shopnote">每次穿越成功后立刻生成下一道裂缝，层级 = 当前穿越次数；裂缝未修复时穿越按钮置灰。' +
+    '阵亡只退出战斗，不扣穿越次数、不清空裂缝，回血后可再次进入。' +
+    '读档时不恢复进行中的裂缝战斗，但未修复状态会保留。</div>' +
+    '<div class="secttl">成长公式</div>' +
+    '<div class="shopnote">第 t 层（t = 生成时的穿越次数）：生命 34×(1+0.25t+0.008×t<sup>1.7</sup>)，' +
+    '攻击 2~4×(1+0.15t+0.004×t<sup>1.5</sup>)，命中 8+0.9t，闪避 5+0.6t，' +
+    '减伤 min(30%, 1%+0.12%t)，出手间隔 max(2.0s, 3.2-0.0015t)。' +
+    '单次伤害另有「不超过自身生命上限 18%」的安全上限，保证后期不会被一刀秒。</div>' +
+    '</div>';
+}
+
+let _riftRewardKey = '';
+
+function riftRewardHTML(rw) {
+  return '<div class="trewline">' +
+    '💠 灵石 <b>+' + fmtNum(rw.gold) + '</b><span class="trediv">·</span>' +
+    '💫 星砂 <b>+' + fmtNum(rw.star) + '</b><span class="trediv">·</span>' +
+    '✨ 战斗经验 <b>+' + fmtNum(rw.xp) + '</b></div>' +
+    '<div class="trewtip">修复后立刻发放；裂缝标记为已修复，返回星球即可继续穿越。</div>';
+}
+
+/* force=true：视图刚重建，需要重新填充奖励容器 */
+function updateRift(force) {
+  if (state.ui.active !== 'planet' || state.ui.planetView !== 'rift') return;
+  const root = document.querySelector('.riftwrap');
+  if (!root) { _riftRewardKey = ''; return; }
+
+  const r = state.rift || { open: false, tier: 0 };
+  const open = !!r.open;
+  const running = riftRunning();
+  const c = state.skills.combat;
+  const live = running && c.target ? c.target : null;
+  const tier = live ? c.rift : riftTierClamp(r.tier);
+  const nextTier = Math.min(RIFT.MAX_TIER, planetCrossCount() + 1);
+  /* 已修复时展示下一道裂缝的预览，方便玩家判断能否继续穿越 */
+  const showTier = live ? tier : (open ? tier : nextTier);
+  const foe = live || riftEnemy(showTier);
+  const st = calcStats();
+
+  function rw(key, txt) {
+    const el = root.querySelector('[data-rift="' + key + '"]');
+    if (el && el.textContent !== txt) el.textContent = txt;
+  }
+
+  rw('tier', '第 ' + tier + ' 层');
+  rw('state', running ? '修复中' : (open ? '未修复' : '已修复'));
+  rw('gate', open ? '需先修复' : '可正常穿越');
+  rw('eicon', foe.icon);
+  rw('ename', foe.name);
+  rw('elvl', '第 ' + showTier + ' 层');
+  rw('ehp', '生命 ' + Math.max(0, Math.ceil(foe.hp)) + ' / ' + foe.maxHp);
+  rw('estats', '攻击 ' + foe.atkMin + '~' + foe.atkMax + ' · 命中 ' + Math.round(foe.hit) +
+    ' · 闪避 ' + Math.round(foe.ev) + ' · 减伤 ' + Math.round(foe.dr * 100) + '%' +
+    ' · 出手 ' + foe.interval.toFixed(1) + 's · 我方命中 ' + Math.round(hitChance(st.hit, foe.ev) * 100) + '%');
+
+  const fill = root.querySelector('[data-rift="ehpfill"]');
+  if (fill) fill.style.width = (live ? Math.max(0, Math.min(1, foe.hp / foe.maxHp)) * 100 : 100).toFixed(1) + '%';
+
+  const startBtn = root.querySelector('[data-rift="startbtn"]');
+  if (startBtn) {
+    const label = running ? '停止修复' : (open ? '进入裂缝修复' : '裂缝已修复');
+    if (startBtn.textContent !== label) startBtn.textContent = label;
+    startBtn.disabled = !running && !open;
+  }
+
+  rw('note', running
+    ? '修复中：击败裂缝即可完成修复；切换到伐木 / 星球 / 锁妖塔等其它动作会中断战斗。'
+    : (open
+      ? '裂缝未修复，穿越按钮已锁定；阵亡不惩罚，疗伤后可回血再来。'
+      : '该裂缝已修复，可返回星球继续穿越；穿越成功后会立刻生成第 ' + nextTier + ' 层裂缝。'));
+
+  const rwr = riftReward(showTier);
+  rw('rewtitle', (open ? '第 ' + showTier + ' 层修复奖励预览' : '下一道裂缝（第 ' + showTier + ' 层）奖励预览'));
+  rw('rewtag', open ? '未修复' : '已修复 · 下次穿越生成');
+  const key = showTier + '|' + rwr.gold + '|' + rwr.star + '|' + rwr.xp;
+  if (force || key !== _riftRewardKey) {
+    const box = root.querySelector('[data-rift="reward"]');
+    if (box) box.innerHTML = riftRewardHTML(rwr);
+    _riftRewardKey = key;
+  }
+}
+
+/* =========================================================== 五行属性裂缝 */
+/* 倒计时格式化：HH:MM:SS（超过 24 小时按小时累计，不截断） */
+function fmtCd(ms) {
+  const s = Math.max(0, Math.ceil(ms / 1000));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  function p2(n) { return (n < 10 ? '0' : '') + n; }
+  return p2(h) + ':' + p2(m) + ':' + p2(sec);
+}
+
+function elemRiftLeft() {
+  const e = state.elemRifts;
+  if (!e || !Array.isArray(e.slots)) return 0;
+  let n = 0;
+  e.slots.forEach(function (s) { if (s && !s.fixed) n += 1; });
+  return n;
+}
+
+/* 星球主视图的三张属性裂缝卡片：修复后该位置留空，不重建整棵 #content */
+function elemRiftCardsHTML() {
+  const e = state.elemRifts || { next: 0, slots: [] };
+  const slots = Array.isArray(e.slots) ? e.slots : [];
+  let cards = '';
+  for (let i = 0; i < ELEM_RIFT.SLOTS; i++) {
+    const s = slots[i];
+    if (!s) {
+      cards += '<div class="elemcard empty"><span class="elico">·</span>' +
+        '<span class="elmain"><b>空位</b><span class="elsub">等待下一轮刷新</span></span></div>';
+      continue;
+    }
+    const el = findElemRift(s.elem) || ELEM_RIFT.ELEMENTS[0];
+    const lv = state.skills[el.skill] ? state.skills[el.skill].lvl : 1;
+    if (s.fixed) {
+      cards += '<div class="elemcard fixed" style="--ec:' + el.color + '">' +
+        '<span class="elico">✅</span>' +
+        '<span class="elmain"><b>' + el.name + '·时空裂缝</b>' +
+        '<span class="elsub">已修复 · 位置留空至下次刷新</span></span></div>';
+    } else {
+      cards += '<div class="elemcard open" style="--ec:' + el.color + '" data-act="elemopen" data-idx="' + i +
+        '" title="点击查看并进入修复">' +
+        '<span class="elico">' + el.icon + '</span>' +
+        '<span class="elmain"><b>' + el.name + '·时空裂缝</b>' +
+        '<span class="elsub">强度 ' + s.tier + ' · ' + SKILLS[el.skill].name + ' Lv.' + lv + '</span></span>' +
+        '<span class="elgo">进入 ›</span></div>';
+    }
+  }
+  return '<div class="elemsec">' +
+    '<div class="elemhead"><span class="secttl">五行属性裂缝</span>' +
+    '<span class="pbchip">下次刷新 <b data-eg="cd">--:--:--</b></span>' +
+    '<span class="pbchip">未修复 <b data-eg="left">0</b>/' + ELEM_RIFT.SLOTS + '</span></div>' +
+    '<div class="elemgrid">' + cards + '</div>' +
+    '<div class="shopnote">3 道裂缝同时存在、属性随机（允许重复），每 3 小时按真实时间整轮覆盖刷新；' +
+    '离线超过 3 小时回来只刷新一轮，不补刷。修复后该位置留空到下次刷新。' +
+    '奖励为对应工作的当前档材料，五行裂缝不影响穿越。</div>' +
+    '</div>';
+}
+
+/* 属性裂缝详情视图（仍属于穿越星球面板）：静态骨架 + data-eg 增量刷新 */
+function renderElemRift() {
+  return '<div class="elemwrap">' +
+    '<div class="phead"><h2>🪐 五行属性裂缝</h2>' +
+    '<span class="pdesc">独立于异界裂缝的材料副本：击败裂缝即可修复并获得对应工作的当前档材料，' +
+    '不影响穿越门槛。每 3 小时整轮刷新，修复位置留空到下一轮。战斗占用全局动作槽，阵亡不消耗裂缝。</span></div>' +
+    '<div class="planetdyn">' +
+    '<span class="pbchip">属性 <b data-eg="ename">—</b></span>' +
+    '<span class="pbchip">强度 <b data-eg="tier">0</b></span>' +
+    '<span class="pbchip">状态 <b data-eg="state">未修复</b></span>' +
+    '<span class="pbchip">下次刷新 <b data-eg="cd">--:--:--</b></span>' +
+    '<button class="pbtn" data-act="elemback">返回星球</button>' +
+    '</div>' +
+    '<div class="towerstage elemstage" data-eg="stage">' +
+    '<div class="towerfoe">' +
+    '<span class="teicon" data-eg="eicon">—</span>' +
+    '<div class="tebody">' +
+    '<div class="tename"><b data-eg="foename">—</b><span data-eg="elvl">强度 0</span></div>' +
+    '<div class="towerhp"><i data-eg="ehpfill"></i></div>' +
+    '<div class="tenum" data-eg="ehp">—</div>' +
+    '<div class="testats" data-eg="estats">—</div>' +
+    '</div></div>' +
+    '<div class="toweract">' +
+    '<button class="pbtn" data-act="elemstart" data-eg="startbtn">进入裂缝修复</button>' +
+    '<button class="pbtn cross" data-act="elemback">返回星球</button>' +
+    '<span class="pbstate" data-eg="note"></span>' +
+    '</div></div>' +
+    '<div class="towerrewhead"><span class="secttl" data-eg="rewtitle">修复奖励预览</span>' +
+    '<span class="pbchip" data-eg="rewtag"></span></div>' +
+    '<div class="towerreward" data-eg="reward"></div>' +
+    '<div class="secttl">规则</div>' +
+    '<div class="shopnote">始终存在 3 道裂缝，属性随机（允许重复）；每 3 小时按真实时间整轮覆盖刷新（离线不补刷，回来只刷一轮）。' +
+    '修复后该位置留空直到下次刷新，已修复状态会存档。阵亡只退出战斗：裂缝不消耗、不降级，回血后可原地重试。' +
+    '读档不恢复进行中的战斗。五行裂缝不影响穿越按钮与异界裂缝状态。</div>' +
+    '<div class="secttl">成长公式</div>' +
+    '<div class="shopnote">强度 t = round(穿越次数×' + ELEM_RIFT.CROSS_W + ' + (对应工作等级−1)×' + ELEM_RIFT.LVL_W + ')，生成时快照；' +
+    '生命 = 30×(1+0.26t+0.007×t<sup>1.6</sup>)，攻击 = 2~4×(1+0.14t+0.003×t<sup>1.45</sup>)，' +
+    '命中 = 7+0.9t，闪避 = 4+0.55t，减伤 = min(30%, 1%+0.1%t)，出手间隔 = max(2.0s, 3.0-0.0012t)。' +
+    '单次伤害不超过自身生命上限 ' + Math.round(ELEM_RIFT.HIT_CAP * 100) + '%，后期也不会被一刀秒。</div>' +
+    '</div>';
+}
+
+let _elemRewardKey = '';
+
+function elemRewardHTML(rw) {
+  return '<div class="trewline">' + elemRewardText(rw) + '</div>' +
+    '<div class="trewtip">修复后立刻发放；该位置留空至下一轮刷新（不占穿越门槛）。</div>';
+}
+
+/* force=true：视图刚重建，需要重新填充奖励容器 */
+function updateElemRift(force) {
+  if (state.ui.active !== 'planet' || state.ui.planetView !== 'elem') return;
+  const root = document.querySelector('.elemwrap');
+  if (!root) { _elemRewardKey = ''; return; }
+
+  const e = state.elemRifts || { next: 0, slots: [] };
+  const idx = Math.max(0, Math.min(ELEM_RIFT.SLOTS - 1, Number(state.ui.elemSlot) || 0));
+  const slot = e.slots ? e.slots[idx] : null;
+  const running = elemRiftRunning();
+  const c = state.skills.combat;
+  const live = (running && c.elem === idx && c.target) ? c.target : null;
+
+  const el = findElemRift(live ? live.elem : (slot ? slot.elem : 'metal')) || ELEM_RIFT.ELEMENTS[0];
+  const lv = elemSkillLvl(el.id);
+  const tier = slot ? slot.tier : 0;
+  const fixed = !!(slot && slot.fixed);
+  const foe = live || elemEnemy(slot || { elem: el.id, tier: 0 });
+  const st = calcStats();
+
+  function ew(key, txt) {
+    const node = root.querySelector('[data-eg="' + key + '"]');
+    if (node && node.textContent !== txt) node.textContent = txt;
+  }
+
+  const stage = root.querySelector('[data-eg="stage"]');
+  if (stage && stage.dataset.ec !== el.color) {
+    stage.style.setProperty('--ec', el.color);
+    stage.dataset.ec = el.color;
+  }
+
+  ew('ename', el.name + '·' + el.reward);
+  ew('tier', String(tier));
+  ew('state', running ? '修复中' : (fixed ? '已修复' : '未修复'));
+  ew('eicon', el.icon);
+  ew('foename', el.name + '·时空裂缝');
+  ew('elvl', '强度 ' + tier);
+  ew('ehp', '生命 ' + Math.max(0, Math.ceil(foe.hp)) + ' / ' + foe.maxHp);
+  ew('estats', '攻击 ' + foe.atkMin + '~' + foe.atkMax + ' · 命中 ' + Math.round(foe.hit) +
+    ' · 闪避 ' + Math.round(foe.ev) + ' · 减伤 ' + Math.round(foe.dr * 100) + '%' +
+    ' · 出手 ' + foe.interval.toFixed(1) + 's · 我方命中 ' + Math.round(hitChance(st.hit, foe.ev) * 100) + '%');
+
+  const fill = root.querySelector('[data-eg="ehpfill"]');
+  if (fill) fill.style.width = (live ? Math.max(0, Math.min(1, foe.hp / foe.maxHp)) * 100 : 100).toFixed(1) + '%';
+
+  const startBtn = root.querySelector('[data-eg="startbtn"]');
+  if (startBtn) {
+    const label = running ? '停止修复' : (fixed ? '裂缝已修复' : '进入裂缝修复');
+    if (startBtn.textContent !== label) startBtn.textContent = label;
+    startBtn.disabled = !running && (fixed || !slot);
+  }
+
+  ew('note', running
+    ? '修复中：击败裂缝即可完成修复；切换到伐木 / 星球 / 锁妖塔等其它动作会中断战斗。'
+    : (fixed
+      ? '该裂缝已修复，位置留空至下一轮刷新；返回星球可继续其它玩法。'
+      : (slot
+        ? '未修复：进入战斗后会中断星球运转等动作；阵亡不消耗裂缝，疗伤后可原地重试。'
+        : '该位置已刷新，请返回星球查看新一轮裂缝。')));
+
+  const rw = elemRiftReward(el.id, lv);
+  ew('rewtitle', el.name + '·时空裂缝 修复奖励（' + SKILLS[el.skill].name + ' Lv.' + lv + ' 档）');
+  ew('rewtag', fixed ? '已修复' : (running ? '修复中' : '未修复'));
+  const key = el.id + '|' + rw.id + '|' + rw.qty + '|' + rw.star + '|' + fixed;
+  if (force || key !== _elemRewardKey) {
+    const box = root.querySelector('[data-eg="reward"]');
+    if (box) box.innerHTML = elemRewardHTML(rw);
+    _elemRewardKey = key;
+  }
+}
+
+/* 倒计时 / 未修复数量：每 tick 走 textContent，不触发 #content 重建 */
+function updateElemRiftMini() {
+  const e = state.elemRifts;
+  const txt = (e && isFinite(e.next)) ? fmtCd(e.next - Date.now()) : '--:--:--';
+  const cds = document.querySelectorAll('[data-eg="cd"]');
+  for (let i = 0; i < cds.length; i++) {
+    if (cds[i].textContent !== txt) cds[i].textContent = txt;
+  }
+  const lefts = document.querySelectorAll('[data-eg="left"]');
+  if (lefts.length) {
+    const n = String(elemRiftLeft());
+    for (let i = 0; i < lefts.length; i++) {
+      if (lefts[i].textContent !== n) lefts[i].textContent = n;
+    }
+  }
+}
+
+/* ================================================================== 裂缝怪物 */
+/* 星球主视图入口卡：存在时提示运转锁定；已击败显示下次刷新倒计时 */
+function riftMonCardHTML() {
+  const m = state.riftMon || { alive: false, tier: 0, next: Date.now() };
+  const tier = riftMonTierClamp(m.tier);
+  if (m.alive) {
+    return '<div class="rmcard open" data-act="rmopen" title="点击查看并挑战裂缝怪物">' +
+      '<span class="rmico">' + RIFT_MON.ICON + '</span>' +
+      '<span class="rmmain"><b>裂缝怪物 · 强度 ' + tier + '</b>' +
+      '<span class="rmsub">未击败 · 星球运转已锁定，点击挑战（穿越不受影响）</span></span>' +
+      '<span class="rmgo">挑战 ›</span></div>';
+  }
+  return '<div class="rmcard fixed" data-act="rmopen" title="已击败，等待下一轮刷新">' +
+    '<span class="rmico">✅</span>' +
+    '<span class="rmmain"><b>裂缝怪物 · 已击败</b>' +
+    '<span class="rmsub">下次刷新 <span data-rm="cd">--:--:--</span> · 期间可正常运转</span></span>' +
+    '<span class="rmgo">查看 ›</span></div>';
+}
+
+/* 裂缝怪物详情视图（仍属于穿越星球面板）：静态骨架 + data-rm 增量刷新 */
+function renderRiftMon() {
+  return '<div class="rmwrap">' +
+    '<div class="phead"><h2>' + RIFT_MON.ICON + ' 裂缝怪物</h2>' +
+    '<span class="pdesc">独立于异界裂缝与五行属性裂缝的常驻怪物：同时只存在 1 只，每 24 小时按真实时间刷新。' +
+    '未击败时无法开启星球运转（穿越不受影响）；击败后发放灵石 + 星砂，当天不再出现，等下一轮刷新。' +
+    '战斗占用全局动作槽，阵亡不消耗怪物、不降强度。</span></div>' +
+    '<div class="planetdyn">' +
+    '<span class="pbchip">强度 <b data-rm="tier">0</b></span>' +
+    '<span class="pbchip">状态 <b data-rm="state">存在</b></span>' +
+    '<span class="pbchip">下次刷新 <b data-rm="cd">--:--:--</b></span>' +
+    '<button class="pbtn" data-act="rmback">返回星球</button>' +
+    '</div>' +
+    '<div class="towerstage rmstage" data-rm="stage">' +
+    '<div class="towerfoe">' +
+    '<span class="teicon" data-rm="eicon">' + RIFT_MON.ICON + '</span>' +
+    '<div class="tebody">' +
+    '<div class="tename"><b data-rm="foename">' + RIFT_MON.NAME + '</b><span data-rm="elvl">强度 0</span></div>' +
+    '<div class="towerhp"><i data-rm="ehpfill"></i></div>' +
+    '<div class="tenum" data-rm="ehp">—</div>' +
+    '<div class="testats" data-rm="estats">—</div>' +
+    '</div></div>' +
+    '<div class="toweract">' +
+    '<button class="pbtn" data-act="rmstart" data-rm="startbtn">挑战裂缝怪物</button>' +
+    '<button class="pbtn cross" data-act="rmback">返回星球</button>' +
+    '<span class="pbstate" data-rm="note"></span>' +
+    '</div></div>' +
+    '<div class="towerrewhead"><span class="secttl" data-rm="rewtitle">击败奖励预览</span>' +
+    '<span class="pbchip" data-rm="rewtag"></span></div>' +
+    '<div class="towerreward" data-rm="reward"></div>' +
+    '<div class="secttl">规则</div>' +
+    '<div class="shopnote">同时只存在 1 只裂缝怪物；每 24 小时按真实时间（Date.now）刷新，击败后不立刻重生，' +
+    '要等原定刷新时间到来（离线超过 24 小时回来只换一轮，不补刷）。' +
+    '怪物存在时「开启运转」置灰并提示「需先击败裂缝怪物」，但不影响穿越按钮与异界裂缝状态。' +
+    '战斗占用单一动作槽：与星球运转、锁妖塔、异界裂缝、五行属性裂缝、普通战斗互斥；切换动作会中断挑战并清空战况。' +
+    '阵亡只退出战斗：怪物不消耗、强度不降，回血后可原地重试。已击败状态会存档，重开后仍是已击败直到下轮刷新。' +
+    '读档不恢复进行中的战斗。</div>' +
+    '<div class="secttl">成长公式</div>' +
+    '<div class="shopnote">强度 t = 生成时的穿越次数（快照）；生命 = ' + RIFT_MON.HP_BASE +
+    '×(1+' + RIFT_MON.HP_LIN + 't+' + RIFT_MON.HP_POW + '×t<sup>' + RIFT_MON.HP_EXP + '</sup>)，攻击 = ' +
+    RIFT_MON.ATK_MIN + '~' + RIFT_MON.ATK_MAX + '×(1+' + RIFT_MON.ATK_LIN + 't+' + RIFT_MON.ATK_POW +
+    '×t<sup>' + RIFT_MON.ATK_EXP + '</sup>)，命中 = ' + RIFT_MON.HIT_BASE + '+' + RIFT_MON.HIT_LIN +
+    't，闪避 = ' + RIFT_MON.EV_BASE + '+' + RIFT_MON.EV_LIN + 't，减伤 = min(' +
+    Math.round(RIFT_MON.DR_CAP * 100) + '%, ' + (RIFT_MON.DR_BASE * 100).toFixed(1) + '%+' +
+    (RIFT_MON.DR_LIN * 100).toFixed(2) + '%t)，出手间隔 = max(' + RIFT_MON.INTERVAL_MIN.toFixed(1) +
+    's, ' + RIFT_MON.INTERVAL_BASE.toFixed(1) + '-' + RIFT_MON.INTERVAL_DECAY + 't)。' +
+    '同 t 下各项均不高于异界裂缝；单次伤害不超过自身生命上限 ' + Math.round(RIFT_MON.HIT_CAP * 100) +
+    '%，不会被一刀秒。</div>' +
+    '</div>';
+}
+
+let _rmRewardKey = '';
+
+function riftMonRewardHTML(rw) {
+  return '<div class="trewline">灵石 +' + rw.gold + ' · 星砂 +' + rw.star + '</div>' +
+    '<div class="trewtip">击败后立刻发放；当天不再出现，等下一轮刷新（24 小时）。</div>';
+}
+
+function updateRiftMon(force) {
+  if (state.ui.active !== 'planet' || state.ui.planetView !== 'riftmon') return;
+  const root = document.querySelector('.rmwrap');
+  if (!root) { _rmRewardKey = ''; return; }
+
+  const m = state.riftMon || { alive: false, tier: 0, next: Date.now() };
+  const running = riftMonRunning();
+  const c = state.skills.combat;
+  const live = (running && c.riftMon >= 0 && c.target) ? c.target : null;
+  const tier = running ? c.riftMon : riftMonTierClamp(m.tier);
+  const foe = live || riftMonEnemy(tier);
+  const st = calcStats();
+
+  function rw(key, txt) {
+    const node = root.querySelector('[data-rm="' + key + '"]');
+    if (node && node.textContent !== txt) node.textContent = txt;
+  }
+
+  rw('tier', String(tier));
+  rw('state', running ? '挑战中' : (m.alive ? '存在 · 运转锁定' : '已击败'));
+  rw('eicon', RIFT_MON.ICON);
+  rw('foename', RIFT_MON.NAME);
+  rw('elvl', '强度 ' + tier);
+  rw('ehp', '生命 ' + Math.max(0, Math.ceil(foe.hp)) + ' / ' + foe.maxHp);
+  rw('estats', '攻击 ' + foe.atkMin + '~' + foe.atkMax + ' · 命中 ' + Math.round(foe.hit) +
+    ' · 闪避 ' + Math.round(foe.ev) + ' · 减伤 ' + Math.round(foe.dr * 100) + '%' +
+    ' · 出手 ' + foe.interval.toFixed(1) + 's · 我方命中 ' + Math.round(hitChance(st.hit, foe.ev) * 100) + '%');
+
+  const fill = root.querySelector('[data-rm="ehpfill"]');
+  if (fill) fill.style.width = (live ? Math.max(0, Math.min(1, foe.hp / foe.maxHp)) * 100 : 100).toFixed(1) + '%';
+
+  const startBtn = root.querySelector('[data-rm="startbtn"]');
+  if (startBtn) {
+    const label = running ? '停止战斗' : (m.alive ? '挑战裂缝怪物' : '已击败');
+    if (startBtn.textContent !== label) startBtn.textContent = label;
+    startBtn.disabled = !running && !m.alive;
+  }
+
+  rw('note', running
+    ? '挑战中：击败后解除运转锁定并发放奖励；切换到其它动作会中断战斗并清空战况。'
+    : (m.alive
+      ? '未击败：可开启战斗，或先去做其它事；星球运转按钮会保持锁定。阵亡不消耗怪物，可回血重试。'
+      : '已击败：下一只将在倒计时结束后刷新；期间可正常开启星球运转。'));
+
+  const reward = riftMonReward(tier);
+  rw('rewtitle', RIFT_MON.NAME + ' · 强度 ' + tier + ' 击败奖励');
+  rw('rewtag', m.alive ? (running ? '挑战中' : '存在') : '已击败');
+  const key = tier + '|' + reward.gold + '|' + reward.star + '|' + m.alive;
+  if (force || key !== _rmRewardKey) {
+    const box = root.querySelector('[data-rm="reward"]');
+    if (box) box.innerHTML = riftMonRewardHTML(reward);
+    _rmRewardKey = key;
+  }
+}
+
+/* 倒计时：每 tick 走 textContent，不触发 #content 重建。
+   到期但玩家正在星球运转 → 刷新被延后，这里显示等待原因 */
+function updateRiftMonMini() {
+  const m = state.riftMon;
+  let txt = '--:--:--';
+  if (m && isFinite(m.next)) {
+    if (!m.alive && m.next <= Date.now() && planetRunning()) txt = '等待运转结束';
+    else txt = fmtCd(m.next - Date.now());
+  }
+  const nodes = document.querySelectorAll('[data-rm="cd"]');
+  for (let i = 0; i < nodes.length; i++) {
+    if (nodes[i].textContent !== txt) nodes[i].textContent = txt;
+  }
+}
+
 /* 星球视图缓存：几何尺寸、节点引用、文本刷新节流 */
 let _planetGeo = null;
 let _planetBox = null;
@@ -864,7 +1372,7 @@ function updatePlanet(force) {
       ? (p.waitReason === 'spirit' ? '灵力不足，等待中'
         : p.waitReason === 'aura' ? '浓度不足 · 停止运转可恢复'
           : '运转中')
-      : '未开启';
+      : (riftMonAlive() ? '需先击败裂缝怪物' : '未开启');
     if (stateEl.textContent !== stxt) stateEl.textContent = stxt;
     stateEl.classList.toggle('on', running && !state.actionWaiting);
     stateEl.classList.toggle('wait', running && state.actionWaiting);
@@ -874,6 +1382,14 @@ function updatePlanet(force) {
     const btxt = running ? '停止运转' : '开启运转';
     if (runBtn.textContent !== btxt) runBtn.textContent = btxt;
     runBtn.classList.toggle('stop', running);
+    /* 裂缝怪物未击败 → 运转按钮置灰并给出明确提示（穿越不受影响） */
+    const blocked = !running && riftMonAlive();
+    if (runBtn.disabled !== blocked) runBtn.disabled = blocked;
+    runBtn.classList.toggle('off', blocked);
+    runBtn.title = blocked ? '需先击败裂缝怪物' : '';
+  }
+  if (stateEl) {
+    stateEl.classList.toggle('wait', !running && riftMonAlive());
   }
   const costEl = document.querySelector('[data-pg="cost"]');
   if (costEl && costEl.textContent !== String(PLANET.SPIRIT_COST)) costEl.textContent = String(PLANET.SPIRIT_COST);
@@ -916,23 +1432,26 @@ function updatePlanet(force) {
   const nextN = cross + 1;
   const crossCost = planetCrossCost(nextN);
   const crossNeed = crossCost + PLANET.AURA_MIN;
-  const canCross = aura >= crossNeed;
+  const riftOpen = !!(state.rift && state.rift.open);
+  const canCross = aura >= crossNeed && !riftOpen;
   const crossBtn = document.querySelector('[data-planetcross]');
   if (crossBtn) {
     const poor = !canCross;
     if (crossBtn.disabled !== poor) crossBtn.disabled = poor;
     crossBtn.classList.toggle('off', poor);
-    crossBtn.title = poor ? '灵气浓度不足' : ('穿越至「' + planetDynastyName(nextN) + '」');
+    crossBtn.title = riftOpen ? '需先修复异界裂缝' : (poor ? '灵气浓度不足' : ('穿越至「' + planetDynastyName(nextN) + '」'));
   }
   const crossNoteEl = document.querySelector('[data-pg="crossnote"]');
   if (crossNoteEl) {
     const diff = Math.max(0, crossNeed - aura);
-    const ntxt = diff > 0
-      ? '需 💧 ' + fmtAuraNum(crossCost) + ' · 还差 ' + fmtAuraNum(Math.ceil(diff)) +
-        (running ? '（停止运转后才能恢复）' : '')
-      : '消耗 💧 ' + fmtAuraNum(crossCost) + ' → ' + planetDynastyName(nextN);
+    const ntxt = riftOpen
+      ? '需先修复异界裂缝（第 ' + state.rift.tier + ' 层）'
+      : (diff > 0
+        ? '需 💧 ' + fmtAuraNum(crossCost) + ' · 还差 ' + fmtAuraNum(Math.ceil(diff)) +
+          (running ? '（停止运转后才能恢复）' : '')
+        : '消耗 💧 ' + fmtAuraNum(crossCost) + ' → ' + planetDynastyName(nextN));
     if (crossNoteEl.textContent !== ntxt) crossNoteEl.textContent = ntxt;
-    crossNoteEl.classList.toggle('wait', diff > 0);
+    crossNoteEl.classList.toggle('wait', diff > 0 || riftOpen);
   }
 
   const boost = document.querySelector('[data-planetboost]');
@@ -1323,7 +1842,9 @@ function currentBarHTML() {
   const label = (p.skill === 'combat') ? '' : (SKILLS[p.skill] ? SKILLS[p.skill].name + ' · ' : '');
   const note = p.skill === 'combat' ? '自动战斗中'
     : p.skill === 'planet' ? (p.waiting ? '等待资源恢复' : '星球运转中')
-      : (p.waiting ? '等待材料' : '进行中');
+      : p.skill === 'tower' ? '锁妖塔挑战中'
+        : p.skill === 'rift' ? '裂缝修复中'
+          : (p.waiting ? '等待材料' : '进行中');
   return '<div class="activebar">' +
     '<div class="row"><span class="now">' + label + '<b>' + esc(p.name) + '</b> <span class="none">(' + note + ')</span>' +
     ' <span class="none" data-bar="actnum">0.0%</span></span>' + stopBtn + '</div>' +
@@ -1563,7 +2084,22 @@ function renderContent() {
   const id = state.ui.active;
   if (id === 'tasks') { setHTML('#content', renderTasks()); return; }
   if (id === 'shop') { setHTML('#content', renderShop()); return; }
-  if (id === 'planet') { setHTML('#content', renderPlanet() + currentBarHTML()); updatePlanet(); return; }
+  if (id === 'planet') {
+    if (state.ui.planetView === 'rift') {
+      setHTML('#content', renderRift() + currentBarHTML());
+      updateRift(true);
+    } else if (state.ui.planetView === 'elem') {
+      setHTML('#content', renderElemRift() + currentBarHTML());
+      updateElemRift(true);
+    } else if (state.ui.planetView === 'riftmon') {
+      setHTML('#content', renderRiftMon() + currentBarHTML());
+      updateRiftMon(true);
+    } else {
+      setHTML('#content', renderPlanet() + currentBarHTML());
+      updatePlanet();
+    }
+    return;
+  }
   if (id === 'tower') { setHTML('#content', renderTower() + currentBarHTML()); updateTower(true); return; }
   if (id === 'bag') { setHTML('#content', renderBag()); updateInvQty(); return; }
   if (id === 'world') { setHTML('#content', renderWorld() + currentBarHTML()); updateWorldState(); return; }
@@ -1972,6 +2508,11 @@ function updateBars() {
   updateWorldState();
   updateDiscipleState();
   updateTower();
+  updateRift();
+  updateElemRift();
+  updateElemRiftMini();
+  updateRiftMon();
+  updateRiftMonMini();
 
   /* 战斗血条（对战视图） */
   const content = $('#content');

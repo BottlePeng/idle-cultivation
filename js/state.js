@@ -43,6 +43,19 @@ function defaultState() {
        failed 仅用于界面显示「已阵亡」，读档不恢复；层数永不回退 */
     tower: { current: 1, best: 1, pending: false, failed: false },
 
+    /* 异界裂缝：open 是否存在未修复裂缝 / tier 生成时的穿越次数（层级）
+       新档自带第 0 层裂缝；每次穿越成功后生成 tier=穿越次数的新裂缝 */
+    rift: { open: true, tier: 0 },
+
+    /* 五行属性裂缝：next 下次整轮刷新的时间戳（Date.now） / slots 三道裂缝
+       slot = { elem: 五行id, tier: 生成时强度快照, fixed: 是否已修复 }
+       新档 / 旧档兜底都会立刻生成一轮；刷新为覆盖式，不累积 */
+    elemRifts: { next: Date.now() + ELEM_RIFT.REFRESH_MS, slots: [] },
+
+    /* 裂缝怪物：alive 是否存在（未击败）/ born 生成时间 / next 下次整轮刷新
+       tier 生成时的穿越次数快照。新档与旧档兜底都会立刻出现一只 */
+    riftMon: { alive: true, born: Date.now(), next: Date.now() + RIFT_MON.REFRESH_MS, tier: 0 },
+
     /* 单一动作槽：同一时刻只能进行一件事 */
     action: { skill: 'cultivation', id: 'meditate' },
     actionTimer: 0,     // 当前周期已累计秒数
@@ -53,7 +66,7 @@ function defaultState() {
     taskTimer: 0,       // 任务检查计时
 
     tasks: {},          // taskId -> { done, claimed }
-    ui: { active: 'woodcutting', autoEat: true, eatFood: 'auto', eatRatio: 0.35, invFilter: 'all', invSellMode: false, itemQty: 1, shopCat: 'general', farmSeedId: null, worldTerrain: 'all' },
+    ui: { active: 'woodcutting', planetView: 'main', elemSlot: 0, autoEat: true, eatFood: 'auto', eatRatio: 0.35, invFilter: 'all', invSellMode: false, itemQty: 1, shopCat: 'general', farmSeedId: null, worldTerrain: 'all' },
     log: [],
     stats: { gathered: 0, crafts: 0, kills: 0, deaths: 0, breaks: 0, pills: 0, gained: {}, perSkill: {}, startedAt: Date.now() },
     lastSave: Date.now()
@@ -64,9 +77,11 @@ function defaultState() {
     s.stats.perSkill[id] = 0;
   });
   /* 战斗技能额外字段（dungeon/floor 为秘境进度，tower 为锁妖塔当前挑战层，0 表示不在塔内） */
-  Object.assign(s.skills.combat, { monster: null, target: null, playerTimer: 0, monsterTimer: 0, respawn: 0, dungeon: null, floor: 0, tower: 0 });
+  Object.assign(s.skills.combat, { monster: null, target: null, playerTimer: 0, monsterTimer: 0, respawn: 0, dungeon: null, floor: 0, tower: 0, rift: -1, elem: -1, elemRw: null, riftMon: -1 });
   /* 修炼瓶颈标记（修为封顶时提示一次） */
   s.skills.cultivation.capped = false;
+  /* 新档立刻生成一轮五行属性裂缝（依赖上面的技能等级与穿越次数） */
+  s.elemRifts.slots = elemRiftSlotsRoll(s);
 
   return s;
 }
@@ -152,9 +167,13 @@ function mergeState(def, saved) {
         c.floor = isFinite(cs.floor) ? Math.max(0, Math.min(dg.floors.length - 1, Math.floor(cs.floor))) : 0;
         c.monster = dg.floors[c.floor];
       }
-      /* 锁妖塔战斗是瞬态：读档一律不恢复，避免离线继续打塔 / 残留塔内目标 */
+      /* 锁妖塔 / 异界裂缝 / 五行属性裂缝战斗是瞬态：读档一律不恢复，避免离线继续战斗或残留目标 */
       c.tower = 0;
-      if (cs.tower) { c.monster = null; c.target = null; }
+      c.rift = -1;
+      c.elem = -1;
+      c.elemRw = null;
+      c.riftMon = -1;
+      if (cs.tower || cs.rift >= 0 || cs.elem >= 0 || cs.riftMon >= 0) { c.monster = null; c.target = null; }
     }
   }
 
@@ -292,7 +311,7 @@ function mergeState(def, saved) {
 
   /* 星球是主动动作，但不在 ACTIONS/RECIPES 表内：读档一律不恢复，
      保持「未开启」，也避免 defaultState 的打坐动作顶替它偷偷占槽 */
-  if (saved.action && (saved.action.skill === 'planet' || saved.action.skill === 'tower')) {
+  if (saved.action && (saved.action.skill === 'planet' || saved.action.skill === 'tower' || saved.action.skill === 'rift' || saved.action.skill === 'elem' || saved.action.skill === 'riftmon')) {
     out.action = null;
     out.actionTimer = 0;
     out.actionWaiting = false;
@@ -351,6 +370,92 @@ function mergeState(def, saved) {
       out.planet.aura = Math.max(PLANET.AURA_MIN, Math.min(cap, Number(sp.aura)));
     }
     out.planet.auraVer = 1;
+  }
+
+  /* 异界裂缝：open 是否存在未修复裂缝；tier 为生成时的穿越次数（层级）。
+     旧档（无 rift 字段）兜底为「有一个未修复裂缝」：层级取 min(穿越次数, 战斗等级-1)，
+     既不会白送穿越，也不会让高穿越 / 低战斗的老存档被永久锁死。
+     裂缝层级不可能超过当前穿越次数。 */
+  out.rift = { open: true, tier: 0 };
+  {
+    const sr = (saved.rift && typeof saved.rift === 'object') ? saved.rift : null;
+    const fallbackTier = Math.max(0, Math.min(out.planet.cross, out.skills.combat.lvl - 1));
+    if (sr) {
+      if (typeof sr.open === 'boolean') out.rift.open = sr.open;
+      out.rift.tier = isFinite(sr.tier)
+        ? Math.max(0, Math.min(RIFT.MAX_TIER, Math.floor(Number(sr.tier))))
+        : fallbackTier;
+    } else {
+      out.rift.open = true;
+      out.rift.tier = fallbackTier;
+    }
+    if (out.rift.tier > out.planet.cross) out.rift.tier = out.planet.cross;
+  }
+
+  /* 五行属性裂缝：next 为下次整轮刷新的时间戳，slots 为三道裂缝
+     （elem 五行 / tier 生成时强度快照 / fixed 是否已修复）。
+     旧档（无 elemRifts 字段）兜底：按当前时间立刻生成一轮新的三个。
+     已到期 → 立刻整轮覆盖刷新（离线不补刷，回来只刷一次）；
+     next 缺失或异常 → 现在 + 3 小时。非法 slot 丢弃后补足。 */
+  out.elemRifts = { next: Date.now() + ELEM_RIFT.REFRESH_MS, slots: [] };
+  {
+    const se = (saved.elemRifts && typeof saved.elemRifts === 'object') ? saved.elemRifts : null;
+    const now = Date.now();
+    if (se) {
+      if (isFinite(se.next) && Number(se.next) > 0) {
+        out.elemRifts.next = Math.min(Number(se.next), now + ELEM_RIFT.REFRESH_MS);
+      }
+      if (Array.isArray(se.slots)) {
+        se.slots.slice(0, ELEM_RIFT.SLOTS).forEach(function (sl) {
+          if (!sl || typeof sl !== 'object') return;
+          const el = findElemRift(sl.elem);
+          if (!el) return;
+          out.elemRifts.slots.push({
+            elem: el.id,
+            tier: isFinite(sl.tier) ? Math.max(0, Math.min(ELEM_RIFT.MAX_TIER, Math.floor(Number(sl.tier)))) : 0,
+            fixed: !!sl.fixed
+          });
+        });
+      }
+    }
+    while (out.elemRifts.slots.length < ELEM_RIFT.SLOTS) {
+      out.elemRifts.slots.push(elemRiftSlotRoll(out));
+    }
+    if (now >= out.elemRifts.next) {
+      out.elemRifts.slots = elemRiftSlotsRoll(out);
+      out.elemRifts.next = now + ELEM_RIFT.REFRESH_MS;
+    }
+  }
+
+  /* 裂缝怪物：alive/born/next/tier 全部落盘；已击败（alive=false）保持到下一轮刷新。
+     旧档（无 riftMon 字段）按当前时间生成一只；next 已过期（离线超过 24 小时）→
+     直接换上新一轮，不做多次补偿刷新。生成战斗是瞬态，读档不恢复。 */
+  out.riftMon = {
+    alive: true,
+    born: Date.now(),
+    next: Date.now() + RIFT_MON.REFRESH_MS,
+    tier: Math.min(RIFT_MON.MAX_TIER, out.planet.cross)
+  };
+  {
+    const sm = (saved.riftMon && typeof saved.riftMon === 'object') ? saved.riftMon : null;
+    const now = Date.now();
+    if (sm) {
+      out.riftMon.alive = typeof sm.alive === 'boolean' ? sm.alive : true;
+      if (isFinite(sm.born) && Number(sm.born) > 0) out.riftMon.born = Number(sm.born);
+      if (isFinite(sm.next) && Number(sm.next) > 0) {
+        out.riftMon.next = Math.min(Number(sm.next), now + RIFT_MON.REFRESH_MS);
+      }
+      if (isFinite(sm.tier)) {
+        out.riftMon.tier = Math.max(0, Math.min(RIFT_MON.MAX_TIER, Math.floor(Number(sm.tier))));
+      }
+      /* 刷新到期：无论之前是否击败，都换一只新怪物（覆盖式，不累积） */
+      if (now >= out.riftMon.next) {
+        out.riftMon.alive = true;
+        out.riftMon.born = now;
+        out.riftMon.next = now + RIFT_MON.REFRESH_MS;
+        out.riftMon.tier = Math.min(RIFT_MON.MAX_TIER, out.planet.cross);
+      }
+    }
   }
 
   /* 统计 */

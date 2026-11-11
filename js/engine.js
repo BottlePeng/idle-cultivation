@@ -732,7 +732,7 @@ function cycleTick(dt) {
   if (!act) return;
   /* 战斗动作由 combatTick 独立驱动，星球由 planetTick 独立驱动；
    * 二者都不在 ACTIONS/RECIPES 里查表，必须在 cycleTick 显式跳过，否则会被判为无效动作清空 */
-  if (act.skill === 'combat' || act.skill === 'planet' || act.skill === 'tower') return;
+  if (act.skill === 'combat' || act.skill === 'planet' || act.skill === 'tower' || act.skill === 'rift' || act.skill === 'elem' || act.skill === 'riftmon') return;
 
   const def = findActivity(act.skill, act.id);
   if (!def) { state.action = null; state.actionTimer = 0; return; }
@@ -972,6 +972,443 @@ function towerToggle() {
   startTower();
 }
 
+/* ---------------------------------------------------------------- 异界裂缝 */
+/* 层级钳制：新档为 0，所有入口统一防止负数 / NaN / 溢出 */
+function riftTierClamp(tier) {
+  tier = Math.floor(Number(tier));
+  if (!isFinite(tier)) tier = 0;
+  return Math.max(0, Math.min(RIFT.MAX_TIER, tier));
+}
+
+function riftRunning() {
+  return !!(state.action && state.action.skill === 'rift');
+}
+
+/* 裂缝妖物：纯层级函数（安全上限会参考玩家当前生命），同一层级可重复预览 */
+function riftEnemy(tier) {
+  const t = riftTierClamp(tier);
+  const hp = Math.round(RIFT.HP_BASE * (1 + RIFT.HP_LIN * t + RIFT.HP_POW * Math.pow(t, RIFT.HP_EXP)));
+  const atkMul = 1 + RIFT.ATK_LIN * t + RIFT.ATK_POW * Math.pow(t, RIFT.ATK_EXP);
+  const mob = RIFT.MOBS[t % RIFT.MOBS.length];
+  let atkMin = Math.max(1, Math.round(RIFT.ATK_MIN * atkMul));
+  let atkMax = Math.max(atkMin, Math.round(RIFT.ATK_MAX * atkMul));
+  /* 安全上限：单次伤害不超过玩家当前生命上限的 18%，保证后期不会被一刀秒 */
+  const cap = Math.max(2, Math.round(calcStats().hp * RIFT.HIT_CAP));
+  if (atkMax > cap) {
+    atkMax = cap;
+    if (atkMin > atkMax) atkMin = Math.max(1, Math.round(atkMax * 0.55));
+  }
+  return {
+    id: '__rift__', name: mob.name, icon: mob.icon, lvl: t + 1,
+    hp: hp, maxHp: hp,
+    hit: RIFT.HIT_BASE + RIFT.HIT_LIN * t,
+    ev: RIFT.EV_BASE + RIFT.EV_LIN * t,
+    atkMin: atkMin, atkMax: atkMax,
+    dr: Math.min(RIFT.DR_CAP, RIFT.DR_BASE + RIFT.DR_LIN * t),
+    interval: Math.max(RIFT.INTERVAL_MIN, RIFT.INTERVAL_BASE - RIFT.INTERVAL_DECAY * t),
+    dungeon: null, floor: -1, tower: 0, rift: t
+  };
+}
+
+/* 修复奖励：少量灵石/星砂 + 战斗经验（帮助玩家跟上裂缝强度） */
+function riftReward(tier) {
+  const t = riftTierClamp(tier);
+  let gold = Math.round(RIFT.GOLD_BASE * Math.pow(t + 1, RIFT.GOLD_POW));
+  gold = Math.round(gold * (1 + formBonus('gold') + worldBonus('gold') + discipleBonus('gold')));
+  const star = Math.max(1, Math.round(RIFT.STAR_BASE * Math.pow(t + 1, RIFT.STAR_POW)));
+  const xp = Math.round(RIFT.XP_BASE * Math.pow(t + 1, RIFT.XP_POW));
+  return { tier: t, gold: gold, star: star, xp: xp };
+}
+
+/* 开始 / 停止修复：占用全局单一动作槽，开始前中断星球与其它战斗 */
+function startRift() {
+  if (state.stun > 0) { logMsg('眩晕中，还需 ' + Math.ceil(state.stun) + ' 秒才能行动。', 'warn'); return; }
+  if (riftRunning()) { stopAction(); return; }
+
+  const r = state.rift;
+  if (!r || !r.open) { logMsg('当前没有未修复的异界裂缝；穿越成功后会生成新的裂缝。', 'warn'); return; }
+
+  const tier = riftTierClamp(r.tier);
+  planetInterrupt();
+  cancelCombat();
+
+  const c = state.skills.combat;
+  c.rift = tier;
+  c.monster = '__rift__';     /* 占位：让脱战回血等被动把它视为战斗中 */
+  c.dungeon = null;
+  c.floor = 0;
+  c.target = riftEnemy(tier);
+  c.playerTimer = 0;
+  c.monsterTimer = 0;
+  c.respawn = 0;
+
+  state.action = { skill: 'rift', id: 'repair' };
+  state.actionTimer = 0;
+  state.actionCur = 0;
+  state.actionWaiting = false;
+  logMsg('进入异界裂缝第 ' + tier + ' 层「' + c.target.name + '」，击败即可完成修复。', 'info');
+}
+
+/* 修复裂缝：立刻发奖并标记已修复；下一次穿越成功后生成新裂缝 */
+function riftCleared(tier, target) {
+  const r = state.rift;
+  const t = riftTierClamp(tier);
+  if (!r || !r.open) { stopAction(true); return; }
+  const rw = riftReward(t);
+  state.gold += rw.gold;
+  state.stardust = (state.stardust || 0) + rw.star;
+  addXp('combat', rw.xp);
+  r.open = false;
+  r.tier = t;
+  logMsg('修复异界裂缝第 ' + t + ' 层「' + (target ? target.name : '') + '」！灵石 +' + rw.gold +
+    '、星砂 +' + rw.star + '、战斗经验 +' + rw.xp + '。可返回星球继续穿越。', 'good');
+  stopAction(true);
+}
+
+/* ------------------------------------------------------------ 五行属性裂缝 */
+/* 与异界裂缝完全独立：不进穿越门槛、不写 state.rift，只占单一动作槽 */
+
+function findElemRift(id) {
+  for (let i = 0; i < ELEM_RIFT.ELEMENTS.length; i++) {
+    if (ELEM_RIFT.ELEMENTS[i].id === id) return ELEM_RIFT.ELEMENTS[i];
+  }
+  return null;
+}
+
+function elemRiftTierClamp(tier) {
+  tier = Math.floor(Number(tier));
+  if (!isFinite(tier)) tier = 0;
+  return Math.max(0, Math.min(ELEM_RIFT.MAX_TIER, tier));
+}
+
+/* 强度层级：穿越次数（×2.2）+ 对应工作等级（每级 ×0.4），生成时快照 */
+function elemRiftTier(level, cross) {
+  const lv = Math.max(1, Math.floor(Number(level) || 1));
+  const cr = Math.max(0, Math.floor(Number(cross) || 0));
+  return elemRiftTierClamp(Math.round(cr * ELEM_RIFT.CROSS_W + (lv - 1) * ELEM_RIFT.LVL_W));
+}
+
+/* 单道裂缝：属性随机（允许重复），强度按该属性对应工作等级 + 穿越次数快照 */
+function elemRiftSlotRoll(s) {
+  const src = s || state;
+  const el = ELEM_RIFT.ELEMENTS[Math.floor(Math.random() * ELEM_RIFT.ELEMENTS.length)];
+  const sk = (src.skills && src.skills[el.skill]) || { lvl: 1 };
+  const cross = (src.planet && src.planet.cross) || 0;
+  return { elem: el.id, tier: elemRiftTier(sk.lvl, cross), fixed: false };
+}
+
+function elemRiftSlotsRoll(s) {
+  const out = [];
+  for (let i = 0; i < ELEM_RIFT.SLOTS; i++) out.push(elemRiftSlotRoll(s));
+  return out;
+}
+
+/* 每帧检查真实时间：到期 → 整轮覆盖刷新（离线不补刷，回来只刷一次） */
+function elemRiftTick() {
+  const e = state.elemRifts;
+  if (!e || !isFinite(e.next)) return;
+  const now = Date.now();
+  if (now < e.next) return;
+  /* 正在打属性裂缝时推迟到本次战斗结束，避免槽位在战斗中被人换掉 */
+  if (state.action && state.action.skill === 'elem') return;
+  e.slots = elemRiftSlotsRoll();
+  e.next = now + ELEM_RIFT.REFRESH_MS;
+  logMsg('五行属性裂缝已刷新：新一轮 3 道裂缝出现。', 'info');
+}
+
+function elemRiftRunning() {
+  return !!(state.action && state.action.skill === 'elem');
+}
+
+function elemSkillLvl(elemId) {
+  const el = findElemRift(elemId);
+  return el && state.skills[el.skill] ? state.skills[el.skill].lvl : 1;
+}
+
+/* 属性裂缝妖物：强度完全由生成时的快照 tier 决定 */
+function elemEnemy(slot) {
+  const el = findElemRift(slot && slot.elem) || ELEM_RIFT.ELEMENTS[0];
+  const t = elemRiftTierClamp(slot ? slot.tier : 0);
+  const hp = Math.round(ELEM_RIFT.HP_BASE * (1 + ELEM_RIFT.HP_LIN * t + ELEM_RIFT.HP_POW * Math.pow(t, ELEM_RIFT.HP_EXP)));
+  const atkMul = 1 + ELEM_RIFT.ATK_LIN * t + ELEM_RIFT.ATK_POW * Math.pow(t, ELEM_RIFT.ATK_EXP);
+  let atkMin = Math.max(1, Math.round(ELEM_RIFT.ATK_MIN * atkMul));
+  let atkMax = Math.max(atkMin, Math.round(ELEM_RIFT.ATK_MAX * atkMul));
+  /* 安全上限：单次伤害不超过玩家当前生命上限的 16%，后期也不会被一刀秒 */
+  const cap = Math.max(2, Math.round(calcStats().hp * ELEM_RIFT.HIT_CAP));
+  if (atkMax > cap) {
+    atkMax = cap;
+    if (atkMin > atkMax) atkMin = Math.max(1, Math.round(atkMax * 0.55));
+  }
+  return {
+    id: '__elem__', name: el.name + '·时空裂缝', icon: el.icon, lvl: t + 1,
+    hp: hp, maxHp: hp,
+    hit: ELEM_RIFT.HIT_BASE + ELEM_RIFT.HIT_LIN * t,
+    ev: ELEM_RIFT.EV_BASE + ELEM_RIFT.EV_LIN * t,
+    atkMin: atkMin, atkMax: atkMax,
+    dr: Math.min(ELEM_RIFT.DR_CAP, ELEM_RIFT.DR_BASE + ELEM_RIFT.DR_LIN * t),
+    interval: Math.max(ELEM_RIFT.INTERVAL_MIN, ELEM_RIFT.INTERVAL_BASE - ELEM_RIFT.INTERVAL_DECAY * t),
+    elem: el.id, dungeon: null, floor: -1, tower: 0, rift: -1
+  };
+}
+
+/* 采集/生产：取「当前等级已解锁的最高档」产出，未解锁任何档时退化到最低档 */
+function elemActionItem(skillId, level) {
+  const list = ACTIONS[skillId] || [];
+  let best = null;
+  for (let i = 0; i < list.length; i++) {
+    const a = list[i];
+    if (!a.out || !a.out.id || !ITEMS[a.out.id]) continue;
+    if (!best) best = a.out.id;
+    if (a.req <= level) best = a.out.id;
+    else break;
+  }
+  return best || 'log_qing';
+}
+
+/* 炼器输入材料（矿石/锭一类，取当前炼器等级可用的最高档熔炼原料） */
+function elemCraftInput(level) {
+  const list = RECIPES.smelting || [];
+  let best = null, bestReq = -1;
+  for (let i = 0; i < list.length; i++) {
+    const r = list[i];
+    if (!r || !r.out || !r.out.id || !r.in || !r.in.length) continue;
+    const ore = r.in[0].id;
+    if (!/^ore_/.test(ore) || !ITEMS[ore]) continue;
+    /* 只要「矿石 → 同名锭」的正规熔炼配方，避开铁木汁 / 灵石提炼等特殊配方 */
+    if (r.out.id !== 'ingot_' + ore.slice(4)) continue;
+    if (!best) best = ore;
+    if (r.req <= level && r.req > bestReq) { best = ore; bestReq = r.req; }
+  }
+  return best || 'ore_iron';
+}
+
+/* 炼丹可用药材：取当前炼丹等级可炼的最高档丹方的主药材 */
+function elemHerbInput(level) {
+  const list = RECIPES.alchemy || [];
+  let best = null, bestReq = -1;
+  for (let i = 0; i < list.length; i++) {
+    const r = list[i];
+    if (!r || !r.in) continue;
+    let herb = null;
+    r.in.forEach(function (it) {
+      if (!herb && /^herb/.test(it.id) && ITEMS[it.id]) herb = it.id;
+    });
+    if (!herb) continue;
+    if (!best) best = herb;
+    if (r.req <= level && r.req > bestReq) { best = herb; bestReq = r.req; }
+  }
+  return best || 'herb_juqi';
+}
+
+/* 修复奖励：对应工作当前档材料 1~5 件；土行阵法没有物品材料，改发星砂 */
+function elemRiftReward(elemId, level) {
+  const el = findElemRift(elemId) || ELEM_RIFT.ELEMENTS[0];
+  const lv = Math.max(1, Math.floor(Number(level) || 1));
+  const qty = Math.max(1, Math.min(ELEM_RIFT.QTY_MAX, 1 + Math.floor((lv - 1) / ELEM_RIFT.QTY_LVL_STEP)));
+  if (el.id === 'earth') return { elem: el.id, id: null, star: qty, qty: qty, level: lv };
+  let id;
+  if (el.id === 'wood') id = elemActionItem('woodcutting', lv);
+  else if (el.id === 'water') id = elemActionItem('fishing', lv);
+  else if (el.id === 'metal') id = elemCraftInput(lv);
+  else id = elemHerbInput(lv);
+  return { elem: el.id, id: id, star: 0, qty: qty, level: lv };
+}
+
+function elemRewardText(rw) {
+  if (!rw) return '';
+  if (!rw.id) return '💫 星砂 ×' + rw.qty;
+  return itemIcon(rw.id) + ' ' + itemName(rw.id) + ' ×' + rw.qty;
+}
+
+/* 开始 / 停止修复：占用全局单一动作槽，开始前中断星球与其它战斗 */
+function startElemRift(idx) {
+  if (state.stun > 0) { logMsg('眩晕中，还需 ' + Math.ceil(state.stun) + ' 秒才能行动。', 'warn'); return; }
+  if (elemRiftRunning()) { stopAction(); return; }
+
+  const e = state.elemRifts;
+  const slot = e && e.slots[idx];
+  if (!slot) { logMsg('该裂缝位置已刷新，请返回星球查看。', 'warn'); return; }
+  const el = findElemRift(slot.elem) || ELEM_RIFT.ELEMENTS[0];
+  if (slot.fixed) { logMsg('「' + el.name + '·时空裂缝」已经修复，等待下一轮刷新。', 'warn'); return; }
+
+  const rw = elemRiftReward(slot.elem, elemSkillLvl(slot.elem));
+  if (rw.id && !invCanAdd(rw.id, rw.qty)) {
+    logMsg('背包已满，无法收取「' + itemName(rw.id) + '」，请先清理背包。', 'warn');
+    return;
+  }
+
+  planetInterrupt();
+  cancelCombat();
+
+  const c = state.skills.combat;
+  c.elem = idx;
+  c.elemRw = rw;
+  c.monster = '__elem__';     /* 占位：让脱战回血等被动把它视为战斗中 */
+  c.dungeon = null;
+  c.floor = 0;
+  c.rift = -1;
+  c.target = elemEnemy(slot);
+  c.playerTimer = 0;
+  c.monsterTimer = 0;
+  c.respawn = 0;
+
+  state.action = { skill: 'elem', id: String(idx) };
+  state.actionTimer = 0;
+  state.actionCur = 0;
+  state.actionWaiting = false;
+  logMsg('进入「' + el.name + '·时空裂缝」（强度 ' + slot.tier + '），击败即可修复并取回材料。', 'info');
+}
+
+/* 修复属性裂缝：发材料、该位置留空到下一轮刷新；背包满则保持未修复 */
+function elemRiftCleared(target) {
+  const e = state.elemRifts;
+  const c = state.skills.combat;
+  const idx = c.elem;
+  const slot = e && e.slots[idx];
+  if (!slot || slot.fixed) { stopAction(true); return; }
+  const el = findElemRift(slot.elem) || ELEM_RIFT.ELEMENTS[0];
+  const rw = c.elemRw || elemRiftReward(slot.elem, elemSkillLvl(slot.elem));
+
+  if (rw.id) {
+    if (!invCanAdd(rw.id, rw.qty)) {
+      logMsg('背包已满，无法收取「' + itemName(rw.id) + '」；裂缝仍未修复，清理背包后可重试。', 'warn');
+      stopAction(true);
+      return;
+    }
+    invAdd(rw.id, rw.qty);
+  }
+  if (rw.star) state.stardust = (state.stardust || 0) + rw.star;
+  slot.fixed = true;
+  logMsg('修复「' + el.name + '·时空裂缝」！获得 ' + elemRewardText(rw) +
+    '。该位置留空至下一轮刷新。', 'good');
+  stopAction(true);
+}
+
+/* ------------------------------------------------------------ 裂缝怪物 */
+/* 与异界裂缝 / 五行属性裂缝三套独立：同时 1 只、24h 真实时间刷新，
+   存在时只拦「星球运转」，不参与穿越门槛 */
+
+function riftMonTierClamp(tier) {
+  tier = Math.floor(Number(tier));
+  if (!isFinite(tier)) tier = 0;
+  return Math.max(0, Math.min(RIFT_MON.MAX_TIER, tier));
+}
+
+function riftMonAlive() {
+  return !!(state.riftMon && state.riftMon.alive);
+}
+
+function riftMonRunning() {
+  return !!(state.action && state.action.skill === 'riftmon');
+}
+
+/* 生成 / 覆盖一只新怪物：强度快照取当前穿越次数 */
+function riftMonSpawn(now) {
+  const t = isFinite(now) ? Number(now) : Date.now();
+  state.riftMon = {
+    alive: true,
+    born: t,
+    next: t + RIFT_MON.REFRESH_MS,
+    tier: Math.min(RIFT_MON.MAX_TIER, planetCrossCount())
+  };
+}
+
+/* 每帧检查真实时间：到期换新一只（覆盖式）。星球运转中延后到停止后再生，
+   避免打断玩家正在进行的巡航；离线超过 24 小时回来只换一轮。 */
+function riftMonTick() {
+  const m = state.riftMon;
+  if (!m || !isFinite(m.next)) return;
+  if (Date.now() < m.next) return;
+  if (planetRunning()) return;
+  riftMonSpawn(Date.now());
+  logMsg('裂缝怪物已刷新（强度 ' + state.riftMon.tier + '）；未击败前无法开启星球运转，穿越不受影响。', 'warn');
+}
+
+/* 怪物属性：强度完全由生成时的穿越次数快照决定，各项不高于同 t 的异界裂缝 */
+function riftMonEnemy(tier) {
+  const t = riftMonTierClamp(tier);
+  const hp = Math.round(RIFT_MON.HP_BASE * (1 + RIFT_MON.HP_LIN * t + RIFT_MON.HP_POW * Math.pow(t, RIFT_MON.HP_EXP)));
+  const atkMul = 1 + RIFT_MON.ATK_LIN * t + RIFT_MON.ATK_POW * Math.pow(t, RIFT_MON.ATK_EXP);
+  let atkMin = Math.max(1, Math.round(RIFT_MON.ATK_MIN * atkMul));
+  let atkMax = Math.max(atkMin, Math.round(RIFT_MON.ATK_MAX * atkMul));
+  /* 安全上限：单次伤害不超过玩家当前生命上限的 14%，后期也不会被一刀秒 */
+  const cap = Math.max(2, Math.round(calcStats().hp * RIFT_MON.HIT_CAP));
+  if (atkMax > cap) {
+    atkMax = cap;
+    /* 上限生效时同步压低下限，保证「攻击下限」也不超过同 t 的异界裂缝 */
+    atkMin = Math.max(1, Math.round(atkMax * 0.55));
+  }
+  return {
+    id: '__riftmon__', name: RIFT_MON.NAME, icon: RIFT_MON.ICON, lvl: t + 1,
+    hp: hp, maxHp: hp,
+    hit: RIFT_MON.HIT_BASE + RIFT_MON.HIT_LIN * t,
+    ev: RIFT_MON.EV_BASE + RIFT_MON.EV_LIN * t,
+    atkMin: atkMin, atkMax: atkMax,
+    dr: Math.min(RIFT_MON.DR_CAP, RIFT_MON.DR_BASE + RIFT_MON.DR_LIN * t),
+    interval: Math.max(RIFT_MON.INTERVAL_MIN, RIFT_MON.INTERVAL_BASE - RIFT_MON.INTERVAL_DECAY * t),
+    dungeon: null, floor: -1, tower: 0, rift: -1, elem: null, riftMon: t
+  };
+}
+
+/* 奖励：灵石 + 星砂，同层级低于锁妖塔（塔另有每 5 层里程碑倍率） */
+function riftMonReward(tier) {
+  const t = riftMonTierClamp(tier);
+  let gold = Math.round(RIFT_MON.GOLD_BASE * Math.pow(t + 1, RIFT_MON.GOLD_POW));
+  gold = Math.round(gold * (1 + formBonus('gold') + worldBonus('gold') + discipleBonus('gold')));
+  const star = Math.max(1, Math.round(RIFT_MON.STAR_BASE * Math.pow(t + 1, RIFT_MON.STAR_POW)));
+  return { tier: t, gold: gold, star: star };
+}
+
+/* 开始 / 停止挑战：占用全局单一动作槽，开始前中断星球与其它战斗 */
+function startRiftMon() {
+  if (state.stun > 0) { logMsg('眩晕中，还需 ' + Math.ceil(state.stun) + ' 秒才能行动。', 'warn'); return; }
+  if (riftMonRunning()) { stopAction(); return; }
+
+  const m = state.riftMon;
+  if (!m || !m.alive) {
+    const left = m && isFinite(m.next) ? Math.max(0, m.next - Date.now()) : 0;
+    logMsg('裂缝怪物已被击败，下一只将在 ' + Math.ceil(left / 1000) + ' 秒后刷新。', 'warn');
+    return;
+  }
+
+  const tier = riftMonTierClamp(m.tier);
+  planetInterrupt();
+  cancelCombat();
+
+  const c = state.skills.combat;
+  c.riftMon = tier;
+  c.monster = '__riftmon__';     /* 占位：让脱战回血等被动把它视为战斗中 */
+  c.dungeon = null;
+  c.floor = 0;
+  c.rift = -1;
+  c.elem = -1;
+  c.elemRw = null;
+  c.target = riftMonEnemy(tier);
+  c.playerTimer = 0;
+  c.monsterTimer = 0;
+  c.respawn = 0;
+
+  state.action = { skill: 'riftmon', id: 'hunt' };
+  state.actionTimer = 0;
+  state.actionCur = 0;
+  state.actionWaiting = false;
+  logMsg('迎战「' + RIFT_MON.NAME + '」（强度 ' + tier + '），击败后解除星球运转封锁并领取奖励。', 'info');
+}
+
+/* 击败：发灵石 + 星砂，标记已击败（留到下一轮刷新），释放动作槽 */
+function riftMonCleared(target) {
+  const m = state.riftMon;
+  const c = state.skills.combat;
+  if (!m || !m.alive) { stopAction(true); return; }
+  const rw = riftMonReward(c.riftMon >= 0 ? c.riftMon : m.tier);
+  state.gold += rw.gold;
+  state.stardust = (state.stardust || 0) + rw.star;
+  m.alive = false;
+  logMsg('击败「' + RIFT_MON.NAME + '」（强度 ' + rw.tier + '）！灵石 +' + rw.gold + '、星砂 +' + rw.star +
+    '；下一只将在约 ' + Math.max(1, Math.ceil((m.next - Date.now()) / 60000)) + ' 分钟后刷新，期间可正常开启星球运转。', 'good');
+  stopAction(true);
+}
+
 function spawnTarget() {
   const c = state.skills.combat;
   const m = findMonster(c.monster);
@@ -994,16 +1431,22 @@ function spawnTarget() {
 
 function combatTick(dt) {
   const c = state.skills.combat;
-  /* 动作槽不在战斗/锁妖塔 → 战斗必须停止（防止切换技能后仍在后台打怪） */
+  /* 动作槽不在战斗/锁妖塔/异界裂缝/属性裂缝/裂缝怪物 → 战斗必须停止（防止切换技能后仍在后台打怪） */
   const towerMode = !!(state.action && state.action.skill === 'tower');
-  if (!state.action || (state.action.skill !== 'combat' && !towerMode)) {
-    if (c.monster || c.target || c.dungeon || c.tower) cancelCombat();
+  const riftMode = !!(state.action && state.action.skill === 'rift');
+  const elemMode = !!(state.action && state.action.skill === 'elem');
+  const riftMonMode = !!(state.action && state.action.skill === 'riftmon');
+  if (!state.action || (state.action.skill !== 'combat' && !towerMode && !riftMode && !elemMode && !riftMonMode)) {
+    if (c.monster || c.target || c.dungeon || c.tower || c.rift >= 0 || c.elem >= 0 || c.riftMon >= 0) cancelCombat();
     return;
   }
 
-  /* 锁妖塔：一层一只，不刷新、不循环；目标死亡后等待结算/领奖 */
-  if (towerMode) {
-    if (!c.tower) { c.target = null; return; }
+  /* 锁妖塔 / 异界裂缝 / 属性裂缝 / 裂缝怪物：一只目标，不刷新、不循环；目标死亡后等待结算 */
+  if (towerMode || riftMode || elemMode || riftMonMode) {
+    if (towerMode && !c.tower) { c.target = null; return; }
+    if (riftMode && c.rift < 0) { c.target = null; return; }
+    if (elemMode && c.elem < 0) { c.target = null; return; }
+    if (riftMonMode && c.riftMon < 0) { c.target = null; return; }
     if (!c.target || c.target.hp <= 0) { c.target = null; return; }
   } else {
     if (!c.monster) { c.target = null; return; }
@@ -1049,6 +1492,21 @@ function combatTick(dt) {
 
 function onMonsterKilled(target) {
   const c = state.skills.combat;
+  /* 裂缝怪物：击败即结算灵石 + 星砂，并标记已击败（留到下一轮刷新） */
+  if (state.action && state.action.skill === 'riftmon') {
+    riftMonCleared(target);
+    return;
+  }
+  /* 五行属性裂缝：击杀即修复，发对应材料并释放动作槽 */
+  if (state.action && state.action.skill === 'elem') {
+    elemRiftCleared(target);
+    return;
+  }
+  /* 异界裂缝：击杀即修复，立刻发奖并释放动作槽 */
+  if (state.action && state.action.skill === 'rift') {
+    riftCleared(c.rift, target);
+    return;
+  }
   /* 锁妖塔：击杀只解锁「可领奖」，实际奖励在玩家点击领取时结算 */
   if (c.tower || (state.action && state.action.skill === 'tower')) {
     towerCleared(target.tower || c.tower, target);
@@ -1107,8 +1565,25 @@ function onPlayerDeath(target) {
   state.hp = 1;
   state.stats.deaths += 1;
   const towerFloor = c.tower;
+  const riftTier = (state.action && state.action.skill === 'rift') ? c.rift : -1;
+  const elemIdx = (state.action && state.action.skill === 'elem') ? c.elem : -1;
+  const riftMonOn = (state.action && state.action.skill === 'riftmon') ? c.riftMon : -1;
   const dg = c.dungeon ? findDungeon(c.dungeon) : null;
-  if (towerFloor) {
+  if (riftMonOn >= 0) {
+    /* 裂缝怪物阵亡：怪物不消耗、强度不降，可回血后原地重试 */
+    logMsg('「' + RIFT_MON.NAME + '」挑战失败，怪物未被消耗、强度不降；' +
+      '疗伤后可原地重试（不惩罚）。', 'bad');
+  } else if (riftTier >= 0) {
+    /* 裂缝阵亡只判本次修复失败：未修复状态保留，不扣穿越次数，可回血后原地重试 */
+    logMsg('在异界裂缝第 ' + riftTier + ' 层被「' + target.name + '」击退，裂缝仍未修复；' +
+      '疗伤后可原地重试（不惩罚、不清零穿越次数）。', 'bad');
+  } else if (elemIdx >= 0) {
+    /* 属性裂缝阵亡：裂缝不消耗、不降级，位置保留，可回血后原地重试 */
+    const slot = state.elemRifts && state.elemRifts.slots ? state.elemRifts.slots[elemIdx] : null;
+    const el = slot ? findElemRift(slot.elem) : null;
+    logMsg('「' + (el ? el.name : '') + '·时空裂缝」修复失败，裂缝未被消耗、不降级；' +
+      '疗伤后可原地重试（不惩罚）。', 'bad');
+  } else if (towerFloor) {
     /* 阵亡只判本次挑战失败：层数不降、不产生 pending，可直接重试同一层 */
     state.tower.failed = true;
     logMsg('在锁妖塔第 ' + towerFloor + ' 层被「' + target.name + '」击退，本次挑战失败；' +
@@ -1118,8 +1593,8 @@ function onPlayerDeath(target) {
   } else {
     logMsg('你被「' + target.name + '」击退，重伤返回洞府。先疗伤或备好食物再战。', 'bad');
   }
-  /* 战败自动退出战斗动作槽并疗伤；秘境 / 锁妖塔同时判定为失败 */
-  if (state.action && (state.action.skill === 'combat' || state.action.skill === 'tower')) stopAction(true);
+  /* 战败自动退出战斗动作槽并疗伤；秘境 / 锁妖塔 / 异界裂缝 / 属性裂缝 / 裂缝怪物同时判定为失败 */
+  if (state.action && (state.action.skill === 'combat' || state.action.skill === 'tower' || state.action.skill === 'rift' || state.action.skill === 'elem' || state.action.skill === 'riftmon')) stopAction(true);
   cancelCombat();
 }
 
@@ -1364,6 +1839,10 @@ function cancelCombat() {
   c.dungeon = null;
   c.floor = 0;
   c.tower = 0;          /* 锁妖塔挑战同样属于战斗瞬态，一并清空 */
+  c.rift = -1;          /* 异界裂缝 -1 表示不在裂缝内 */
+  c.elem = -1;          /* 五行属性裂缝：槽位下标，-1 表示不在裂缝内 */
+  c.elemRw = null;      /* 属性裂缝的奖励快照（瞬态） */
+  c.riftMon = -1;       /* 裂缝怪物：挑战中的强度，-1 表示不在战斗 */
   c.playerTimer = 0;
   c.monsterTimer = 0;
   c.respawn = 0;
@@ -1397,8 +1876,8 @@ function startCombat(monsterId) {
   }
 
   const c = state.skills.combat;
-  /* 从锁妖塔切到普通战斗：塔的战况是瞬态，直接清空，不残留塔内目标 */
-  if (c.tower || (state.action && state.action.skill === 'tower')) cancelCombat();
+  /* 从锁妖塔 / 异界裂缝 / 属性裂缝 / 裂缝怪物切到普通战斗：战况是瞬态，直接清空，不残留目标 */
+  if (c.tower || c.rift >= 0 || c.elem >= 0 || c.riftMon >= 0 || (state.action && (state.action.skill === 'tower' || state.action.skill === 'rift' || state.action.skill === 'elem' || state.action.skill === 'riftmon'))) cancelCombat();
   if (state.action && state.action.skill === 'combat' && state.action.id !== monsterId) cancelCombat();
   c.monster = monsterId;
   c.respawn = 0;
@@ -1683,6 +2162,11 @@ function planetCross() {
   const p = state.planet;
   if (!p) return false;
   const n = planetCrossCount() + 1;
+  /* 异界裂缝未修复时禁止穿越；修复后放行，穿越成功立刻生成下一道裂缝 */
+  if (state.rift && state.rift.open) {
+    logMsg('需先修复异界裂缝（第 ' + state.rift.tier + ' 层），修复后才能进行第 ' + n + ' 次穿越。', 'warn');
+    return false;
+  }
   const cost = planetCrossCost(n);
   const need = cost + PLANET.AURA_MIN;
   const aura = isFinite(p.aura) ? Number(p.aura) : 0;
@@ -1692,7 +2176,9 @@ function planetCross() {
   }
   p.aura = Math.max(PLANET.AURA_MIN, aura - cost);
   p.cross = n;
-  logMsg('穿越成功：抵达「' + planetDynastyName(n) + '」，第 ' + n + ' 次穿越，消耗 💧 ' + cost + ' 灵气浓度。', 'good');
+  state.rift = { open: true, tier: n };
+  logMsg('穿越成功：抵达「' + planetDynastyName(n) + '」，第 ' + n + ' 次穿越，消耗 💧 ' + cost +
+    ' 灵气浓度；异界裂缝第 ' + n + ' 层已生成，修复后才能继续穿越。', 'good');
   return true;
 }
 
@@ -1700,6 +2186,13 @@ function planetCross() {
 function planetStart() {
   if (state.stun > 0) { logMsg('眩晕中，还需 ' + Math.ceil(state.stun) + ' 秒才能行动。', 'warn'); return; }
   if (planetRunning()) { planetStop(); return; }
+
+  /* 裂缝怪物未击败 → 禁止开启运转（只拦运转，不拦穿越；穿越仍只看异界裂缝与浓度） */
+  if (riftMonAlive()) {
+    logMsg('「' + RIFT_MON.NAME + '」尚在（强度 ' + riftMonTierClamp(state.riftMon.tier) +
+      '）：需先击败它才能开启星球运转；穿越不受影响。', 'warn');
+    return;
+  }
 
   /* 巡航中浓度只降不升：浓度不足以生成时直接拒绝开启，避免玩家开着空转等一个不会来的恢复 */
   const p = state.planet;
@@ -1898,6 +2391,8 @@ function tick(dt) {
   if (!state) return;
   passiveTick(dt);
   worldTick(dt);
+  elemRiftTick();
+  riftMonTick();
   cycleTick(dt);
   combatTick(dt);
   planetTick(dt);
