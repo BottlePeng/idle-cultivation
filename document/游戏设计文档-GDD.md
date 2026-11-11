@@ -1,6 +1,6 @@
 # 游戏设计文档（GDD）· 穿越星球
 
-> 版本：v5（含入世、太上境、世界洞天）｜ 最后更新：随代码同步 ｜ 对应代码：`js/data.js` `js/state.js` `js/engine.js` `js/ui.js` `js/main.js`
+> 版本：v7（含入世、太上境、世界洞天、异界裂缝、五行属性裂缝、裂缝怪物）｜ 最后更新：随代码同步 ｜ 对应代码：`js/data.js` `js/state.js` `js/engine.js` `js/ui.js` `js/main.js`
 
 ---
 
@@ -65,6 +65,9 @@
 | 15 | 世界 · 洞天 | 8 种地形 × 共 100 种建筑营造、被动产出、人口效率、17 条全局加成通道（修为/速度/掉落/精通等），参考梅尔沃城镇 | `TERRAINS/BUILDINGS/state.world` | [世界洞天](./机制-世界洞天.md) |
 | 16 | 穿越星球 | 占用动作槽的主动小游戏：生成灵石/星砂/材料，吸收耗灵力、生成耗灵气浓度；穿越只消耗灵气浓度（首次 10000），朝代清 → … → 夏 → 古N纪 | `PLANET/DYNASTY_NAMES/state.planet` | [穿越星球](./机制-穿越星球.md) |
 | 17 | 锁妖塔 | 无尽层单场战斗：层数幂律成长、击败后先领奖再进层、每 5 层里程碑；层数永不重置，阵亡不降层；占用动作槽且无离线收益 | `TOWER/state.tower` | [锁妖塔](./机制-锁妖塔.md) |
+| 18 | 异界裂缝 | 穿越星球的门槛战：新档自带、每次穿越成功生成下一道；未修复时禁止穿越；击败即修复并给少量奖励；阵亡不惩罚；占用动作槽 | `RIFT/state.rift` | [异界裂缝](./机制-异界裂缝.md) |
+| 19 | 五行属性裂缝 | 穿越星球界面的常驻战斗：同时 3 道随机五行裂缝、每 3 小时真实时间整轮刷新；修复后留空到下一轮；按对应工作等级发材料；难度随工作等级与穿越次数上升；不参与穿越门槛但占用动作槽 | `ELEM_RIFT/state.elemRifts` | [五行属性裂缝](./机制-五行属性裂缝.md) |
+| 20 | 裂缝怪物 | 穿越星球界面的常驻单体强敌：同时 1 只、每 24 小时真实时间刷新；存在时锁「星球运转」但不锁穿越；强度只看穿越次数且各项低于异界裂缝；击败给灵石 + 星砂；阵亡不惩罚；占用动作槽 | `RIFT_MON/state.riftMon` | [裂缝怪物](./机制-裂缝怪物.md) |
 
 ---
 
@@ -171,6 +174,78 @@
 - 击败 → `pending`；领取 → 发奖并 `current+1`；阵亡 → 层数不降、可重试；`current/best` 永久保存。
 - 挑战占用单一动作槽，开始会中断星球 / 战斗 / 秘境，切换其它动作会中断挑战；塔战不参与离线结算（详见 [锁妖塔](./机制-锁妖塔.md)）。
 
+### 4.6 异界裂缝（`RIFT`）
+
+| 键 | 值 | 含义 |
+| --- | --- | --- |
+| `MAX_TIER` | 10000 | 裂缝层级上限（与穿越次数上限一致） |
+| `HP_BASE` / `HP_LIN` / `HP_POW` / `HP_EXP` | 34 / 0.25 / 0.008 / 1.7 | 生命 = `round(34×(1+0.25t+0.008×t^1.7))` |
+| `ATK_MIN` / `ATK_MAX` | 2 / 4 | 攻击基础区间 |
+| `ATK_LIN` / `ATK_POW` / `ATK_EXP` | 0.15 / 0.004 / 1.5 | 攻击 = `2~4×(1+0.15t+0.004×t^1.5)` |
+| `HIT_BASE` / `HIT_LIN` | 8 / 0.9 | 命中 = `8+0.9t` |
+| `EV_BASE` / `EV_LIN` | 5 / 0.6 | 闪避 = `5+0.6t` |
+| `DR_BASE` / `DR_LIN` / `DR_CAP` | 0.01 / 0.0012 / 0.30 | 减伤 = `min(30%, 1%+0.12%t)` |
+| `INTERVAL_*` | 3.2 / 0.0015 / 2.0 | 出手间隔 = `max(2.0s, 3.2-0.0015t)` |
+| `HIT_CAP` | 0.18 | 单次伤害 ≤ 玩家当前生命上限的 18%，防一刀秒 |
+| `GOLD_BASE` / `GOLD_POW` | 10 / 1.15 | 灵石 = `round(10×(t+1)^1.15)` × 灵石加成 |
+| `STAR_BASE` / `STAR_POW` | 1 / 0.7 | 星砂 = `max(1, round(1×(t+1)^0.7))` |
+| `XP_BASE` / `XP_POW` | 16 / 1.55 | 战斗经验 = `round(16×(t+1)^1.55)` |
+
+- `t = tier`，即生成裂缝时的穿越次数；新档 `tier=0`，每次穿越成功后生成 `tier=新穿越次数` 的裂缝。
+- 战斗复用现有命中 / 闪避 / 减伤公式与 `combatTick`，仅用 `state.skills.combat.rift` 标记裂缝目标；`cancelCombat()` 会清空该标记。
+- 击败即修复：立刻发奖、`open=false`、释放动作槽；阵亡只退出战斗，`open/tier/穿越次数` 全部保留，可回血重试。
+- 占用单一动作槽，开始会中断星球 / 战斗 / 锁妖塔，切换其它动作会中断修复；裂缝战斗不参与离线结算（详见 [异界裂缝](./机制-异界裂缝.md)）。
+
+### 4.7 五行属性裂缝（`ELEM_RIFT`）
+
+| 键 | 值 | 含义 |
+| --- | --- | --- |
+| `REFRESH_MS` | 3h | 整轮刷新间隔（真实时间 `Date.now`，覆盖式，不做离线补刷） |
+| `SLOTS` | 3 | 同时存在的裂缝数量（允许属性重复） |
+| `MAX_TIER` | 10000 | 强度层级上限 |
+| `CROSS_W` / `LVL_W` | 2.2 / 0.4 | 强度快照 `t = round(cross×2.2 + (对应工作等级-1)×0.4)` |
+| `HP_BASE` / `HP_LIN` / `HP_POW` / `HP_EXP` | 30 / 0.26 / 0.007 / 1.6 | 生命 = `round(30×(1+0.26t+0.007×t^1.6))` |
+| `ATK_MIN` / `ATK_MAX` | 2 / 4 | 攻击基础区间 |
+| `ATK_LIN` / `ATK_POW` / `ATK_EXP` | 0.14 / 0.003 / 1.45 | 攻击 = `2~4×(1+0.14t+0.003×t^1.45)` |
+| `HIT_BASE` / `HIT_LIN` | 7 / 0.9 | 命中 = `7+0.9t` |
+| `EV_BASE` / `EV_LIN` | 4 / 0.55 | 闪避 = `4+0.55t` |
+| `DR_BASE` / `DR_LIN` / `DR_CAP` | 0.01 / 0.001 / 0.30 | 减伤 = `min(30%, 1%+0.1%t)` |
+| `INTERVAL_*` | 3.0 / 0.0012 / 2.0 | 出手间隔 = `max(2.0s, 3.0-0.0012t)` |
+| `HIT_CAP` | 0.16 | 单次伤害 ≤ 玩家当前生命上限的 16%，防一刀秒 |
+| `QTY_LVL_STEP` / `QTY_MAX` | 20 / 5 | 奖励数量 = `clamp(floor(等级/20)+1, 1, 5)` |
+| `ELEMENTS` | 5 项 | 金 / 木 / 水 / 火 / 土：`crafting` / `woodcutting` / `fishing` / `alchemy` / `formation` |
+
+- `t` 为**生成时的强度快照**（工作等级 × 穿越次数），落盘后不随等级实时变化，避免边打边涨；`MAX_TIER` 收敛极端存档。
+- 图标记 `🔶 🌿 💧 🔥 🏔️`（Unicode 6.0~7.0），避开旧 `WUXING` 中 4.1/5.2 的图标，保证 Win10 字体正常显示。
+- 奖励按属性取对应工作「当前等级可产出的最高档」物品（金取正规熔炼配方的矿石输入，不取锭；土取观星所得的星砂），数量 1~5 件随等级提升；无可用物品时退化到该属性最低档。
+- 刷新入口在穿越星球主界面，3 张卡 + 下一次刷新倒计时；修复后该位置留空（`fixed=true`）直到下一轮整轮刷新；`action.skill === 'elem'` 时推迟刷新，避免战斗中裂缝突然消失。
+- 不参与穿越门槛，`rift.open` 与穿越按钮完全不受影响；但战斗占用全局动作槽，与星球 / 普通战斗 / 锁妖塔 / 异界裂缝互斥；阵亡不消耗、不降级，可回血重试；读档不恢复进行中的战斗（详见 [五行属性裂缝](./机制-五行属性裂缝.md)）。
+
+### 4.8 裂缝怪物（`RIFT_MON`）
+
+| 键 | 值 | 含义 |
+| --- | --- | --- |
+| `REFRESH_MS` | 24h | 刷新间隔（真实时间 `Date.now`；覆盖式，不补刷） |
+| `MAX_TIER` | 10000 | 强度上限 |
+| `HP_BASE` / `HP_LIN` / `HP_POW` / `HP_EXP` | 28 / 0.20 / 0.006 / 1.65 | 生命 = `round(28×(1+0.2t+0.006×t^1.65))` |
+| `ATK_MIN` / `ATK_MAX` | 2 / 3 | 攻击基础区间（异界为 2~4） |
+| `ATK_LIN` / `ATK_POW` / `ATK_EXP` | 0.10 / 0.003 / 1.45 | 攻击 = `2~3×(1+0.1t+0.003×t^1.45)` |
+| `HIT_BASE` / `HIT_LIN` | 6 / 0.7 | 命中 = `6+0.7t` |
+| `EV_BASE` / `EV_LIN` | 4 / 0.45 | 闪避 = `4+0.45t` |
+| `DR_BASE` / `DR_LIN` / `DR_CAP` | 0.008 / 0.0008 / 0.24 | 减伤 = `min(24%, 0.8%+0.08%t)` |
+| `INTERVAL_*` | 3.2 / 0.0015 / 2.0 | 出手间隔与异界裂缝完全相同（不更快） |
+| `HIT_CAP` | 0.14 | 单次伤害 ≤ 玩家当前生命上限的 14% |
+| `GOLD_BASE` / `GOLD_POW` | 12 / 1.05 | 灵石 = `round(12×(t+1)^1.05)` × 加成 |
+| `STAR_BASE` / `STAR_POW` | 1.2 / 0.6 | 星砂 = `max(1, round(1.2×(t+1)^0.6))` |
+
+- `t` = **生成时的穿越次数快照**；同 t 下生命 / 攻击上下限 / 命中 / 闪避 / 减伤 / 出手间隔均不高于异界裂缝（对比表见独立文档）。
+- 同时只存在 1 只；击败后 `alive=false` 保留到原定刷新时间，不立刻重生；离线超过 24 小时只换一轮。
+- 存在时 `planetStart()` 拒绝开启运转（UI 按钮置灰 + 提示「需先击败裂缝怪物」），但**不影响穿越**、不影响 `rift` 与 `elemRifts`。
+- 刷新到点时若正在运转：延后到运转停止后再生成（不打断已投入的巡航；`next` 保持过期，停止后立刻生成并重置 24h）。
+- 击败奖励灵石 + 星砂，起点与锁妖塔第 1 层持平、之后明显低于同层塔；阵亡不消耗怪物、不降强度，回血可重试。
+- 战斗占用全局动作槽：`action.skill='riftmon'`、`combat.riftMon=tier`；与星球 / 普通战斗 / 秘境 / 锁妖塔 / 异界裂缝 / 五行属性裂缝互斥，切换动作时 `cancelCombat()` 清空全部战况。
+- 图标 `👹`（Unicode 6.0）；详情页与倒计时走 `data-rm` / `data-pg` 增量刷新，不整树重建。
+
 ---
 
 ## 5. 数据结构与存档
@@ -186,7 +261,7 @@ state
 ├─ equip{ slot:id } 六部位装备
 ├─ insight          悟性（每点 修炼速度+1% / 突破成功率+1%）
 ├─ skills{ id:{lvl,xp} }   各技能等级与经验
-│   └─ combat 额外: monster/target/playerTimer/monsterTimer/respawn/tower
+│   └─ combat 额外: monster/target/playerTimer/monsterTimer/respawn/tower/rift/elem/elemRw/riftMon
 │   └─ cultivation 额外: capped（瓶颈提示标记）
 ├─ mastery{ id:{lvl,xp} }  精通表
 ├─ formations{ id:{levels:[]} }  阵纹等级
@@ -195,6 +270,9 @@ state
 ├─ world{ buildings,pop,res }  洞天：建筑等级 / 人口 / 粮食木材石料存量
 ├─ planet{ aura,auraVer,cross }  穿越星球：灵气浓度 / 迁移标记 / 穿越次数（open/items/boost/session 为瞬态）
 ├─ tower{ current,best,pending }  锁妖塔：当前层 / 最高已通关层 / 待领奖层（false 为无）
+├─ rift{ open,tier }  异界裂缝：是否存在未修复裂缝 / 层级（生成时的穿越次数）
+├─ elemRifts{ next,slots[] }  五行属性裂缝：下次整轮刷新时间戳 / 3 个 {elem,tier,fixed}
+├─ riftMon{ alive,born,next,tier }  裂缝怪物：是否存在未击败 / 生成时间 / 下次刷新 / 生成时穿越次数
 ├─ action{skill,id} / actionTimer / actionWaiting   单一动作槽
 ├─ regenTimer / taskTimer   被动与任务计时
 ├─ tasks{ id:{done,claimed} }   任务进度
@@ -217,6 +295,9 @@ state
 - `planet` 只恢复 `aura` / `auraVer` / `cross`：先恢复 `cross` 再按新公式算上限；旧档（无 `auraVer`）给新上限的 30%，其余存档把 `aura` 钳制到 `[1, 当前上限]`，`cross` 取整并钳制到 `[0,10000]`；飞行队列等瞬态一律重置，且不恢复星球动作（读档保持未开启）。
 - `tasks` 按 `TASKS` 迁移；`ui.active` 校验白名单（含 `world` / `planet` / `tower`）。
 - `tower` 无字段时兜底 `current=1 / best=1 / pending=false`；`current/best` 夹到 `[1, TOWER.MAX_FLOOR]`，`pending` 必须等于 `current` 才恢复，否则置 `false`；`best` 收敛为至少 `current-1`。
+- `rift` 无字段时兜底 `open=true / tier=min(planet.cross, max(0, 战斗等级-1))`；有字段时 `tier` 取整并夹到 `[0, RIFT.MAX_TIER]` 且不超过 `planet.cross`。进行中的裂缝战斗（`action.skill='rift'` / `combat.rift>=0`）是瞬态，读档清空，但 `open/tier` 保留。
+- `elemRifts` 无字段（旧档）时按当前时间立刻生成一轮 3 道；有字段时只恢复合法五行 id 的槽位，`tier` 夹到 `[0, MAX_TIER]`、`fixed` 布尔化，槽位不足 3 个用随机属性补齐；`next` 缺失/非法或已过期（离线超过 3 小时）则整轮重掷并重置为 `now + 3h`（不做多次补偿刷）。进行中的属性裂缝战斗（`action.skill='elem'` / `combat.elem>=0`）不恢复，`fixed` 状态保留。
+- `riftMon` 无字段（旧档）时立即生成一只，`tier = planet.cross`、`next = now + 24h`；有字段时恢复 `alive/born/next/tier`（`tier` 夹到 `[0, MAX_TIER]`），`next` 已过期（离线超过 24 小时）则换一只新的并重置 24h（只换一轮，不补刷）；进行中的裂缝怪物战斗（`action.skill='riftmon'` / `combat.riftMon>=0`）不恢复，`alive` 状态保留。
 
 > **原则**：任何新引入的配置表，都要在 `mergeState` 中做裁剪与钳制，保证旧存档不崩。
 
