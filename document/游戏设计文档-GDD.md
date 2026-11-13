@@ -1,6 +1,6 @@
 # 游戏设计文档（GDD）· 穿越星球
 
-> 版本：v7（含入世、太上境、世界洞天、异界裂缝、五行属性裂缝、裂缝怪物）｜ 最后更新：随代码同步 ｜ 对应代码：`js/data.js` `js/state.js` `js/engine.js` `js/ui.js` `js/main.js`
+> 版本：v9（含入世、太上境、世界洞天、异界裂缝、五行属性裂缝、裂缝怪物、洞天朝代、设置与测试控制台）｜ 最后更新：随代码同步 ｜ 对应代码：`js/data.js` `js/state.js` `js/engine.js` `js/ui.js` `js/main.js`
 
 ---
 
@@ -68,6 +68,8 @@
 | 18 | 异界裂缝 | 穿越星球的门槛战：新档自带、每次穿越成功生成下一道；未修复时禁止穿越；击败即修复并给少量奖励；阵亡不惩罚；占用动作槽 | `RIFT/state.rift` | [异界裂缝](./机制-异界裂缝.md) |
 | 19 | 五行属性裂缝 | 穿越星球界面的常驻战斗：同时 3 道随机五行裂缝、每 3 小时真实时间整轮刷新；修复后留空到下一轮；按对应工作等级发材料；难度随工作等级与穿越次数上升；不参与穿越门槛但占用动作槽 | `ELEM_RIFT/state.elemRifts` | [五行属性裂缝](./机制-五行属性裂缝.md) |
 | 20 | 裂缝怪物 | 穿越星球界面的常驻单体强敌：同时 1 只、每 24 小时真实时间刷新；存在时锁「星球运转」但不锁穿越；强度只看穿越次数且各项低于异界裂缝；击败给灵石 + 星砂；阵亡不惩罚；占用动作槽 | `RIFT_MON/state.riftMon` | [裂缝怪物](./机制-裂缝怪物.md) |
+| 21 | 洞天 · 朝代 | 消耗「生命之种」召唤不同年代的生灵；每 10 分钟结算人口与资源；上限靠合成同名朝代提升；朝代位 = 小世界等级 × 5（元婴期可建，首级只收灵石）；召唤/合成不占动作槽，结算被动推进且离线同样生效 | `DYNASTY/state.world.dynasties` | [朝代系统](./机制-朝代系统.md) |
+| 22 | 设置与测试控制台 | 设置页为后续设置项落位骨架；兑换码集中在 `REDEEM`（只存哈希）；兑换成功后本次运行解锁测试控制台（资源/境界/技能/建筑/星球/塔/裂缝/时间快进）；解锁为会话级，不写入存档 | `REDEEM/DEV`（均不入存档） | [设置与测试控制台](./机制-设置与测试控制台.md) |
 
 ---
 
@@ -246,6 +248,47 @@
 - 战斗占用全局动作槽：`action.skill='riftmon'`、`combat.riftMon=tier`；与星球 / 普通战斗 / 秘境 / 锁妖塔 / 异界裂缝 / 五行属性裂缝互斥，切换动作时 `cancelCombat()` 清空全部战况。
 - 图标 `👹`（Unicode 6.0）；详情页与倒计时走 `data-rm` / `data-pg` 增量刷新，不整树重建。
 
+### 4.9 洞天 · 朝代（`DYNASTY`）
+
+| 键 | 值 | 含义 |
+| --- | --- | --- |
+| `SLOTS_PER_LVL` | 5 | 小世界每级朝代位 |
+| `REALM_REQ` | 22 | 小世界建造门槛（第 22 阶 = 元婴期初期） |
+| `START_POP` / `BASE_CAP` | 3 / 12 | 新召唤朝代的人口 / 上限 |
+| `GROWTH_RATE` / `GROWTH_MIN` | 6% / 1 | 每次结算人口向上限逼近，至少 +1 |
+| `TICK_SEC` | 600 | 结算周期（10 分钟） |
+| `MERGE_SEED` / `MERGE_MIN_POP` | 4 / 2 | 合成消耗 / 被合者最低人口 |
+| `MERGE_POP_RATE` / `MERGE_CAP_RATE` | 0.5 / 0.5 | 人口与上限转移比例 |
+| `POP_HARD_CAP` | 5000 | 单朝代硬顶 |
+| `OUT_FOOD_PER_POP` | 3 | 每次结算每人口粮食 |
+| `SUMMON_SEED` | 10 | 召唤消耗 |
+| `SEED_PLANET_P` | 0.02 | 星球每吸收 1 件的掉率 |
+| `SEED_ELEM_P` / `SEED_ELEM_QTY` | 0.5 / 2 | 五行属性裂缝掉率 / 数量 |
+| `SEED_RIFT_BASE` / `SEED_RIFT_TIER_STEP` | 3 / 10 | 异界裂缝必掉 `3+floor(t/10)` |
+| `SEED_MON_BASE` / `SEED_MON_TIER_STEP` | 5 / 5 | 裂缝怪物必掉 `5+floor(t/5)` |
+| `ERA_START_MAX` / `ERA_MAX` | 1 / 50 | 年代下标范围（0 次穿越 → 清/明） |
+
+- 新资源 `state.seed`（生命之种）；召唤/合成为瞬时操作，**不占用动作槽**（与洞天营造一致）。
+- 朝代位 = `小世界等级 × 5`；小世界位于秘境地形、建设度门槛 1、**境界门槛 22（元婴期）**，Lv.1 只收 6000 灵石，Lv.2 起 `costLv1`（9000 灵石 + 400 木 + 400 石）× `1.18^(n-1)`。
+- 每个朝代是独立人口池 `{dyn, pop, cap}`；`dyn` 为年代下标，名称走 `planetDynastyName()`（0 清朝 … 10 夏朝，11 起古一纪）。
+- 结算（`dynastyTick` → `settleDynastyOnce`）：每 600s 结算每个朝代的 `pop × 3` 粮食 + `pop × per` 年代主资源（木/石/灵石/星砂），随后人口 `+max(1, pop×6%)` 封顶 `cap`；粮食/木/石受 `worldCap` 限制，灵石/星砂直接入全局。
+- 合成：目标 `pop += 被合者 pop×50%`、`cap += ceil(被合者 cap×50%)`，被合者失去这部分但**不消失、不空出位**。
+- 结算走主循环 `tick(dt)`，离线 `simulateOffline()` 逐 0.5s 调用同一逻辑，受 `OFFLINE_CAP_H = 12h` 约束（最多 72 次），不额外补刷。
+- UI：洞天页签「🏯 洞天营造 / 🕰️ 朝代」，朝代页走 `data-dyn` 增量刷新，结算不重建列表。
+
+### 4.10 设置与测试控制台
+
+| 项 | 说明 |
+| --- | --- |
+| 设置入口 | 侧栏「🔧 设置」（`ui.active = 'settings'`，进入白名单；控制台页 `devtools` 不在白名单） |
+| 兑换码配置 | `js/data.js` 的 `REDEEM.CODES`，每项 `{ hash, feature, label }`；`devCodeHash()` 为 FNV-1a 32 位，只存哈希 |
+| 解锁状态 | `js/engine.js` 的 `DEV = { unlocked, msg, msgType }`，会话级，**不写入 state** |
+| 控制台能力 | 核心资源、洞天资源、境界/修为、技能/精通、建筑（含引力塔）、星球浓度/穿越、锁妖塔层数、三套裂缝状态、时间快进、立即存档/重载 |
+| 时间快进 | 复用 `simulateOffline(seconds)` → `tick()`，0.5s 步长，受 `OFFLINE_CAP_H = 12` 小时限制 |
+| 渲染 | 控制台骨架静态，当前值仅在进入页面或执行操作后由 `updateDev()` 填一次（`_devDirty`），不随 `renderAll` 周期写 DOM |
+| 存档 | 无新增字段；测试产生的数值改动走正常 state 字段，会随自动存档落盘 |
+| 图标 | 🔧 / 🔬（均 Unicode 6.0） |
+
 ---
 
 ## 5. 数据结构与存档
@@ -256,6 +299,7 @@
 state
 ├─ version          存档版本
 ├─ gold/spirit/stardust   灵石 / 灵力 / 星砂
+├─ seed             生命之种（洞天朝代召唤 / 合成）
 ├─ hp               当前生命
 ├─ inv{ id:qty }    背包：物品种类 → 数量
 ├─ equip{ slot:id } 六部位装备
@@ -267,7 +311,7 @@ state
 ├─ formations{ id:{levels:[]} }  阵纹等级
 ├─ plots[{seedId,growth,ready}]  灵植地块
 ├─ stun             眩晕剩余秒数（入世被识破，期间无法开始新动作）
-├─ world{ buildings,pop,res }  洞天：建筑等级 / 人口 / 粮食木材石料存量
+├─ world{ buildings,pop,res,dynasties[],dynAccum }  洞天：建筑等级 / 人口 / 粮食木材石料存量 / 朝代人口池 / 距下次结算秒数
 ├─ planet{ aura,auraVer,cross }  穿越星球：灵气浓度 / 迁移标记 / 穿越次数（open/items/boost/session 为瞬态）
 ├─ tower{ current,best,pending }  锁妖塔：当前层 / 最高已通关层 / 待领奖层（false 为无）
 ├─ rift{ open,tier }  异界裂缝：是否存在未修复裂缝 / 层级（生成时的穿越次数）
@@ -293,11 +337,13 @@ state
 - `action` 校验 `findActivity` 存在，否则回落默认。
 - `world` 按 `BUILDINGS` 裁剪建筑等级（等级无上限，原样保留），资源钳制到 `worldCap(建设度)`（上限随建设度增长），人口钳制到当前人口上限。
 - `planet` 只恢复 `aura` / `auraVer` / `cross`：先恢复 `cross` 再按新公式算上限；旧档（无 `auraVer`）给新上限的 30%，其余存档把 `aura` 钳制到 `[1, 当前上限]`，`cross` 取整并钳制到 `[0,10000]`；飞行队列等瞬态一律重置，且不恢复星球动作（读档保持未开启）。
-- `tasks` 按 `TASKS` 迁移；`ui.active` 校验白名单（含 `world` / `planet` / `tower`）。
+- `tasks` 按 `TASKS` 迁移；`ui.active` 校验白名单（含 `world` / `planet` / `tower` / `settings`；`devtools` 刻意不在白名单，读档一律回落）。
 - `tower` 无字段时兜底 `current=1 / best=1 / pending=false`；`current/best` 夹到 `[1, TOWER.MAX_FLOOR]`，`pending` 必须等于 `current` 才恢复，否则置 `false`；`best` 收敛为至少 `current-1`。
 - `rift` 无字段时兜底 `open=true / tier=min(planet.cross, max(0, 战斗等级-1))`；有字段时 `tier` 取整并夹到 `[0, RIFT.MAX_TIER]` 且不超过 `planet.cross`。进行中的裂缝战斗（`action.skill='rift'` / `combat.rift>=0`）是瞬态，读档清空，但 `open/tier` 保留。
 - `elemRifts` 无字段（旧档）时按当前时间立刻生成一轮 3 道；有字段时只恢复合法五行 id 的槽位，`tier` 夹到 `[0, MAX_TIER]`、`fixed` 布尔化，槽位不足 3 个用随机属性补齐；`next` 缺失/非法或已过期（离线超过 3 小时）则整轮重掷并重置为 `now + 3h`（不做多次补偿刷）。进行中的属性裂缝战斗（`action.skill='elem'` / `combat.elem>=0`）不恢复，`fixed` 状态保留。
 - `riftMon` 无字段（旧档）时立即生成一只，`tier = planet.cross`、`next = now + 24h`；有字段时恢复 `alive/born/next/tier`（`tier` 夹到 `[0, MAX_TIER]`），`next` 已过期（离线超过 24 小时）则换一只新的并重置 24h（只换一轮，不补刷）；进行中的裂缝怪物战斗（`action.skill='riftmon'` / `combat.riftMon>=0`）不恢复，`alive` 状态保留。
+- `seed` 缺失按 0，异常夹到 `[0, 1e12]` 整数；`world.dynasties` 缺失按空（不凭空补人口），每条只保留 `dyn ∈ [0, 50]`、`pop/cap ∈ [1, 5000]` 且 `pop ≤ cap` 的记录，超出「小世界等级 × 5」的条目截断；`world.dynAccum` 缺失或非法 / ≥ 600 按 0。
+- 兑换码与测试控制台相关状态（`REDEEM.CODES`、`DEV`）**不进入存档**：`DEV` 是会话级全局对象，刷新即失效；因此无需迁移，也不会因为改档而解锁。
 
 > **原则**：任何新引入的配置表，都要在 `mergeState` 中做裁剪与钳制，保证旧存档不崩。
 
