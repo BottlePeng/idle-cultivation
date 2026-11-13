@@ -22,9 +22,46 @@ function handleClick(e) {
       state.ui.active = el.dataset.skill;
       /* 从侧栏进入穿越星球时回到主视图（裂缝视图内另有返回按钮） */
       if (el.dataset.skill === 'planet') state.ui.planetView = 'main';
+      /* 测试控制台：仅本次运行兑换后可用 */
+      if (el.dataset.skill === 'devtools') {
+        if (!DEV.unlocked) { state.ui.active = 'settings'; break; }
+        _devDirty = true;
+      }
       hideInvPopover();
       /* 星球已改为动作槽行为：仅切面板不启停，由面板按钮控制 */
       break;
+
+    /* 设置：兑换码校验（成功/失败都写回提示，不落存档） */
+    case 'redeem': {
+      const inp = document.querySelector('[data-set-in="code"]');
+      redeemCode(inp ? inp.value : '');
+      if (inp) inp.value = '';
+      renderAll();
+      updateSettingsMsg();
+      return;
+    }
+
+    /* 设置 → 测试控制台 */
+    case 'devopen':
+      if (!DEV.unlocked) { renderAll(); return; }
+      state.ui.active = 'devtools';
+      _devDirty = true;
+      hideInvPopover();
+      break;
+
+    /* 测试控制台：执行一项改动（所有逻辑在 engine.devRun 内复用既有函数） */
+    case 'devact': {
+      const keys = (el.dataset.vals || '').split(',').filter(function (k) { return !!k; });
+      const vals = keys.map(function (k) {
+        const node = document.querySelector('[data-dev-in="' + k + '"]');
+        return node ? node.value : '';
+      });
+      devRun(el.dataset.dev, vals);
+      _devDirty = true;
+      renderAll();
+      updateBars();
+      return;
+    }
 
     /* 穿越星球：点击界面加速（生成与飞行 ×2，仅在运转期间生效） */
     case 'planetboost':
@@ -157,6 +194,31 @@ function handleClick(e) {
     /* 市集 */
     case 'shopcat': state.ui.shopCat = id; break;
     case 'wterrain': setWorldTerrain(id); return;
+    /* 洞天子页面：营造 / 朝代 */
+    case 'wview':
+      state.ui.worldView = (id === 'dynasty') ? 'dynasty' : 'main';
+      state.ui.dynMerge = -1;
+      hideInvPopover();
+      break;
+    /* 朝代：召唤（消耗生命之种，瞬时、不占动作槽） */
+    case 'dynsummon':
+      summonDynasty();
+      renderAll();
+      updateDynastyState();
+      return;
+    /* 朝代：选中合成目标（再点同名朝代的「并入」完成合成） */
+    case 'dynmerge':
+      state.ui.dynMerge = Math.max(0, Math.floor(Number(id) || 0));
+      break;
+    case 'dynmergetarget':
+      mergeDynasty(state.ui.dynMerge, Math.max(0, Math.floor(Number(id) || 0)));
+      state.ui.dynMerge = -1;
+      renderAll();
+      updateDynastyState();
+      return;
+    case 'dynmergecancel':
+      state.ui.dynMerge = -1;
+      break;
     case 'buy':
       buyItem(id, Number(el.dataset.qty) || 1, Number(el.dataset.price) || 0);
       break;

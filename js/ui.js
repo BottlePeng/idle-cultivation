@@ -167,6 +167,10 @@ function renderTop() {
     (state.stardust > 0 || state.skills.formation.lvl > 1
       ? '<div class="res"><span class="rico">💫</span><span class="rval">' + fmtNum(state.stardust) + '</span><span class="rname">星砂</span></div>'
       : '') +
+    /* 生命之种：仅在已获得或已开辟小世界后显示，避免开局顶栏冗余 */
+    (state.seed > 0 || smallWorldLevel() > 0
+      ? '<div class="res"><span class="rico">🌱</span><span class="rval">' + fmtNum(state.seed) + '</span><span class="rname">生命之种</span></div>'
+      : '') +
     '<div class="res"><span class="rico">' + r.realmIcon + '</span><span class="rval">' + r.full + '</span><span class="rname">境界</span></div>' +
     '<div class="res"><span class="rico">⚔️</span><span class="rval">' + st.atkMin + '~' + st.atkMax + '</span><span class="rname">伤害</span></div>' +
     '<div class="res"><span class="rico">🎯</span><span class="rval">' + st.hit + '</span><span class="rname">命中</span></div>' +
@@ -292,6 +296,26 @@ function renderSidebar() {
     '<span class="sinfo"><span class="sname">信徒</span><br>' +
     '<span class="slvl">' + dInfo + '</span></span>' +
     '</button>';
+
+  /* 设置（兑换码 + 后续设置落位） */
+  const onSet = state.ui.active === 'settings' ? ' on' : '';
+  html +=
+    '<button class="skillbtn setbtn' + onSet + '" data-act="select" data-skill="settings">' +
+    '<span class="sico">🔧</span>' +
+    '<span class="sinfo"><span class="sname">设置</span><br>' +
+    '<span class="slvl">兑换码 · 通用</span></span>' +
+    '</button>';
+
+  /* 测试控制台：仅本次运行兑换成功后出现（DEV 为会话级，不落存档） */
+  if (DEV.unlocked) {
+    const onDev = state.ui.active === 'devtools' ? ' on' : '';
+    html +=
+      '<button class="skillbtn devbtn' + onDev + '" data-act="select" data-skill="devtools">' +
+      '<span class="sico">🔬</span>' +
+      '<span class="sinfo"><span class="sname">测试控制台</span><br>' +
+      '<span class="slvl">仅本次运行有效</span></span>' +
+      '</button>';
+  }
 
   setHTML('#sidebar', html);
 }
@@ -1638,6 +1662,9 @@ function buildingEffect(b, lvl) {
     return '信徒仓库 +' + DISCIPLE.STORE_PER_LVL + '/级 · 当前 ' + cap + ' 位' +
       (tier > 0 ? (' · 可招至 ' + DISCIPLE_TIERS[tier].name) : '');
   }
+  if (b.special === 'dynasty') {
+    return '朝代位 +' + DYNASTY.SLOTS_PER_LVL + '/级 · 当前 ' + (lvl * DYNASTY.SLOTS_PER_LVL) + ' 位';
+  }
   if (b.out) {
     const lab = { food: '🌾 粮食', wood: '🌲 木材', stone: '⛰️ 石料', gold: '💠 灵石', spirit: '🌀 灵力', stardust: '🌠 星砂' };
     const keys = Object.keys(b.out);
@@ -1688,7 +1715,15 @@ function renderWorld() {
   const wl = worldLevel();
   const sel = currentTerrain();
 
-  let html = '<div class="sdbar"><span class="sdico">🏯</span>' +
+  /* 子页面切换：洞天营造 / 朝代。朝代页单独渲染，避免建筑列表与朝代卡片互相重建 */
+  const tabs = '<div class="wtabs">' +
+    '<button class="chip' + (state.ui.worldView === 'dynasty' ? '' : ' on') + '" data-act="wview" data-id="main">🏯 洞天营造</button>' +
+    '<button class="chip' + (state.ui.worldView === 'dynasty' ? ' on' : '') + '" data-act="wview" data-id="dynasty">🕰️ 朝代 <b>' +
+    w.dynasties.length + '</b>/' + dynastySlots() + '</button>' +
+    '</div>';
+  if (state.ui.worldView === 'dynasty') return tabs + renderWorldDynasty();
+
+  let html = tabs + '<div class="sdbar"><span class="sdico">🏯</span>' +
     '<span class="sdname">洞天建设度</span><b class="sdval">' + wl + '</b>' +
     '<span class="sdnote">建筑总等级 ' + (wl - 1) + ' · 营造为瞬时操作，不占用动作槽 · 离线同样产出</span></div>';
 
@@ -1733,7 +1768,8 @@ function renderWorld() {
   html += '<div class="formgrid">';
   list.forEach(function (b) {
     const lvl = w.buildings[b.id] || 0;
-    const locked = wl < b.req;
+    const realmBlocked = !!(b.realmReq && state.skills.cultivation.lvl < b.realmReq);
+    const locked = wl < b.req || realmBlocked;
     const c = worldBuildCost(b, lvl);
     const t = findTerrain(b.terrain);
     html +=
@@ -1742,14 +1778,15 @@ function renderWorld() {
       '<span class="fmain"><span class="fname">' + b.name +
       '<b class="blvl">Lv.' + lvl + '</b></span>' +
       '<span class="fdesc">' + b.desc + '</span></span>' +
-      (locked ? '<span class="etag warn">需建设度 ' + b.req + '</span>' : (sel === 'all' ? '<span class="etag">' + t.icon + ' ' + t.name + '</span>' : '')) +
+      (realmBlocked ? '<span class="etag warn">需' + (realmInfo(b.realmReq).realm || '元婴期') + '</span>'
+        : locked ? '<span class="etag warn">需建设度 ' + b.req + '</span>' : (sel === 'all' ? '<span class="etag">' + t.icon + ' ' + t.name + '</span>' : '')) +
       '</div>' +
       '<div class="fmod">' +
       '<span class="fmname">' + buildingEffect(b, lvl) + '</span>' +
       '<button class="mini bldbtn" data-act="build" data-id="' + b.id + '"' +
       ' data-gold="' + c.gold + '" data-wood="' + c.wood + '" data-stone="' + c.stone + '"' +
       (locked ? ' data-locked="1"' : '') +
-      ' title="' + costTitle(c) + '">' +
+      ' title="' + (realmBlocked ? '需达到 ' + (realmInfo(b.realmReq).realm || '元婴期') : costTitle(c)) + '">' +
       '<span class="cst"><i>💠</i>' + fmtNum(c.gold) + '</span>' +
       (c.wood > 0 ? '<span class="cst"><i>🌲</i>' + fmtNum(c.wood) + '</span>' : '') +
       (c.stone > 0 ? '<span class="cst"><i>⛰️</i>' + fmtNum(c.stone) + '</span>' : '') +
@@ -1825,6 +1862,137 @@ function updateWorldState() {
       w.res.wood < (Number(el.dataset.wood) || 0) ||
       w.res.stone < (Number(el.dataset.stone) || 0);
     if (el.disabled !== no) el.disabled = no;
+  }
+}
+
+/* ==================================================== 洞天 · 朝代（v2.5.0） */
+/* 静态骨架 + data-dyn 占位：人口 / 上限 / 产出 / 倒计时都由 updateDynastyState
+   增量写入，10 分钟一次结算不会触发 #content 整树重建。 */
+function renderWorldDynasty() {
+  const w = state.world;
+  const slots = dynastySlots();
+  const max = dynastyEraMax();
+  const lv = smallWorldLevel();
+  const realmOk = dynastyUnlocked();
+  const canSummon = realmOk && lv > 0 && w.dynasties.length < slots && state.seed >= DYNASTY.SUMMON_SEED;
+  const mergeIdx = Math.floor(Number(state.ui.dynMerge));
+
+  let html = '<div class="dynbar">' +
+    '<span class="dynseed">🌱 生命之种 <b data-dyn="seed">—</b></span>' +
+    '<button class="pbtn' + (canSummon ? '' : ' off') + '" data-act="dynsummon"' + (canSummon ? '' : ' disabled') + '>' +
+    '召唤朝代生灵 · 🌱' + DYNASTY.SUMMON_SEED + '</button>' +
+    '<span class="dyncd">下次结算 <b data-dyn="cd">--:--</b></span>' +
+    '</div>';
+
+  if (!realmOk) {
+    html += '<div class="dynnote warn">尚未达到' + (realmInfo(DYNASTY.REALM_REQ).realm || '元婴期') +
+      '，无法开辟「小世界」（洞天 · 秘境建筑），也无法召唤朝代生灵。</div>';
+  } else if (lv <= 0) {
+    html += '<div class="dynnote warn">尚未营造「🌌 小世界」（洞天 · 秘境 · 需' +
+      (realmInfo(DYNASTY.REALM_REQ).realm || '元婴期') + '）。建成 Lv.1 即可拥有 ' +
+      DYNASTY.SLOTS_PER_LVL + ' 个朝代位。</div>';
+  } else if (w.dynasties.length >= slots) {
+    html += '<div class="dynnote">朝代位已满（' + slots + ' / ' + slots + '）。升级「小世界」每级 +' +
+      DYNASTY.SLOTS_PER_LVL + ' 位；同名朝代可合成提升人口上限。</div>';
+  } else {
+    html += '<div class="dynnote">可召唤年代：' + dynastyName(0) + ' ~ ' + dynastyName(max) +
+      '（穿越次数解锁更古老的年代）· 召唤与合成为瞬时操作，不占用动作槽。</div>';
+  }
+
+  if (mergeIdx >= 0 && w.dynasties[mergeIdx]) {
+    const el = findDynastyEraColor(w.dynasties[mergeIdx].dyn);
+    html += '<div class="dynmergebar" style="--dc:' + el + '">合成目标：<b>' +
+      dynastyName(w.dynasties[mergeIdx].dyn) + '</b>（第 ' + (mergeIdx + 1) +
+      ' 位）· 点击另一个同名朝代卡片的「并入」完成合成，消耗 🌱' + DYNASTY.MERGE_SEED +
+      '<button class="mini" data-act="dynmergecancel">取消</button></div>';
+  }
+
+  html += '<div class="dyncards">';
+  w.dynasties.forEach(function (d, i) {
+    const color = findDynastyEraColor(d.dyn);
+    const r = dynastyEraRes(d.dyn);
+    const resLab = { food: '🌾', wood: '🌲', stone: '⛰️', gold: '💠', stardust: '🌠' }[r.res] || '🌾';
+    const canMergeHere = mergeIdx >= 0 && mergeIdx !== i && w.dynasties[mergeIdx] && w.dynasties[mergeIdx].dyn === d.dyn;
+    html += '<div class="dyncard' + (mergeIdx === i ? ' targeting' : '') + '" style="--dc:' + color + '">' +
+      '<div class="dynhead"><span class="dynico">🕰️</span><b>' + dynastyName(d.dyn) + '</b>' +
+      '<span class="dyntag">第 ' + (i + 1) + ' 位</span></div>' +
+      '<div class="dynrow"><span>人口</span><b data-dyn="pop-' + i + '">—</b><span class="dyncap">/ <i data-dyn="cap-' + i + '">—</i></span></div>' +
+      '<div class="dynbar2"><i data-dyn="bar-' + i + '" style="width:0%"></i></div>' +
+      '<div class="dynout">' + resLab + ' 每次结算 <b data-dyn="out-' + i + '">—</b> · 🌾 <b data-dyn="food-' + i + '">—</b></div>' +
+      '<div class="dynact">' +
+      (mergeIdx >= 0
+        ? (canMergeHere
+          ? '<button class="mini merge" data-act="dynmergetarget" data-id="' + i + '">并入</button>'
+          : '<button class="mini" disabled>同名可并入</button>')
+        : '<button class="mini" data-act="dynmerge" data-id="' + i + '">合成</button>') +
+      '</div></div>';
+  });
+  for (let i = w.dynasties.length; i < slots; i++) {
+    html += '<div class="dyncard empty"><div class="dynhead"><span class="dynico">➕</span><b>空位</b></div>' +
+      '<div class="dynempty">消耗 🌱' + DYNASTY.SUMMON_SEED + ' 召唤一位朝代生灵</div></div>';
+  }
+  html += '</div>';
+
+  html += '<div class="secttl">规则</div>' +
+    '<div class="shopnote">每个朝代是独立人口池：每 ' + (DYNASTY.TICK_SEC / 60) +
+    ' 分钟结算一次，按人口产出粮食与该年代对应的主资源（清朝/明朝 → 木材，元朝/宋朝/三国 → 石料，唐朝/南北朝/两晋/周朝/商朝 → 灵石，夏朝及古纪 → 星砂）。' +
+    '人口每次结算向本朝上限逼近 ' + Math.round(DYNASTY.GROWTH_RATE * 100) + '%（至少 +' + DYNASTY.GROWTH_MIN +
+    '），上限只能靠合成同名朝代提升。合成消耗 🌱' + DYNASTY.MERGE_SEED +
+    '：目标获得被合者 ' + Math.round(DYNASTY.MERGE_POP_RATE * 100) + '% 人口与 ' +
+    Math.round(DYNASTY.MERGE_CAP_RATE * 100) + '% 上限，被合者失去这部分但不会消失。' +
+    '生命之种来自穿越星球吸收（' + Math.round(DYNASTY.SEED_PLANET_P * 100) + '%）、五行属性裂缝（' +
+    Math.round(DYNASTY.SEED_ELEM_P * 100) + '% 掉 ' + DYNASTY.SEED_ELEM_QTY + ' 颗）、异界裂缝与裂缝怪物（必掉）。' +
+    '召唤 / 合成不占用动作槽，结算为后台被动推进，离线同样按同一 tick 结算（受 12 小时离线上限约束）。</div>';
+
+  return html;
+}
+
+/* 年代主题色：按朝代分组给一点视觉区分（纯展示） */
+function findDynastyEraColor(era) {
+  const palette = ['#8ad46a', '#7dd8b8', '#63a9e0', '#7fb0d8', '#d8b26a', '#e0a3c8', '#a98be0', '#e0906a', '#f0c95a', '#c0a878', '#8fd8e0'];
+  const i = Math.max(0, Math.floor(Number(era) || 0));
+  if (i < palette.length) return palette[i];
+  return '#a9c8e0';
+}
+
+/* 朝代页增量刷新：只改文本与宽度，不改结构 */
+function updateDynastyState() {
+  if (!state || state.ui.active !== 'world') return;
+  const c = $('#content');
+  if (!c) return;
+  const w = state.world;
+  if (!w || !Array.isArray(w.dynasties)) return;
+
+  const set = function (key, txt) {
+    const el = c.querySelector('[data-dyn="' + key + '"]');
+    if (el && el.textContent !== txt) el.textContent = txt;
+  };
+  set('seed', String(Math.floor(state.seed || 0)));
+  const left = Math.max(0, DYNASTY.TICK_SEC - (isFinite(w.dynAccum) ? w.dynAccum : 0));
+  set('cd', w.dynasties.length ? fmtCd(left * 1000) : '—');
+
+  w.dynasties.forEach(function (d, i) {
+    const pop = Math.max(0, Number(d.pop) || 0);
+    const cap = Math.max(1, Number(d.cap) || 1);
+    const out = dynastyOutput(d);
+    set('pop-' + i, String(Math.floor(pop)));
+    set('cap-' + i, String(Math.floor(cap)));
+    set('out-' + i, (Math.round(out.amount * 10) / 10) + '/次');
+    set('food-' + i, (Math.round(out.food * 10) / 10) + '/次');
+    const bar = c.querySelector('[data-dyn="bar-' + i + '"]');
+    if (bar) {
+      const pct = Math.max(0, Math.min(1, pop / cap)) * 100;
+      const wid = pct.toFixed(1) + '%';
+      if (bar.style.width !== wid) bar.style.width = wid;
+    }
+  });
+
+  const sbtn = c.querySelector('[data-act="dynsummon"]');
+  if (sbtn) {
+    const no = !dynastyUnlocked() || smallWorldLevel() <= 0 || w.dynasties.length >= dynastySlots() ||
+      state.seed < DYNASTY.SUMMON_SEED;
+    if (sbtn.disabled !== no) sbtn.disabled = no;
+    sbtn.classList.toggle('off', no);
   }
 }
 
@@ -2102,8 +2270,16 @@ function renderContent() {
   }
   if (id === 'tower') { setHTML('#content', renderTower() + currentBarHTML()); updateTower(true); return; }
   if (id === 'bag') { setHTML('#content', renderBag()); updateInvQty(); return; }
-  if (id === 'world') { setHTML('#content', renderWorld() + currentBarHTML()); updateWorldState(); return; }
+  if (id === 'world') { setHTML('#content', renderWorld() + currentBarHTML()); updateWorldState(); updateDynastyState(); return; }
   if (id === 'disciples') { setHTML('#content', renderDisciples()); updateDiscipleState(); return; }
+  if (id === 'settings') { setHTML('#content', renderSettings() + currentBarHTML()); return; }
+  if (id === 'devtools') {
+    /* 未解锁时不允许停留在控制台页（防止旧 state 或手动改值进入） */
+    if (!DEV.unlocked) { state.ui.active = 'settings'; setHTML('#content', renderSettings() + currentBarHTML()); return; }
+    setHTML('#content', renderDevTools() + currentBarHTML());
+    if (_devDirty) { updateDev(); _devDirty = false; }
+    return;
+  }
 
   let html = skillHeader(id);
   if (id === 'combat') html += renderCombat();
@@ -2122,6 +2298,186 @@ function renderContent() {
   updateXpText();   /* 占位节点先立刻填上数值，避免空白闪一下 */
   updateXpBars();
   updateFormState();
+}
+
+/* ====================================================== 设置 / 测试控制台 */
+/* 控制台是不是"在循环里跑"：页面骨架是静态的，数值只在进入页面或执行一次
+   测试操作后由 updateDev() 填一次（_devDirty），不随 renderAll 持续写 DOM。 */
+let _devDirty = false;
+
+function renderSettings() {
+  let html = '<div class="phead"><h2>🔧 设置</h2>' +
+    '<span class="pdesc">兑换码与后续设置的落位骨架；本次仅「兑换码」可用。</span></div>';
+
+  html += '<div class="secttl">兑换码</div>' +
+    '<div class="setcard">' +
+    '<div class="setrow"><span class="setlab">兑换码</span>' +
+    '<input class="setin" type="text" data-set-in="code" maxlength="64" placeholder="输入兑换码" autocomplete="off" spellcheck="false">' +
+    '<button class="btn small" data-act="redeem">兑换</button></div>' +
+    '<div class="setmsg" data-set="msg">' +
+    esc(DEV.msg || '输入兑换码以解锁对应内容。') + '</div>' +
+    '</div>';
+
+  if (DEV.unlocked) {
+    html += '<div class="secttl">已解锁</div>' +
+      '<div class="setcard">' +
+      '<div class="setrow"><span class="setlab">🔬 测试控制台</span>' +
+      '<span class="setph">当前运行已激活</span>' +
+      '<button class="btn small" data-act="devopen">打开控制台</button></div>' +
+      '<div class="setmsg">刷新页面或重开游戏后失效，需要重新兑换。</div>' +
+      '</div>';
+  }
+
+  html += '<div class="secttl">通用</div>' +
+    '<div class="setcard">' +
+    '<div class="setrow"><span class="setlab">更多设置</span><span class="setph">（预留分组）</span></div>' +
+    '<div class="setmsg">音效、画面、自动化等设置将在后续版本逐步加入；此处只保留分组容器与占位条目。</div>' +
+    '</div>';
+
+  return html;
+}
+
+/* 控制台行：标签 + 当前值占位 + 输入 + 执行按钮 */
+function devRow(label, curKey, inputKey, action, ph, vals, btn) {
+  /* 未显式给 vals 时，默认读取本行的输入框 */
+  const src = vals || inputKey || '';
+  return '<div class="devrow"><span class="devlab">' + label + '</span>' +
+    (curKey ? '<span class="devcur" data-dev="cur-' + curKey + '">—</span>' : '') +
+    (inputKey ? '<input class="setin devin" type="number" data-dev-in="' + inputKey + '" placeholder="' + ph + '">' : '') +
+    '<button class="mini devgo" data-act="devact" data-dev="' + action + '"' +
+    (src ? ' data-vals="' + src + '"' : '') + '>' + (btn || '设置') + '</button></div>';
+}
+
+function devSelect(key, opts) {
+  return '<select class="setin devsel" data-dev-in="' + key + '">' + opts + '</select>';
+}
+
+function renderDevTools() {
+  const skOpts = SKILL_ORDER.filter(function (id) { return id !== 'cultivation'; })
+    .map(function (id) { return '<option value="' + id + '">' + SKILLS[id].name + '</option>'; }).join('');
+  const bldOpts = BUILDINGS.map(function (b) {
+    return '<option value="' + b.id + '">' + b.name + '</option>';
+  }).join('');
+
+  let html = '<div class="phead"><h2>🔬 测试控制台</h2>' +
+    '<span class="pdesc">仅本次运行有效（不写入存档）。所有改动直接写 state，立即反映到界面；' +
+    '时间快进复用离线结算 tick，受 ' + CONFIG.OFFLINE_CAP_H + ' 小时上限约束。</span></div>';
+
+  html += '<div class="devmsg" data-dev="msg">' + esc(DEV.msg || '选择一项开始调整。') + '</div>';
+
+  html += '<div class="devsec"><div class="secttl">核心资源（直接设为）</div>' +
+    devRow('灵石', 'gold', 'gold', 'gold', '数值') +
+    devRow('灵力', 'spirit', 'spirit', 'spirit', '数值') +
+    devRow('星砂', 'star', 'stardust', 'stardust', '数值') +
+    devRow('生命之种', 'seed', 'seed', 'seed', '数值') +
+    '</div>';
+
+  html += '<div class="devsec"><div class="secttl">洞天资源（粮食 / 木材 / 石料，受仓容上限约束）</div>' +
+    '<div class="devrow"><span class="devlab">资源</span>' +
+    devSelect('resSel', '<option value="food">粮食</option><option value="wood">木材</option><option value="stone">石料</option>') +
+    '<input class="setin devin" type="number" data-dev-in="resVal" placeholder="数值">' +
+    '<button class="mini devgo" data-act="devact" data-dev="res" data-vals="resSel,resVal">设置</button></div>' +
+    '<div class="devcurline">当前：🌾 <b data-dev="cur-food">—</b> · 🌲 <b data-dev="cur-wood">—</b> · ⛰️ <b data-dev="cur-stone">—</b></div>' +
+    '</div>';
+
+  html += '<div class="devsec"><div class="secttl">修为与境界</div>' +
+    devRow('境界阶数（1 ~ ' + TOTAL_STAGES + '）', 'cult', 'cultLvl', 'cultLvl', '阶数') +
+    devRow('当前修为', 'xp', 'cultXp', 'cultXp', '修为') +
+    '</div>';
+
+  html += '<div class="devsec"><div class="secttl">技能等级与精通</div>' +
+    '<div class="devrow"><span class="devlab">技能等级</span>' + devSelect('skillSel', skOpts) +
+    '<input class="setin devin" type="number" data-dev-in="skillLvl" placeholder="Lv.">' +
+    '<button class="mini devgo" data-act="devact" data-dev="skillLvl" data-vals="skillSel,skillLvl">设置</button></div>' +
+    '<div class="devrow"><span class="devlab">精通等级</span>' + devSelect('masterySel', skOpts) +
+    '<input class="setin devin" type="number" data-dev-in="masteryLvl" placeholder="Lv.">' +
+    '<button class="mini devgo" data-act="devact" data-dev="mastery" data-vals="masterySel,masteryLvl">设置</button></div>' +
+    '</div>';
+
+  html += '<div class="devsec"><div class="secttl">洞天建筑（含引力塔）</div>' +
+    '<div class="devrow"><span class="devlab">建筑</span>' + devSelect('bldSel', bldOpts) +
+    '<input class="setin devin" type="number" data-dev-in="bldLvl" placeholder="等级">' +
+    '<button class="mini devgo" data-act="devact" data-dev="building" data-vals="bldSel,bldLvl">设置</button></div>' +
+    '</div>';
+
+  html += '<div class="devsec"><div class="secttl">星球</div>' +
+    devRow('灵气浓度', 'aura', 'aura', 'aura', '数值') +
+    devRow('穿越次数', 'cross', 'cross', 'cross', '次数') +
+    '</div>';
+
+  html += '<div class="devsec"><div class="secttl">锁妖塔</div>' +
+    devRow('当前层数', 'tower', 'tower', 'tower', '层数') +
+    '</div>';
+
+  html += '<div class="devsec"><div class="secttl">三套裂缝</div>' +
+    '<div class="devrow"><span class="devlab">异界裂缝 <b data-dev="cur-rift">—</b></span>' +
+    '<button class="mini devgo" data-act="devact" data-dev="riftReset">重置为待修复</button>' +
+    '<button class="mini devgo" data-act="devact" data-dev="riftFix">标记修复</button></div>' +
+    '<div class="devrow"><span class="devlab">属性裂缝 <b data-dev="cur-elem">—</b></span>' +
+    '<button class="mini devgo" data-act="devact" data-dev="elemRefresh">整轮刷新</button>' +
+    '<button class="mini devgo" data-act="devact" data-dev="elemFixAll">全部修复</button></div>' +
+    '<div class="devrow"><span class="devlab">裂缝怪物 <b data-dev="cur-mon">—</b></span>' +
+    '<button class="mini devgo" data-act="devact" data-dev="monSpawn">重新生成</button>' +
+    '<button class="mini devgo" data-act="devact" data-dev="monKill">标记击败</button></div>' +
+    '</div>';
+
+  html += '<div class="devsec"><div class="secttl">时间快进（复用离线结算）</div>' +
+    '<div class="devrow"><span class="devlab">快进秒数</span>' +
+    '<input class="setin devin" type="number" data-dev-in="ff" placeholder="如 3600">' +
+    '<button class="mini devgo" data-act="devact" data-dev="ff" data-vals="ff">快进</button></div>' +
+    '<div class="devnote">按 0.5 秒步长调用 tick，等效于离线收益计算；单次最多结算 ' +
+    (CONFIG.OFFLINE_CAP_H * 3600) + ' 秒（' + CONFIG.OFFLINE_CAP_H + ' 小时）。</div>' +
+    '</div>';
+
+  html += '<div class="devsec"><div class="secttl">存档</div>' +
+    '<div class="devrow"><span class="devlab">立即存档</span>' +
+    '<button class="mini devgo" data-act="devact" data-dev="save">保存</button>' +
+    '<button class="mini devgo" data-act="devact" data-dev="reload">重载页面（验证控制台重新隐藏）</button></div>' +
+    '</div>';
+
+  return html;
+}
+
+/* 进入页面 / 执行一次操作后填一次当前值（不在主循环里持续写 DOM） */
+function updateDev() {
+  const c = $('#content');
+  if (!c) return;
+  const set = function (key, txt) {
+    const el = c.querySelector('[data-dev="cur-' + key + '"]');
+    if (el && el.textContent !== txt) el.textContent = txt;
+  };
+  set('gold', fmtNum(state.gold));
+  set('spirit', fmtNum(state.spirit));
+  set('star', fmtNum(state.stardust));
+  set('seed', fmtNum(state.seed));
+  set('food', String(Math.floor(state.world.res.food)));
+  set('wood', String(Math.floor(state.world.res.wood)));
+  set('stone', String(Math.floor(state.world.res.stone)));
+  set('cult', '第 ' + state.skills.cultivation.lvl + ' 阶');
+  set('xp', Math.floor(state.skills.cultivation.xp) + '');
+  set('aura', fmtAuraNum(state.planet.aura));
+  set('cross', String(state.planet.cross));
+  set('tower', '第 ' + state.tower.current + ' 层');
+  set('rift', state.rift.open ? '待修复（第 ' + state.rift.tier + ' 层）' : '已修复');
+  const elems = state.elemRifts.slots || [];
+  const fixedN = elems.filter(function (s) { return s.fixed; }).length;
+  set('elem', fixedN + '/' + elems.length + ' 已修复');
+  set('mon', riftMonAlive() ? '存在（强度 ' + riftMonTierClamp(state.riftMon.tier) + '）' : '已击败');
+  const msg = c.querySelector('[data-dev="msg"]');
+  if (msg && DEV.msg && msg.textContent !== DEV.msg) {
+    msg.textContent = DEV.msg;
+    msg.className = 'devmsg ' + (DEV.msgType || 'info');
+  }
+}
+
+function updateSettingsMsg() {
+  const c = $('#content');
+  if (!c) return;
+  const msg = c.querySelector('[data-set="msg"]');
+  if (!msg) return;
+  if (msg.textContent !== DEV.msg) msg.textContent = DEV.msg;
+  const cls = 'setmsg ' + (DEV.msgType || 'info');
+  if (msg.className !== cls) msg.className = cls;
 }
 
 /* ================================================================= 右栏 */
@@ -2506,6 +2862,7 @@ function updateBars() {
   updateFormState();
   updatePlotGrowth();
   updateWorldState();
+  updateDynastyState();
   updateDiscipleState();
   updateTower();
   updateRift();
@@ -2574,3 +2931,4 @@ function renderOfflineReport(rep) {
 
   showToast('<h4>🌙 闭关归来 · 离线结算</h4>' + lines, true);
 }
+

@@ -12,7 +12,29 @@
      minor++  机制更新（新增/改动机制，影响存档），patch 归零
      major++  大型更新（DLC、全新机制，需重开游戏），minor/patch 归零
    改这里用 `node tools/version.js patch|minor|major`，打包前会自动同步。 */
-const VERSION = '2.4.0';
+const VERSION = '2.6.0';
+
+/* =========================================================================
+ * 兑换码（集中配置）
+ *   只保存归一化后的 FNV-1a 32 位哈希，不保存明文码，界面与 README 也不出现明文。
+ *   新增兑换码：devCodeHash('你的码') → 把结果填到 hash 字段。
+ *   feature 目前支持 'devtools'（本次运行内解锁测试控制台，不落存档）。
+ * ========================================================================= */
+function devCodeHash(s) {
+  let x = 0x811c9dc5;
+  const t = String(s == null ? '' : s).trim().toLowerCase().replace(/\s+/g, '');
+  for (let i = 0; i < t.length; i++) {
+    x ^= t.charCodeAt(i);
+    x = (x * 0x01000193) >>> 0;
+  }
+  return '0x' + x.toString(16).padStart(8, '0');
+}
+
+const REDEEM = {
+  CODES: [
+    { hash: '0xa640d8d0', feature: 'devtools', label: '测试控制台' }
+  ]
+};
 
 const CONFIG = {
   TICK_MS: 100,          // 主循环步长
@@ -1405,6 +1427,57 @@ const WORLD = {
   COST_MUL: 1.18            // 每级建造成本倍率
 };
 
+/* =========================================================================
+ * 洞天 · 朝代（DYNASTY，v2.5.0）
+ *   · 消耗「生命之种」召唤不同年代的生灵；年代沿用穿越星球的朝代序列
+ *     （0=清朝 … 10=夏朝，11 起为 古一纪 / 古二纪…，由 planetDynastyName 生成）
+ *   · 每个朝代是一个独立人口池：人口每 TICK_SEC 秒结算一次（被动，不占动作槽），
+ *     产出粮食 + 该年代对应的主资源；人口有上限，上限只能通过合成同名朝代提升
+ *   · 可拥有朝代位 = 小世界等级 × SLOTS_PER_LVL
+ *   · 合成：目标获得被合者 50% 人口与 50% 上限，被合者失去这 50%（不消失、不空出位）
+ * ========================================================================= */
+const DYNASTY = {
+  SLOTS_PER_LVL: 5,         // 小世界每级 +5 个朝代位（0 级 = 未建造，不能召唤）
+  REALM_REQ: 22,            // 小世界建造门槛：境界第 22 阶 = 元婴期初期
+  START_POP: 3,             // 新召唤朝代的人口
+  BASE_CAP: 12,             // 新召唤朝代的人口上限
+  GROWTH_RATE: 0.06,        // 每次结算向本朝上限逼近 6%
+  GROWTH_MIN: 1,            // 每次结算至少 +1 人（低人口也能看出增长）
+  TICK_SEC: 600,            // 人口 / 产出结算周期：10 分钟
+  MERGE_SEED: 4,            // 合成消耗的生命之种
+  MERGE_MIN_POP: 2,         // 被合朝代至少要有 2 人才能分出 50%
+  MERGE_POP_RATE: 0.5,      // 人口转移比例
+  MERGE_CAP_RATE: 0.5,      // 上限转移比例
+  POP_HARD_CAP: 5000,       // 单朝代人口 / 上限硬顶，防溢出与 NaN
+  OUT_FOOD_PER_POP: 3,      // 每次结算每人口产出的粮食（洞天资源）
+  SEED_PLANET_P: 0.02,      // 星球每吸收 1 件物品掉落 1 颗生命之种的概率
+  SEED_ELEM_P: 0.5,         // 五行属性裂缝修复时掉落生命之种的概率
+  SEED_ELEM_QTY: 2,         // 上述掉落数量
+  SEED_RIFT_BASE: 3,        // 异界裂缝必掉基础数量
+  SEED_RIFT_TIER_STEP: 10,  // 异界裂缝每 10 层 +1
+  SEED_MON_BASE: 5,         // 裂缝怪物必掉基础数量
+  SEED_MON_TIER_STEP: 5,    // 裂缝怪物每 5 强度 +1
+  SUMMON_SEED: 10,          // 每次召唤消耗的生命之种
+  ERA_START_MAX: 1,         // 0 次穿越时最多能召唤到的年代下标（清朝 / 明朝）
+  ERA_MAX: 50               // 年代下标硬顶（古四十纪），避免无限膨胀
+};
+
+/* 年代 → 主资源。索引与 DYNASTY_NAMES 对齐；超出表长的古纪按 stardust 缓慢递增。
+   数值 = 每次结算每 1 人口产出的主资源量（粮食另算）。 */
+const DYNASTY_ERA_RES = [
+  { res: 'wood',     per: 4 },      // 清朝
+  { res: 'wood',     per: 4 },      // 明朝
+  { res: 'stone',    per: 4 },      // 元朝
+  { res: 'stone',    per: 4 },      // 宋朝
+  { res: 'gold',     per: 0.8 },    // 唐朝
+  { res: 'gold',     per: 0.8 },    // 南北朝
+  { res: 'gold',     per: 0.8 },    // 两晋
+  { res: 'stone',    per: 5 },      // 三国
+  { res: 'gold',     per: 1.2 },    // 周朝
+  { res: 'gold',     per: 1.2 },    // 商朝
+  { res: 'stardust', per: 0.15 }    // 夏朝
+];
+
 /* 洞天仓储上限：随建设度线性增长。
    造价按 1.18^等级 指数上涨，若仓储固定不变，后期会出现"单次造价 > 仓储上限"的死锁；
    按建设度放大后，只要持续推进建设度就能继续升级。 */
@@ -1653,6 +1726,11 @@ const BUILDINGS = [
     desc: '统筹匠作，每级建造费用 −1.5%（至多 −60%）。', cost: { gold: 5900, wood: 320, stone: 320 }, out: null },
 
   /* ------------------------------------------------------ 信徒招募（特殊） */
+  { id: 'smallworld', name: '小世界', icon: '🌌', color: '#8fb8e0', terrain: 'mystic', req: 1,
+    special: 'dynasty', realmReq: DYNASTY.REALM_REQ,
+    desc: '开辟独立小世界，容纳历代生灵；每级 +' + DYNASTY.SLOTS_PER_LVL + ' 个朝代位。',
+    cost: { gold: 6000, wood: 0, stone: 0 },
+    costLv1: { gold: 9000, wood: 400, stone: 400 }, out: null },
   { id: 'summonhall', name: '招贤殿', icon: '🏛️', color: '#b98ce0', terrain: 'mystic', req: 1,
     special: 'disciple',
     desc: '广纳信徒，信徒可入驻上阵；每级信徒仓库 +3，并解锁更高品阶的招募。',
@@ -1772,6 +1850,15 @@ function terrainReq(tid) {
    首次建造免木材与石料、只收灵石；其余建筑首建照常收取三资源，
    否则洞天开局没有木/石产出，会被卡死在第一座产石建筑之前。 */
 function buildCost(b, lvl) {
+  /* 特殊建筑可用 costLv1 覆盖「2 级起」的造价基准（小世界：首级只收灵石、后续要材料） */
+  if (b.costLv1 && lvl >= 1) {
+    const m1 = Math.pow(WORLD.COST_MUL, lvl - 1);
+    return {
+      gold: Math.floor(b.costLv1.gold * m1),
+      wood: Math.floor(b.costLv1.wood * m1),
+      stone: Math.floor(b.costLv1.stone * m1)
+    };
+  }
   const m = Math.pow(WORLD.COST_MUL, lvl);
   const out = {
     gold: Math.floor(b.cost.gold * m),

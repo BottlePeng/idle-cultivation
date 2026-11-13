@@ -15,6 +15,7 @@ function defaultState() {
     gold: 0,            // 低阶灵石
     spirit: 0,          // 灵力
     stardust: 0,        // 星砂（观星所得，用于点亮阵纹）
+    seed: 0,            // 生命之种（穿越星球 / 裂缝掉落，用于洞天「朝代」召唤与合成）
     hp: CONFIG.BASE_HP,
     inv: { fish_qing: 3, log_qing: 2, herb_juqi: 2 },   // 一点起步物资
     equip: { weapon: null, armor: null, helmet: null, boots: null, amulet: null, ring: null },
@@ -29,7 +30,10 @@ function defaultState() {
     world: {
       buildings: { farm: 1, lumber: 1, house: 1 },
       pop: 2,
-      res: { food: 120, wood: 40, stone: 20 }
+      res: { food: 120, wood: 40, stone: 20 },
+      /* 朝代：dynasties 每项 { dyn: 年代下标, pop: 人口, cap: 人口上限 }
+         dynAccum：距下一次 10 分钟结算的累计秒数（落盘，离线走同一 tick） */
+      dynasties: [], dynAccum: 0
     },
 
     /* 信徒：owned 为仓库中的信徒 id，equipped 的位数由招贤殿等级决定（视作装备栏） */
@@ -66,7 +70,7 @@ function defaultState() {
     taskTimer: 0,       // 任务检查计时
 
     tasks: {},          // taskId -> { done, claimed }
-    ui: { active: 'woodcutting', planetView: 'main', elemSlot: 0, autoEat: true, eatFood: 'auto', eatRatio: 0.35, invFilter: 'all', invSellMode: false, itemQty: 1, shopCat: 'general', farmSeedId: null, worldTerrain: 'all' },
+    ui: { active: 'woodcutting', planetView: 'main', elemSlot: 0, worldView: 'main', dynMerge: -1, autoEat: true, eatFood: 'auto', eatRatio: 0.35, invFilter: 'all', invSellMode: false, itemQty: 1, shopCat: 'general', farmSeedId: null, worldTerrain: 'all' },
     log: [],
     stats: { gathered: 0, crafts: 0, kills: 0, deaths: 0, breaks: 0, pills: 0, gained: {}, perSkill: {}, startedAt: Date.now() },
     lastSave: Date.now()
@@ -120,6 +124,8 @@ function mergeState(def, saved) {
   ['gold', 'spirit', 'stardust', 'hp'].forEach(function (k) {
     if (isFinite(saved[k])) out[k] = Math.max(0, Number(saved[k]));
   });
+  /* 生命之种：缺失按 0（旧档）；异常值钳制为非负有限整数 */
+  if (isFinite(saved.seed)) out.seed = Math.max(0, Math.min(1e12, Math.floor(Number(saved.seed))));
   if (isFinite(saved.lastSave)) out.lastSave = Number(saved.lastSave);
   /* 悟性（旧存档的 root 资质字段已废弃，直接忽略） */
   if (isFinite(saved.insight)) out.insight = Math.max(0, Math.floor(Number(saved.insight)));
@@ -228,7 +234,7 @@ function mergeState(def, saved) {
 
   /* 世界 · 洞天：建筑等级按当前配置裁剪（删除过的建筑直接丢弃），资源钳制到容量 */
   if (saved.world && typeof saved.world === 'object') {
-    out.world = { buildings: {}, pop: 0, res: { food: 0, wood: 0, stone: 0 } };
+    out.world = { buildings: {}, pop: 0, res: { food: 0, wood: 0, stone: 0 }, dynasties: [], dynAccum: 0 };
     const sb = saved.world.buildings;
     if (sb && typeof sb === 'object') {
       BUILDINGS.forEach(function (b) {
@@ -248,6 +254,28 @@ function mergeState(def, saved) {
     }
     if (isFinite(saved.world.pop)) {
       out.world.pop = Math.max(0, Math.min(worldPopCap(out), Number(saved.world.pop)));
+    }
+    /* 朝代：只接受合法年代下标与非负有限数值；人数夹到 [1, 硬顶]，上限不低于起始值。
+       数量不超过「小世界等级 × 5」，超出部分丢弃（防止改档撑爆界面）。 */
+    const maxDyn = Math.max(0, (out.world.buildings.smallworld || 0) * DYNASTY.SLOTS_PER_LVL);
+    if (Array.isArray(saved.world.dynasties)) {
+      saved.world.dynasties.slice(0, maxDyn).forEach(function (d) {
+        if (!d || typeof d !== 'object') return;
+        const era = Math.floor(Number(d.dyn));
+        if (!isFinite(era) || era < 0 || era > DYNASTY.ERA_MAX) return;
+        const cap = isFinite(d.cap)
+          ? Math.max(DYNASTY.BASE_CAP, Math.min(DYNASTY.POP_HARD_CAP, Number(d.cap)))
+          : DYNASTY.BASE_CAP;
+        let pop = isFinite(d.pop) ? Number(d.pop) : DYNASTY.START_POP;
+        pop = Math.max(1, Math.min(DYNASTY.POP_HARD_CAP, pop));
+        if (pop > cap) pop = cap;
+        out.world.dynasties.push({ dyn: era, pop: pop, cap: cap });
+      });
+    }
+    /* 结算累计秒：缺失按 0；非法或超出 1 个周期按 0 处理，避免读档瞬间连结算 */
+    if (isFinite(saved.world.dynAccum)) {
+      const a = Number(saved.world.dynAccum);
+      out.world.dynAccum = a >= 0 && a < DYNASTY.TICK_SEC ? a : 0;
     }
   }
 
@@ -330,7 +358,7 @@ function mergeState(def, saved) {
 
   /* UI 偏好 */
   if (saved.ui && typeof saved.ui === 'object') {
-    if (SKILL_ORDER.indexOf(saved.ui.active) >= 0 || saved.ui.active === 'tasks' || saved.ui.active === 'shop' || saved.ui.active === 'bag' || saved.ui.active === 'world' || saved.ui.active === 'disciples' || saved.ui.active === 'planet' || saved.ui.active === 'tower') out.ui.active = saved.ui.active;
+    if (SKILL_ORDER.indexOf(saved.ui.active) >= 0 || saved.ui.active === 'tasks' || saved.ui.active === 'shop' || saved.ui.active === 'bag' || saved.ui.active === 'world' || saved.ui.active === 'disciples' || saved.ui.active === 'planet' || saved.ui.active === 'tower' || saved.ui.active === 'settings') out.ui.active = saved.ui.active;
     if (typeof saved.ui.autoEat === 'boolean') out.ui.autoEat = saved.ui.autoEat;
     if (typeof saved.ui.eatFood === 'string') out.ui.eatFood = saved.ui.eatFood;
     if (isFinite(saved.ui.eatRatio)) out.ui.eatRatio = Math.max(0.1, Math.min(0.9, Number(saved.ui.eatRatio)));
@@ -344,6 +372,9 @@ function mergeState(def, saved) {
     if (typeof saved.ui.shopCat === 'string') out.ui.shopCat = saved.ui.shopCat;
     /* 洞天地形筛选：'all' 或当前配置里仍存在的地形 id */
     if (saved.ui.worldTerrain === 'all' || findTerrain(saved.ui.worldTerrain)) out.ui.worldTerrain = saved.ui.worldTerrain;
+    /* 洞天子视图：'main' 建筑页 / 'dynasty' 朝代页 */
+    out.ui.worldView = saved.ui.worldView === 'dynasty' ? 'dynasty' : 'main';
+    out.ui.dynMerge = -1;
   }
 
   /* 穿越星球：飞行中的物品 / 加速 / 本局收获是瞬态数据，读档一律从空盘开始（防止离线白拿）。

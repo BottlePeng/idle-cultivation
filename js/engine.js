@@ -17,7 +17,158 @@ function logMsg(text, cls) {
   if (state.log.length > 60) state.log.length = 60;
 }
 
-/* ------------------------------------------------------------------ 背包 */
+/* -------------------------------------------------- 兑换码 · 测试控制台 */
+/* 会话级：不写入 state，因此不会随存档导出；刷新页面后 unlocked 回到 false */
+const DEV = { unlocked: false, msg: '', msgType: 'info' };
+
+function devMsg(text, type) {
+  DEV.msg = text;
+  DEV.msgType = type || 'info';
+  return { ok: type !== 'bad', msg: text, type: DEV.msgType };
+}
+
+function redeemCode(raw) {
+  const code = String(raw == null ? '' : raw).trim();
+  if (!code) return devMsg('请输入兑换码。', 'warn');
+  const h = devCodeHash(code);
+  let hit = null;
+  REDEEM.CODES.forEach(function (c) { if (c.hash === h) hit = c; });
+  if (!hit) {
+    logMsg('兑换码无效。', 'warn');
+    return devMsg('兑换码无效，请检查后重试。', 'bad');
+  }
+  if (hit.feature === 'devtools') {
+    if (DEV.unlocked) return devMsg('本次运行已解锁测试控制台，无需重复兑换。', 'info');
+    DEV.unlocked = true;
+    logMsg('兑换成功：测试控制台已解锁（仅本次运行有效，刷新或重开后失效）。', 'good');
+    return devMsg('兑换成功：测试控制台已解锁，仅本次运行有效。', 'good');
+  }
+  return devMsg('该兑换码暂不可用。', 'warn');
+}
+
+/* 测试控制台：所有改动都直接写 state / 复用既有函数，改完由主循环与渲染层
+   自动反映；这里不注册任何定时器（不在游戏循环里持续跑）。 */
+function devRun(action, vals) {
+  vals = vals || [];
+  const num = function (i) { const n = Number(vals[i]); return isFinite(n) ? n : NaN; };
+  const who = function (i) { return String(vals[i] || '').trim(); };
+  let n, id, b, lv, rep;
+
+  if (!DEV.unlocked) return devMsg('测试控制台未解锁。', 'bad');
+
+  switch (action) {
+    case 'gold': n = num(0); if (!isFinite(n) || n < 0) return devMsg('请输入非负数值。', 'bad');
+      state.gold = Math.min(1e15, Math.floor(n)); return devMsg('灵石 → ' + state.gold, 'good');
+    case 'spirit': n = num(0); if (!isFinite(n) || n < 0) return devMsg('请输入非负数值。', 'bad');
+      state.spirit = Math.min(1e15, Math.floor(n)); return devMsg('灵力 → ' + state.spirit, 'good');
+    case 'stardust': n = num(0); if (!isFinite(n) || n < 0) return devMsg('请输入非负数值。', 'bad');
+      state.stardust = Math.min(1e15, Math.floor(n)); return devMsg('星砂 → ' + state.stardust, 'good');
+    case 'seed': n = num(0); if (!isFinite(n) || n < 0) return devMsg('请输入非负数值。', 'bad');
+      state.seed = Math.min(1e12, Math.floor(n)); return devMsg('生命之种 → ' + state.seed, 'good');
+
+    case 'res': {
+      const k = who(0), v = num(1);
+      if (['food', 'wood', 'stone'].indexOf(k) < 0) return devMsg('资源类型无效。', 'bad');
+      if (!isFinite(v) || v < 0) return devMsg('请输入非负数值。', 'bad');
+      const cap = worldCap(worldLevel())[k];
+      state.world.res[k] = Math.min(cap, Math.floor(v));
+      return devMsg(k + ' → ' + state.world.res[k] + '（上限 ' + cap + '）', 'good');
+    }
+
+    case 'cultLvl': n = num(0);
+      if (!isFinite(n)) return devMsg('请输入境界阶数。', 'bad');
+      state.skills.cultivation.lvl = Math.max(1, Math.min(TOTAL_STAGES, Math.floor(n)));
+      state.skills.cultivation.xp = 0;
+      state.hp = calcStats().hp; clampHp();
+      return devMsg('境界 → 第 ' + state.skills.cultivation.lvl + ' 阶（' + realmInfo(state.skills.cultivation.lvl).full + '）', 'good');
+    case 'cultXp': n = num(0); id = state.skills.cultivation.lvl;
+      if (!isFinite(n) || n < 0) return devMsg('请输入非负数值。', 'bad');
+      b = breakInfo(id - 1);
+      state.skills.cultivation.xp = b ? Math.min(b.need, n) : 0;
+      return devMsg('修为 → ' + Math.floor(state.skills.cultivation.xp) + ' / ' + (b ? b.need : 0), 'good');
+
+    case 'skillLvl': id = who(0); n = num(1);
+      if (!SKILLS[id] || id === 'cultivation') return devMsg('请选择技能。', 'bad');
+      if (!isFinite(n)) return devMsg('请输入等级。', 'bad');
+      state.skills[id].lvl = Math.max(1, Math.min(9999, Math.floor(n)));
+      state.skills[id].xp = 0;
+      if (id === 'combat') { state.hp = calcStats().hp; clampHp(); }
+      return devMsg(SKILLS[id].name + ' → Lv.' + state.skills[id].lvl, 'good');
+    case 'mastery': id = who(0); n = num(1);
+      if (!SKILLS[id]) return devMsg('请选择技能。', 'bad');
+      if (!isFinite(n)) return devMsg('请输入精通等级。', 'bad');
+      state.mastery[id] = { lvl: Math.max(0, Math.min(CONFIG.MASTERY_CAP, Math.floor(n))), xp: 0 };
+      return devMsg(SKILLS[id].name + ' 精通 → Lv.' + state.mastery[id].lvl, 'good');
+
+    case 'building': id = who(0); n = num(1);
+      b = findBuilding(id);
+      if (!b) return devMsg('请选择建筑。', 'bad');
+      if (!isFinite(n) || n < 0) return devMsg('请输入非负等级。', 'bad');
+      lv = Math.min(999, Math.floor(n));
+      if (lv <= 0) delete state.world.buildings[id]; else state.world.buildings[id] = lv;
+      return devMsg(b.name + ' → Lv.' + lv, 'good');
+
+    case 'aura': n = num(0);
+      if (!isFinite(n) || n < 0) return devMsg('请输入非负数值。', 'bad');
+      state.planet.aura = Math.min(1e12, Math.floor(n));
+      return devMsg('灵气浓度 → ' + state.planet.aura, 'good');
+    case 'cross': n = num(0);
+      if (!isFinite(n) || n < 0) return devMsg('请输入非负数值。', 'bad');
+      state.planet.cross = Math.min(10000, Math.floor(n));
+      return devMsg('穿越次数 → ' + state.planet.cross, 'good');
+
+    case 'tower': n = num(0);
+      if (!isFinite(n)) return devMsg('请输入层数。', 'bad');
+      state.tower.current = Math.max(1, Math.min(TOWER.MAX_FLOOR, Math.floor(n)));
+      state.tower.best = Math.max(state.tower.best, state.tower.current);
+      state.tower.pending = false;
+      state.tower.failed = false;
+      return devMsg('锁妖塔 → 第 ' + state.tower.current + ' 层（最高 ' + state.tower.best + '）', 'good');
+
+    case 'riftReset':
+      state.rift = { open: true, tier: Math.max(0, state.planet.cross) };
+      return devMsg('异界裂缝已重置（第 ' + state.rift.tier + ' 层待修复）。', 'good');
+    case 'riftFix':
+      state.rift.open = false;
+      state.rift.tier = Math.max(0, state.planet.cross);
+      return devMsg('异界裂缝已标记修复。', 'good');
+
+    case 'elemRefresh':
+      state.elemRifts.slots = elemRiftSlotsRoll(state);
+      state.elemRifts.next = Date.now() + ELEM_RIFT.REFRESH_MS;
+      return devMsg('五行属性裂缝已整轮刷新（3 道）。', 'good');
+    case 'elemFixAll':
+      (state.elemRifts.slots || []).forEach(function (s) { s.fixed = true; });
+      return devMsg('五行属性裂缝全部标记为已修复。', 'good');
+
+    case 'monSpawn':
+      riftMonSpawn(Date.now());
+      return devMsg('裂缝怪物已重新生成（强度 ' + state.riftMon.tier + '）。', 'good');
+    case 'monKill':
+      if (!state.riftMon) return devMsg('裂缝怪物状态缺失。', 'bad');
+      state.riftMon.alive = false;
+      return devMsg('裂缝怪物已标记击败（不发放奖励）。', 'good');
+
+    case 'ff': {
+      n = num(0);
+      if (!isFinite(n) || n < 3) return devMsg('快进时长至少 3 秒。', 'bad');
+      rep = simulateOffline(n);
+      if (!rep) return devMsg('快进失败：时长过短。', 'bad');
+      return devMsg('已快进 ' + Math.round(rep.seconds) + ' 秒' + (rep.truncated ? '（受 12 小时离线上限限制）' : '') +
+        '：灵石 +' + Math.floor(rep.gold) + '、灵力 +' + Math.floor(rep.spirit) + '、击杀 ' + rep.kills + '。', 'good');
+    }
+
+    case 'save':
+      saveState();
+      return devMsg('已手动存档。', 'good');
+    case 'reload':
+      window.location.reload();
+      return devMsg('正在重载…', 'info');
+    default:
+      return devMsg('未知的测试操作。', 'warn');
+  }
+}
+
 function invCount(id) { return state.inv[id] || 0; }
 function invHas(id, qty) { return invCount(id) >= qty; }
 
@@ -244,6 +395,11 @@ function buildBuilding(bid) {
   const w = state.world;
   const lvl = w.buildings[b.id] || 0;
 
+  /* 境界门槛（小世界需元婴期）：未达标时拒绝建造，UI 同步置灰 */
+  if (b.realmReq && state.skills.cultivation.lvl < b.realmReq) {
+    logMsg('境界不足，「' + b.name + '」需 ' + (realmInfo(b.realmReq).realm || '元婴期') + '。', 'warn');
+    return false;
+  }
   if (worldLevel() < b.req) {
     logMsg('洞天建设度不足，「' + b.name + '」需建设度 ' + b.req + '。', 'warn');
     return false;
@@ -265,6 +421,142 @@ function buildBuilding(bid) {
       : '洞天新成「' + b.name + '」Lv.1。'))
     : ('「' + b.name + '」升至 Lv.' + (lvl + 1) + '。'), 'good');
   return true;
+}
+
+/* ------------------------------------------------------- 洞天 · 朝代 */
+/* 小世界等级决定朝代位数量；召唤与合成都只消耗生命之种，不占用动作槽 */
+function smallWorldLevel() { return (state.world.buildings.smallworld || 0); }
+function dynastySlots() { return smallWorldLevel() * DYNASTY.SLOTS_PER_LVL; }
+function dynastyUnlocked() { return state.skills.cultivation.lvl >= DYNASTY.REALM_REQ; }
+/* 可召唤的最高年代下标：0 次穿越只能召到明朝，之后每 1 次穿越解锁 1 个年代 */
+function dynastyEraMax() {
+  const cr = Math.max(0, Math.floor(planetCrossCount()));
+  return Math.max(DYNASTY.ERA_START_MAX, Math.min(DYNASTY.ERA_MAX, cr));
+}
+/* 年代对应的主资源与每人口产量；古纪（超出表长）按星砂缓慢递增，封顶 0.5 */
+function dynastyEraRes(era) {
+  const i = Math.max(0, Math.min(DYNASTY.ERA_MAX, Math.floor(Number(era) || 0)));
+  if (i < DYNASTY_ERA_RES.length) return DYNASTY_ERA_RES[i];
+  return { res: 'stardust', per: Math.min(0.5, 0.15 + 0.02 * (i - (DYNASTY_ERA_RES.length - 1))) };
+}
+function dynastyName(era) { return planetDynastyName(era); }
+
+/* 单个朝代每次结算的产出（人口按当前值，粮食 + 年代主资源） */
+function dynastyOutput(d) {
+  const r = dynastyEraRes(d.dyn);
+  const pop = Math.max(0, Number(d.pop) || 0);
+  const out = { food: pop * DYNASTY.OUT_FOOD_PER_POP, res: r.res, amount: pop * r.per };
+  return out;
+}
+
+/* 召唤：随机年代（不超过当前可召唤上限），人口与上限取初始值 */
+function summonDynasty() {
+  const w = state.world;
+  if (!dynastyUnlocked()) {
+    logMsg('境界不足，需达到 ' + (realmInfo(DYNASTY.REALM_REQ).realm || '元婴期') + ' 才能召唤朝代生灵。', 'warn');
+    return false;
+  }
+  if (smallWorldLevel() <= 0) {
+    logMsg('尚未开辟「小世界」（洞天 · 秘境建筑），无法召唤朝代生灵。', 'warn');
+    return false;
+  }
+  if (w.dynasties.length >= dynastySlots()) {
+    logMsg('朝代位已满（' + dynastySlots() + ' 个），升级「小世界」可 +' + DYNASTY.SLOTS_PER_LVL + ' 位。', 'warn');
+    return false;
+  }
+  if (state.seed < DYNASTY.SUMMON_SEED) {
+    logMsg('生命之种不足，召唤需 🌱 ' + DYNASTY.SUMMON_SEED + '（当前 ' + Math.floor(state.seed) + '）。', 'warn');
+    return false;
+  }
+  const max = dynastyEraMax();
+  const era = randInt(0, max);
+  state.seed -= DYNASTY.SUMMON_SEED;
+  w.dynasties.push({ dyn: era, pop: DYNASTY.START_POP, cap: DYNASTY.BASE_CAP });
+  logMsg('生命之种萌发，「' + dynastyName(era) + '」生灵降世（人口 ' + DYNASTY.START_POP +
+    ' / ' + DYNASTY.BASE_CAP + '，每 ' + (DYNASTY.TICK_SEC / 60) + ' 分钟结算一次）。', 'good');
+  return true;
+}
+
+/* 合成同名朝代：目标获得被合者 50% 人口与 50% 上限，被合者失去这 50%（不消失、不空位） */
+function mergeDynasty(targetIdx, srcIdx) {
+  const w = state.world;
+  const list = w.dynasties;
+  const ti = Math.floor(Number(targetIdx));
+  const si = Math.floor(Number(srcIdx));
+  if (!list[ti] || !list[si]) return false;
+  if (ti === si) { logMsg('合成需要两个不同的朝代。', 'warn'); return false; }
+  if (list[ti].dyn !== list[si].dyn) { logMsg('只能合成同名朝代。', 'warn'); return false; }
+  if (list[si].pop < DYNASTY.MERGE_MIN_POP) {
+    logMsg('「' + dynastyName(list[si].dyn) + '」人口不足 ' + DYNASTY.MERGE_MIN_POP + '，无法分出。', 'warn');
+    return false;
+  }
+  if (state.seed < DYNASTY.MERGE_SEED) {
+    logMsg('生命之种不足，合成需 🌱 ' + DYNASTY.MERGE_SEED + '。', 'warn');
+    return false;
+  }
+  const src = list[si];
+  const dst = list[ti];
+  const movePop = src.pop * DYNASTY.MERGE_POP_RATE;
+  const moveCap = Math.max(1, Math.ceil(src.cap * DYNASTY.MERGE_CAP_RATE));
+  src.pop = Math.max(DYNASTY.MERGE_MIN_POP / 2, src.pop - movePop);
+  dst.pop = Math.min(DYNASTY.POP_HARD_CAP, dst.pop + movePop);
+  dst.cap = Math.min(DYNASTY.POP_HARD_CAP, dst.cap + moveCap);
+  state.seed -= DYNASTY.MERGE_SEED;
+  logMsg('「' + dynastyName(dst.dyn) + '」完成同源融合：人口 +' + Math.floor(movePop) +
+    '、上限 +' + moveCap + '；被合朝代人口减半，仍保留在朝代位中。', 'good');
+  return true;
+}
+
+/* 每 10 分钟结算：人口增长 + 资源产出。走同一个 tick，离线结算自动覆盖 */
+function dynastyTick(dt) {
+  const w = state.world;
+  if (!w || !Array.isArray(w.dynasties)) return;
+  if (!w.dynasties.length) { w.dynAccum = 0; return; }
+  if (!isFinite(w.dynAccum) || w.dynAccum < 0) w.dynAccum = 0;
+  w.dynAccum += dt;
+  let guard = 0;
+  while (w.dynAccum >= DYNASTY.TICK_SEC && guard < 1000) {
+    w.dynAccum -= DYNASTY.TICK_SEC;
+    settleDynastyOnce();
+    guard += 1;
+  }
+}
+
+function settleDynastyOnce() {
+  const w = state.world;
+  const cap = worldCap(worldLevel());
+  let food = 0, wood = 0, stone = 0, gold = 0, stardust = 0;
+
+  w.dynasties.forEach(function (d) {
+    const out = dynastyOutput(d);
+    /* 先按本次人口结算产出，再让人口向上限逼近（至少 +1），保证结算顺序可解释 */
+    food += out.food;
+    if (out.res === 'gold') gold += out.amount;
+    else if (out.res === 'stardust') stardust += out.amount;
+    else if (out.res === 'wood') wood += out.amount;
+    else stone += out.amount;
+
+    const grow = Math.max(DYNASTY.GROWTH_MIN, d.pop * DYNASTY.GROWTH_RATE);
+    d.pop = Math.min(d.cap, d.pop + grow);
+    if (!isFinite(d.pop) || d.pop < 0) d.pop = 0;
+    if (!isFinite(d.cap) || d.cap < DYNASTY.BASE_CAP) d.cap = DYNASTY.BASE_CAP;
+    if (d.cap > DYNASTY.POP_HARD_CAP) d.cap = DYNASTY.POP_HARD_CAP;
+    if (d.pop > d.cap) d.pop = d.cap;
+  });
+
+  w.res.food = clamp(w.res.food + food, 0, cap.food);
+  w.res.wood = clamp(w.res.wood + wood, 0, cap.wood);
+  w.res.stone = clamp(w.res.stone + stone, 0, cap.stone);
+  if (gold > 0) state.gold += gold;
+  if (stardust > 0) state.stardust = (state.stardust || 0) + stardust;
+  if (!isFinite(state.gold) || state.gold < 0) state.gold = 0;
+  if (!isFinite(state.stardust) || state.stardust < 0) state.stardust = 0;
+
+  if (!OFFLINE_MODE) {
+    logMsg('朝代结算：🌾 +' + Math.floor(food) + ' · 🌲 +' + Math.floor(wood) + ' · ⛰️ +' + Math.floor(stone) +
+      (gold > 0 ? ' · 💠 +' + gold.toFixed(1) : '') + (stardust > 0 ? ' · 🌠 +' + stardust.toFixed(2) : '') +
+      '（各朝人口已增长）', 'info');
+  }
 }
 
 /* ------------------------------------------------------- 信徒（招募 · 上阵） */
@@ -1058,10 +1350,12 @@ function riftCleared(tier, target) {
   state.gold += rw.gold;
   state.stardust = (state.stardust || 0) + rw.star;
   addXp('combat', rw.xp);
+  const seedGain = DYNASTY.SEED_RIFT_BASE + Math.floor(t / DYNASTY.SEED_RIFT_TIER_STEP);
+  state.seed = (state.seed || 0) + seedGain;
   r.open = false;
   r.tier = t;
   logMsg('修复异界裂缝第 ' + t + ' 层「' + (target ? target.name : '') + '」！灵石 +' + rw.gold +
-    '、星砂 +' + rw.star + '、战斗经验 +' + rw.xp + '。可返回星球继续穿越。', 'good');
+    '、星砂 +' + rw.star + '、战斗经验 +' + rw.xp + '、🌱 生命之种 +' + seedGain + '。可返回星球继续穿越。', 'good');
   stopAction(true);
 }
 
@@ -1278,9 +1572,15 @@ function elemRiftCleared(target) {
     invAdd(rw.id, rw.qty);
   }
   if (rw.star) state.stardust = (state.stardust || 0) + rw.star;
+  /* 生命之种：属性裂缝为概率掉落（异界裂缝 / 裂缝怪物为必掉，见各自结算） */
+  let seedGain = 0;
+  if (Math.random() < DYNASTY.SEED_ELEM_P) {
+    seedGain = DYNASTY.SEED_ELEM_QTY;
+    state.seed = (state.seed || 0) + seedGain;
+  }
   slot.fixed = true;
   logMsg('修复「' + el.name + '·时空裂缝」！获得 ' + elemRewardText(rw) +
-    '。该位置留空至下一轮刷新。', 'good');
+    (seedGain ? '、🌱 生命之种 +' + seedGain : '') + '。该位置留空至下一轮刷新。', 'good');
   stopAction(true);
 }
 
@@ -1403,8 +1703,11 @@ function riftMonCleared(target) {
   const rw = riftMonReward(c.riftMon >= 0 ? c.riftMon : m.tier);
   state.gold += rw.gold;
   state.stardust = (state.stardust || 0) + rw.star;
+  const seedGain = DYNASTY.SEED_MON_BASE + Math.floor(rw.tier / DYNASTY.SEED_MON_TIER_STEP);
+  state.seed = (state.seed || 0) + seedGain;
   m.alive = false;
   logMsg('击败「' + RIFT_MON.NAME + '」（强度 ' + rw.tier + '）！灵石 +' + rw.gold + '、星砂 +' + rw.star +
+    '、🌱 生命之种 +' + seedGain +
     '；下一只将在约 ' + Math.max(1, Math.ceil((m.next - Date.now()) / 60000)) + ' 分钟后刷新，期间可正常开启星球运转。', 'good');
   stopAction(true);
 }
@@ -2299,6 +2602,11 @@ function planetGrant(it) {
     const q = randInt(PLANET.MAT_MIN, PLANET.MAT_MAX);
     if (invAdd(it.id, q)) s.mat += q;
   }
+  /* 生命之种：吸收任意物品时小概率掉落（洞天「朝代」的召唤材料） */
+  if (Math.random() < DYNASTY.SEED_PLANET_P) {
+    state.seed = (state.seed || 0) + 1;
+    if (!OFFLINE_MODE) logMsg('吸收星球之物时拾得 🌱 生命之种 ×1。', 'gather');
+  }
   s.count += 1;
 }
 
@@ -2391,6 +2699,7 @@ function tick(dt) {
   if (!state) return;
   passiveTick(dt);
   worldTick(dt);
+  dynastyTick(dt);
   elemRiftTick();
   riftMonTick();
   cycleTick(dt);

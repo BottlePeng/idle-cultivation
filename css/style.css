@@ -1043,3 +1043,151 @@ body.compact .planetstage { height: min(50vh, 420px); }
 .rmstage .towerhp i { background: linear-gradient(90deg, #b84747, #eaa0a0); }
 .rmstage .toweract .pbtn:not([disabled]) { border-color: #a56a6a; background: rgba(200,100,100,.20); }
 .rmstage .toweract .pbtn:not([disabled]):hover { background: rgba(200,100,100,.32); }
+
+/* ===================================================== 洞天 · 朝代（v2.5.0） */
+/* 洞天子页签：加大尺寸与对比，未选中也是实体按钮，选中态一眼可辨。
+   仅改视觉，不使用 transform 位移（避免撑大滚动区），不改任何逻辑。 */
+.wtabs {
+  display: flex; gap: 10px; flex-wrap: wrap;
+  margin: 2px 0 14px; padding: 8px;
+  border: 1px solid var(--line2); border-radius: 12px;
+  background: linear-gradient(180deg, rgba(255,255,255,.035), rgba(0,0,0,.14));
+  min-width: 0;
+}
+.wtabs .chip {
+  flex: 1 1 200px; min-width: 0; max-width: 100%;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 11px 16px; min-height: 44px;
+  font-size: 14px; font-weight: 600; letter-spacing: .5px;
+  line-height: 1.25; text-align: center;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: rgba(216,178,106,.07);
+  color: var(--gold2);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.05);
+  transition: background .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease;
+}
+.wtabs .chip b { color: var(--gold2); font-size: 14px; font-variant-numeric: tabular-nums; }
+.wtabs .chip:hover { background: rgba(216,178,106,.16); border-color: var(--gold); color: #fff3d4; }
+.wtabs .chip.on {
+  border-color: var(--gold);
+  background: linear-gradient(180deg, #e8c884, var(--gold));
+  color: #241a06;
+  font-weight: 700;
+  box-shadow: 0 0 0 1px rgba(255,235,190,.35) inset, 0 2px 10px rgba(216,178,106,.22);
+}
+.wtabs .chip.on b { color: #241a06; }
+
+@media (max-width: 920px) {
+  .wtabs { gap: 8px; padding: 7px; }
+  .wtabs .chip { flex: 1 1 100%; font-size: 13px; padding: 10px 12px; }
+}
+
+.dynbar {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px;
+  background: linear-gradient(90deg, rgba(125,216,184,.10), rgba(0,0,0,.12));
+}
+.dynbar .dynseed { font-size: 13px; color: var(--jade); font-variant-numeric: tabular-nums; }
+.dynbar .dynseed b { color: #bff0dc; font-size: 15px; }
+.dynbar .dyncd { margin-left: auto; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.dynbar .dyncd b { color: var(--gold2); }
+
+.dynnote {
+  margin: 10px 0 4px; padding: 8px 11px; border-radius: 8px;
+  font-size: 12px; line-height: 1.5; color: var(--muted);
+  border: 1px dashed var(--line2); background: rgba(255,255,255,.02);
+}
+.dynnote.warn { color: #e8c98a; border-color: rgba(216,178,106,.35); }
+
+.dynmergebar {
+  margin: 10px 0 2px; padding: 8px 11px; border-radius: 8px;
+  font-size: 12px; color: var(--text);
+  border: 1px solid var(--dc, var(--line));
+  background: rgba(255,255,255,.04);
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.dynmergebar b { color: var(--dc, var(--gold2)); }
+.dynmergebar .mini { margin-left: auto; }
+
+.dyncards {
+  display: grid; gap: 10px; margin: 12px 0;
+  grid-template-columns: repeat(auto-fill, minmax(196px, 1fr));
+}
+.dyncard {
+  position: relative;
+  padding: 10px 11px 9px; border-radius: 10px;
+  border: 1px solid var(--line2);
+  border-left: 3px solid var(--dc, var(--line));
+  background: linear-gradient(180deg, rgba(255,255,255,.035), rgba(0,0,0,.10));
+  display: flex; flex-direction: column; gap: 6px;
+}
+.dyncard.targeting { box-shadow: 0 0 0 1px var(--dc) inset; }
+.dyncard.empty { opacity: .55; border-style: dashed; border-left-color: var(--line2); align-items: center; justify-content: center; min-height: 108px; }
+.dyncard .dynhead { display: flex; align-items: center; gap: 7px; }
+.dyncard .dynico { font-size: 17px; }
+.dyncard .dynhead b { font-size: 14px; color: var(--dc, var(--gold2)); }
+.dyncard .dyntag { margin-left: auto; font-size: 10px; color: var(--muted); }
+.dyncard .dynrow { display: flex; align-items: baseline; gap: 5px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.dyncard .dynrow b { font-size: 16px; color: var(--text); }
+.dyncard .dyncap i { color: var(--muted); font-style: normal; }
+.dynbar2 { height: 5px; border-radius: 999px; background: rgba(0,0,0,.4); overflow: hidden; }
+.dynbar2 > i { display: block; height: 100%; border-radius: 999px; background: var(--dc, var(--jade)); transition: width .25s linear; }
+.dyncard .dynout { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.dyncard .dynout b { color: var(--gold2); font-weight: 600; }
+.dyncard .dynact { display: flex; gap: 6px; margin-top: 2px; }
+.dyncard .dynact .mini { flex: 1; }
+.dyncard .dynact .mini.merge { border-color: var(--jade); color: var(--jade); }
+.dynempty { font-size: 11px; color: var(--muted); text-align: center; line-height: 1.5; }
+
+/* ================================================ 设置 / 测试控制台（v2.6.0） */
+.setcard {
+  border: 1px solid var(--line2); border-radius: 10px; padding: 12px;
+  background: rgba(255,255,255,.022);
+}
+.setrow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.setrow + .setrow { margin-top: 8px; }
+.setlab { font-size: 13px; color: var(--text); min-width: 96px; }
+.setph { font-size: 12px; color: var(--muted); }
+.setin {
+  font-family: inherit; font-size: 13px; color: var(--text);
+  padding: 8px 11px; min-height: 38px;
+  border: 1px solid var(--line); border-radius: 8px;
+  background: rgba(0,0,0,.28);
+}
+.setin:focus { outline: none; border-color: var(--gold); box-shadow: 0 0 0 1px rgba(216,178,106,.28); }
+.setrow .setin[data-set-in="code"] { flex: 1 1 220px; min-width: 0; letter-spacing: 1px; }
+.setmsg { margin-top: 9px; font-size: 12px; color: var(--muted); line-height: 1.5; }
+.setmsg.good, .devmsg.good { color: var(--ok); }
+.setmsg.bad, .devmsg.bad { color: var(--red); }
+.setmsg.warn, .devmsg.warn { color: #e8c98a; }
+
+.devmsg {
+  margin: 2px 0 12px; padding: 9px 12px; border-radius: 8px;
+  border: 1px dashed var(--line2); background: rgba(255,255,255,.02);
+  font-size: 12px; line-height: 1.55; color: var(--muted);
+  min-height: 18px;
+}
+.devsec { margin-bottom: 14px; }
+.devsec .secttl { margin-top: 0; }
+.devrow {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 7px 9px; border-radius: 8px;
+  border: 1px solid var(--line2); background: rgba(255,255,255,.022);
+}
+.devrow + .devrow { margin-top: 6px; }
+.devlab { font-size: 12px; color: var(--muted); flex: 1 1 150px; min-width: 0; }
+.devcur { font-size: 12px; color: var(--gold2); font-variant-numeric: tabular-nums; min-width: 64px; text-align: right; }
+.devin { width: 110px; min-height: 34px; padding: 6px 9px; }
+.devsel { width: 130px; min-height: 34px; padding: 6px 9px; }
+.devgo { flex: 0 0 auto; }
+.devcurline { margin-top: 7px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.devcurline b { color: var(--gold2); }
+.devnote { margin-top: 7px; font-size: 11px; color: var(--muted); line-height: 1.5; }
+
+@media (max-width: 920px) {
+  .setlab { flex: 1 1 100%; }
+  .devin, .devsel { width: 100%; }
+  .devcur { text-align: left; }
+  .devgo { flex: 1 1 auto; }
+}
