@@ -833,6 +833,7 @@ main {
 .pitem.k-gold { font-size: 20px; }
 .pitem.k-star { font-size: 20px; }
 .pitem.k-mat { font-size: 22px; }
+.pitem.k-seed { font-size: 19px; filter: drop-shadow(0 0 4px rgba(125, 216, 184, .55)); }
 
 .planetwrap.boosting .planetstage { box-shadow: inset 0 0 48px rgba(255,210,120,.35); }
 .planetwrap.boosting .pitem { text-shadow: 0 0 10px rgba(255,220,140,.75); }
@@ -1108,6 +1109,7 @@ body.compact .planetstage { height: min(50vh, 420px); }
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
 }
 .dynmergebar b { color: var(--dc, var(--gold2)); }
+.dynmergebar .dynwarn { color: var(--red); font-style: normal; font-weight: 600; }
 .dynmergebar .mini { margin-left: auto; }
 
 .dyncards {

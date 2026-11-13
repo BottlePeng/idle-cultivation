@@ -32,8 +32,9 @@ function defaultState() {
       pop: 2,
       res: { food: 120, wood: 40, stone: 20 },
       /* 朝代：dynasties 每项 { dyn: 年代下标, pop: 人口, cap: 人口上限 }
-         dynAccum：距下一次 10 分钟结算的累计秒数（落盘，离线走同一 tick） */
-      dynasties: [], dynAccum: 0
+         dynAccum：距下一次 10 分钟结算的累计秒数（落盘，离线走同一 tick）
+         dynScale：人口量级标记，旧档（无此字段）读档时按 POP_UNIT 放大一次 */
+      dynasties: [], dynAccum: 0, dynScale: DYNASTY.POP_UNIT
     },
 
     /* 信徒：owned 为仓库中的信徒 id，equipped 的位数由招贤殿等级决定（视作装备栏） */
@@ -41,7 +42,7 @@ function defaultState() {
 
     /* 穿越星球：仅面板打开时运转（items 为飞行中的物品，瞬态不落存档）
        aura 为灵气浓度（长期进度，不随开关清空），cross 为穿越次数 */
-    planet: { open: false, timer: PLANET.SPAWN_BASE, boost: 0, seq: 1, items: [], session: { gold: 0, star: 0, mat: 0, count: 0 }, aura: Math.round(PLANET.AURA_CAP_BASE * PLANET.AURA_START_RATIO), auraVer: 1, cross: 0, waitReason: '' },
+    planet: { open: false, timer: PLANET.SPAWN_BASE, boost: 0, seq: 1, items: [], session: { gold: 0, star: 0, mat: 0, seed: 0, count: 0 }, aura: Math.round(PLANET.AURA_CAP_BASE * PLANET.AURA_START_RATIO), auraVer: 1, cross: 0, waitReason: '' },
 
     /* 锁妖塔：current 当前层 / best 最高已通关层 / pending 待领取层（false = 无）
        failed 仅用于界面显示「已阵亡」，读档不恢复；层数永不回退 */
@@ -234,7 +235,7 @@ function mergeState(def, saved) {
 
   /* 世界 · 洞天：建筑等级按当前配置裁剪（删除过的建筑直接丢弃），资源钳制到容量 */
   if (saved.world && typeof saved.world === 'object') {
-    out.world = { buildings: {}, pop: 0, res: { food: 0, wood: 0, stone: 0 }, dynasties: [], dynAccum: 0 };
+    out.world = { buildings: {}, pop: 0, res: { food: 0, wood: 0, stone: 0 }, dynasties: [], dynAccum: 0, dynScale: DYNASTY.POP_UNIT };
     const sb = saved.world.buildings;
     if (sb && typeof sb === 'object') {
       BUILDINGS.forEach(function (b) {
@@ -255,23 +256,26 @@ function mergeState(def, saved) {
     if (isFinite(saved.world.pop)) {
       out.world.pop = Math.max(0, Math.min(worldPopCap(out), Number(saved.world.pop)));
     }
-    /* 朝代：只接受合法年代下标与非负有限数值；人数夹到 [1, 硬顶]，上限不低于起始值。
-       数量不超过「小世界等级 × 5」，超出部分丢弃（防止改档撑爆界面）。 */
+    /* 朝代：只接受合法年代下标与非负有限数值；人数夹到 [0, 硬顶]，上限不低于起始值。
+       数量不超过「小世界等级 × 5」，超出部分丢弃（防止改档撑爆界面）。
+       旧档没有 dynScale 标记 → 旧量级（3 / 12）按 POP_UNIT 放大一次，再统一钳制。 */
     const maxDyn = Math.max(0, (out.world.buildings.smallworld || 0) * DYNASTY.SLOTS_PER_LVL);
+    const legacyPop = Number(saved.world.dynScale) !== DYNASTY.POP_UNIT;
     if (Array.isArray(saved.world.dynasties)) {
       saved.world.dynasties.slice(0, maxDyn).forEach(function (d) {
         if (!d || typeof d !== 'object') return;
         const era = Math.floor(Number(d.dyn));
         if (!isFinite(era) || era < 0 || era > DYNASTY.ERA_MAX) return;
-        const cap = isFinite(d.cap)
-          ? Math.max(DYNASTY.BASE_CAP, Math.min(DYNASTY.POP_HARD_CAP, Number(d.cap)))
-          : DYNASTY.BASE_CAP;
-        let pop = isFinite(d.pop) ? Number(d.pop) : DYNASTY.START_POP;
-        pop = Math.max(1, Math.min(DYNASTY.POP_HARD_CAP, pop));
+        let rawCap = isFinite(d.cap) ? Number(d.cap) : DYNASTY.BASE_CAP;
+        let rawPop = isFinite(d.pop) ? Number(d.pop) : DYNASTY.START_POP;
+        if (legacyPop) { rawCap *= DYNASTY.POP_UNIT; rawPop *= DYNASTY.POP_UNIT; }
+        const cap = Math.max(DYNASTY.BASE_CAP, Math.min(DYNASTY.POP_HARD_CAP, rawCap));
+        let pop = Math.max(0, Math.min(DYNASTY.POP_HARD_CAP, rawPop));
         if (pop > cap) pop = cap;
         out.world.dynasties.push({ dyn: era, pop: pop, cap: cap });
       });
     }
+    out.world.dynScale = DYNASTY.POP_UNIT;
     /* 结算累计秒：缺失按 0；非法或超出 1 个周期按 0 处理，避免读档瞬间连结算 */
     if (isFinite(saved.world.dynAccum)) {
       const a = Number(saved.world.dynAccum);
@@ -383,7 +387,7 @@ function mergeState(def, saved) {
      已有 auraVer 的存档只做有限值校验与 [AURA_MIN, 上限] 钳制，保证不为负、不为 NaN、不超上限。 */
   out.planet = {
     open: false, timer: PLANET.SPAWN_BASE, boost: 0, seq: 1, items: [],
-    session: { gold: 0, star: 0, mat: 0, count: 0 },
+    session: { gold: 0, star: 0, mat: 0, seed: 0, count: 0 },
     aura: Math.round(PLANET.AURA_CAP_BASE * PLANET.AURA_START_RATIO),
     auraVer: 1, cross: 0, waitReason: ''
   };

@@ -631,10 +631,11 @@ function renderTasks() {
    飞行物挂在 #planetItems 容器里，由 updatePlanet 按 pid 增删，不再整树重写。 */
 function planetNode(it) {
   const node = document.createElement('span');
-  node.className = 'pitem ' + (it.kind === 'gold' ? 'k-gold' : it.kind === 'star' ? 'k-star' : 'k-mat');
+  node.className = 'pitem ' + (it.kind === 'gold' ? 'k-gold' : it.kind === 'star' ? 'k-star' : it.kind === 'seed' ? 'k-seed' : 'k-mat');
   node.dataset.pid = String(it.pid);
   if (it.kind === 'gold') { node.title = '灵石'; node.textContent = '💠'; }
   else if (it.kind === 'star') { node.title = '星砂'; node.textContent = '💫'; }
+  else if (it.kind === 'seed') { node.title = '生命之种'; node.textContent = '🌱'; }
   else { node.title = itemName(it.id); node.textContent = itemIcon(it.id); }
   return node;
 }
@@ -693,6 +694,7 @@ function renderPlanet() {
     '<span class="pbchip">本局收获 💠 <b data-pg="gold">0</b></span>' +
     '<span class="pbchip">💫 <b data-pg="star">0</b></span>' +
     '<span class="pbchip">📦 <b data-pg="mat">0</b></span>' +
+    '<span class="pbchip">🌱 <b data-pg="seed">0</b></span>' +
     '<span class="pbchip">已收集 <b data-pg="count">0</b> 件</span>' +
     '<span class="pbchip">加速上限 <b data-pg="boostcap">0</b>s<span class="pbgt" data-pg="boostgt"></span></span>' +
     '<span class="pbboost" data-planetboost>点击加速</span>' +
@@ -703,7 +705,7 @@ function renderPlanet() {
     '<span class="pgtxt" data-pg="grav"></span>' +
     '<button class="mini" data-planetgravbtn data-act="goto" data-skill="world" data-id="mystic">前往建造</button>' +
     '</div>' +
-    '<div class="shopnote">四周随机生成：灵石 50% · 星砂 30% · 已解锁材料 20%（矿石 / 鱼 / 木头 / 草药等）。' +
+    '<div class="shopnote">四周随机生成：灵石 50% · 星砂 30% · 已解锁材料 19% · 生命之种 1%（矿石 / 鱼 / 木头 / 草药等）。' +
     '巡航时生成消耗灵气浓度、吸收消耗灵力；浓度不足会暂停生成，停止运转后浓度才恢复。' +
     '「穿越」消耗灵气浓度（首次 💧 10000，之后按 1.6 倍 / 第 11 次起 1.12 倍递增），并让单件浓度消耗逐次 -10%（下限 ' +
     PLANET.AURA_COST_MIN + '）。浓度上限与恢复随引力塔等级和穿越次数一起成长。' +
@@ -1497,7 +1499,7 @@ function updatePlanet(force) {
 
   /* 本局收获计数 */
   const s = p.session;
-  const map = { gold: fmtNum(s.gold), star: fmtNum(s.star), mat: fmtNum(s.mat), count: String(s.count) };
+  const map = { gold: fmtNum(s.gold), star: fmtNum(s.star), mat: fmtNum(s.mat), seed: fmtNum(s.seed || 0), count: String(s.count) };
   Object.keys(map).forEach(function (k) {
     const el = document.querySelector('[data-pg="' + k + '"]');
     if (el && el.textContent !== map[k]) el.textContent = map[k];
@@ -1902,8 +1904,10 @@ function renderWorldDynasty() {
   if (mergeIdx >= 0 && w.dynasties[mergeIdx]) {
     const el = findDynastyEraColor(w.dynasties[mergeIdx].dyn);
     html += '<div class="dynmergebar" style="--dc:' + el + '">合成目标：<b>' +
-      dynastyName(w.dynasties[mergeIdx].dyn) + '</b>（第 ' + (mergeIdx + 1) +
-      ' 位）· 点击另一个同名朝代卡片的「并入」完成合成，消耗 🌱' + DYNASTY.MERGE_SEED +
+      dynastyName(w.dynasties[mergeIdx].dyn) + '</b>（第 ' + (mergeIdx + 1) + ' 位 · 当前 ' +
+      fmtPop(w.dynasties[mergeIdx].pop) + ' / ' + fmtPop(w.dynasties[mergeIdx].cap) +
+      '）· 点击另一个同名卡片的「并入」完成合成；' +
+      '<em class="dynwarn">被并入的朝代将消失并腾出 1 个朝代位</em>，消耗 🌱' + DYNASTY.MERGE_SEED +
       '<button class="mini" data-act="dynmergecancel">取消</button></div>';
   }
 
@@ -1913,6 +1917,7 @@ function renderWorldDynasty() {
     const r = dynastyEraRes(d.dyn);
     const resLab = { food: '🌾', wood: '🌲', stone: '⛰️', gold: '💠', stardust: '🌠' }[r.res] || '🌾';
     const canMergeHere = mergeIdx >= 0 && mergeIdx !== i && w.dynasties[mergeIdx] && w.dynasties[mergeIdx].dyn === d.dyn;
+    const hasPartner = w.dynasties.some(function (o, j) { return j !== i && o.dyn === d.dyn; });
     html += '<div class="dyncard' + (mergeIdx === i ? ' targeting' : '') + '" style="--dc:' + color + '">' +
       '<div class="dynhead"><span class="dynico">🕰️</span><b>' + dynastyName(d.dyn) + '</b>' +
       '<span class="dyntag">第 ' + (i + 1) + ' 位</span></div>' +
@@ -1924,7 +1929,11 @@ function renderWorldDynasty() {
         ? (canMergeHere
           ? '<button class="mini merge" data-act="dynmergetarget" data-id="' + i + '">并入</button>'
           : '<button class="mini" disabled>同名可并入</button>')
-        : '<button class="mini" data-act="dynmerge" data-id="' + i + '">合成</button>') +
+        : (hasPartner
+          ? '<button class="mini" data-act="dynmerge" data-id="' + i + '">合成</button>'
+          : '<button class="mini" disabled title="' +
+            (w.dynasties.length < 2 ? '至少需要两个朝代，且同名才能合成' : '没有同名朝代可合成') +
+            '">合成</button>')) +
       '</div></div>';
   });
   for (let i = w.dynasties.length; i < slots; i++) {
@@ -1936,11 +1945,11 @@ function renderWorldDynasty() {
   html += '<div class="secttl">规则</div>' +
     '<div class="shopnote">每个朝代是独立人口池：每 ' + (DYNASTY.TICK_SEC / 60) +
     ' 分钟结算一次，按人口产出粮食与该年代对应的主资源（清朝/明朝 → 木材，元朝/宋朝/三国 → 石料，唐朝/南北朝/两晋/周朝/商朝 → 灵石，夏朝及古纪 → 星砂）。' +
-    '人口每次结算向本朝上限逼近 ' + Math.round(DYNASTY.GROWTH_RATE * 100) + '%（至少 +' + DYNASTY.GROWTH_MIN +
+    '人口每次结算向本朝上限逼近 ' + Math.round(DYNASTY.GROWTH_RATE * 100) + '%（至少 +' + fmtPop(DYNASTY.GROWTH_MIN) +
     '），上限只能靠合成同名朝代提升。合成消耗 🌱' + DYNASTY.MERGE_SEED +
     '：目标获得被合者 ' + Math.round(DYNASTY.MERGE_POP_RATE * 100) + '% 人口与 ' +
     Math.round(DYNASTY.MERGE_CAP_RATE * 100) + '% 上限，被合者失去这部分但不会消失。' +
-    '生命之种来自穿越星球吸收（' + Math.round(DYNASTY.SEED_PLANET_P * 100) + '%）、五行属性裂缝（' +
+    '生命之种来自穿越星球飞行物（' + Math.round(PLANET.W_SEED * 100) + '%）、五行属性裂缝（' +
     Math.round(DYNASTY.SEED_ELEM_P * 100) + '% 掉 ' + DYNASTY.SEED_ELEM_QTY + ' 颗）、异界裂缝与裂缝怪物（必掉）。' +
     '召唤 / 合成不占用动作槽，结算为后台被动推进，离线同样按同一 tick 结算（受 12 小时离线上限约束）。</div>';
 
@@ -1975,8 +1984,8 @@ function updateDynastyState() {
     const pop = Math.max(0, Number(d.pop) || 0);
     const cap = Math.max(1, Number(d.cap) || 1);
     const out = dynastyOutput(d);
-    set('pop-' + i, String(Math.floor(pop)));
-    set('cap-' + i, String(Math.floor(cap)));
+    set('pop-' + i, fmtPop(pop));
+    set('cap-' + i, fmtPop(cap));
     set('out-' + i, (Math.round(out.amount * 10) / 10) + '/次');
     set('food-' + i, (Math.round(out.food * 10) / 10) + '/次');
     const bar = c.querySelector('[data-dyn="bar-' + i + '"]');

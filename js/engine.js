@@ -433,7 +433,7 @@ function dynastyEraMax() {
   const cr = Math.max(0, Math.floor(planetCrossCount()));
   return Math.max(DYNASTY.ERA_START_MAX, Math.min(DYNASTY.ERA_MAX, cr));
 }
-/* 年代对应的主资源与每人口产量；古纪（超出表长）按星砂缓慢递增，封顶 0.5 */
+/* 年代对应的主资源与每万人口产量；古纪（超出表长）按星砂缓慢递增，封顶 0.5 */
 function dynastyEraRes(era) {
   const i = Math.max(0, Math.min(DYNASTY.ERA_MAX, Math.floor(Number(era) || 0)));
   if (i < DYNASTY_ERA_RES.length) return DYNASTY_ERA_RES[i];
@@ -441,11 +441,12 @@ function dynastyEraRes(era) {
 }
 function dynastyName(era) { return planetDynastyName(era); }
 
-/* 单个朝代每次结算的产出（人口按当前值，粮食 + 年代主资源） */
+/* 单个朝代每次结算的产出：人口按「万」折算，避免放大人口后资源也放大一万倍 */
 function dynastyOutput(d) {
   const r = dynastyEraRes(d.dyn);
   const pop = Math.max(0, Number(d.pop) || 0);
-  const out = { food: pop * DYNASTY.OUT_FOOD_PER_POP, res: r.res, amount: pop * r.per };
+  const wan = pop / DYNASTY.POP_UNIT;
+  const out = { food: wan * DYNASTY.OUT_FOOD_PER_WAN, res: r.res, amount: wan * r.per };
   return out;
 }
 
@@ -472,12 +473,13 @@ function summonDynasty() {
   const era = randInt(0, max);
   state.seed -= DYNASTY.SUMMON_SEED;
   w.dynasties.push({ dyn: era, pop: DYNASTY.START_POP, cap: DYNASTY.BASE_CAP });
-  logMsg('生命之种萌发，「' + dynastyName(era) + '」生灵降世（人口 ' + DYNASTY.START_POP +
-    ' / ' + DYNASTY.BASE_CAP + '，每 ' + (DYNASTY.TICK_SEC / 60) + ' 分钟结算一次）。', 'good');
+  logMsg('生命之种萌发，「' + dynastyName(era) + '」生灵降世（人口 ' + fmtPop(DYNASTY.START_POP) +
+    ' / ' + fmtPop(DYNASTY.BASE_CAP) + '，每 ' + (DYNASTY.TICK_SEC / 60) + ' 分钟结算一次）。', 'good');
   return true;
 }
 
-/* 合成同名朝代：目标获得被合者 50% 人口与 50% 上限，被合者失去这 50%（不消失、不空位） */
+/* 合成同名朝代：目标获得被合者 50% 人口与 50% 上限；
+   被合朝代随即从列表移除、腾出朝代位（空位立刻可再召唤） */
 function mergeDynasty(targetIdx, srcIdx) {
   const w = state.world;
   const list = w.dynasties;
@@ -487,7 +489,7 @@ function mergeDynasty(targetIdx, srcIdx) {
   if (ti === si) { logMsg('合成需要两个不同的朝代。', 'warn'); return false; }
   if (list[ti].dyn !== list[si].dyn) { logMsg('只能合成同名朝代。', 'warn'); return false; }
   if (list[si].pop < DYNASTY.MERGE_MIN_POP) {
-    logMsg('「' + dynastyName(list[si].dyn) + '」人口不足 ' + DYNASTY.MERGE_MIN_POP + '，无法分出。', 'warn');
+    logMsg('「' + dynastyName(list[si].dyn) + '」人口不足 ' + fmtPop(DYNASTY.MERGE_MIN_POP) + '，无法分出。', 'warn');
     return false;
   }
   if (state.seed < DYNASTY.MERGE_SEED) {
@@ -496,14 +498,18 @@ function mergeDynasty(targetIdx, srcIdx) {
   }
   const src = list[si];
   const dst = list[ti];
+  const srcName = dynastyName(src.dyn);
+  const dstName = dynastyName(dst.dyn);
   const movePop = src.pop * DYNASTY.MERGE_POP_RATE;
-  const moveCap = Math.max(1, Math.ceil(src.cap * DYNASTY.MERGE_CAP_RATE));
-  src.pop = Math.max(DYNASTY.MERGE_MIN_POP / 2, src.pop - movePop);
+  const moveCap = Math.max(DYNASTY.GROWTH_MIN, Math.ceil(src.cap * DYNASTY.MERGE_CAP_RATE));
+  /* 先移除被合者（dst 是对象引用，不受 splice 影响），再给目标加人口与上限 */
+  list.splice(si, 1);
   dst.pop = Math.min(DYNASTY.POP_HARD_CAP, dst.pop + movePop);
   dst.cap = Math.min(DYNASTY.POP_HARD_CAP, dst.cap + moveCap);
+  if (dst.pop > dst.cap) dst.pop = dst.cap;
   state.seed -= DYNASTY.MERGE_SEED;
-  logMsg('「' + dynastyName(dst.dyn) + '」完成同源融合：人口 +' + Math.floor(movePop) +
-    '、上限 +' + moveCap + '；被合朝代人口减半，仍保留在朝代位中。', 'good');
+  logMsg('「' + srcName + '」（第 ' + (si + 1) + ' 位）并入「' + dstName + '」（第 ' + (ti + 1) +
+    ' 位）后消失：人口 +' + fmtPop(movePop) + '、上限 +' + fmtPop(moveCap) + '，腾出 1 个朝代位。', 'good');
   return true;
 }
 
@@ -529,7 +535,7 @@ function settleDynastyOnce() {
 
   w.dynasties.forEach(function (d) {
     const out = dynastyOutput(d);
-    /* 先按本次人口结算产出，再让人口向上限逼近（至少 +1），保证结算顺序可解释 */
+    /* 先按本次人口结算产出，再让人口向上限逼近（至少 +1万），保证结算顺序可解释 */
     food += out.food;
     if (out.res === 'gold') gold += out.amount;
     else if (out.res === 'stardust') stardust += out.amount;
@@ -2565,14 +2571,25 @@ function planetMaterials() {
   return pool;
 }
 
-/* 按 50% / 30% / 20% 权重抽一件产物 */
+/* 按 50% / 30% / 19% / 1% 权重抽一件产物。
+   生命之种是独立产物，不再走「吸收时随机掉落」的隐式通道（避免双计）。
+   材料池为空时（未解锁任何采集动作），材料权重并入灵石，种子权重不受影响。 */
 function planetPick() {
   const r = Math.random();
   if (r < PLANET.W_GOLD) return { kind: 'gold' };
-  if (r < PLANET.W_GOLD + PLANET.W_STAR) return { kind: 'star' };
+  const rStar = PLANET.W_GOLD + PLANET.W_STAR;
+  if (r < rStar) return { kind: 'star' };
+  const rMat = rStar + PLANET.W_MAT;
   const pool = planetMaterials();
-  if (!pool.length) return { kind: 'gold' };
-  return { kind: 'mat', id: pool[Math.floor(Math.random() * pool.length)] };
+  if (!pool.length) {
+    /* 没有可掉材料时，材料权重并入灵石；种子保持 3% 独立占据星砂之后的区间 */
+    return r < rStar + PLANET.W_SEED ? { kind: 'seed' } : { kind: 'gold' };
+  }
+  if (r < rMat) {
+    return { kind: 'mat', id: pool[Math.floor(Math.random() * pool.length)] };
+  }
+  if (r < rMat + PLANET.W_SEED) return { kind: 'seed' };
+  return { kind: 'gold' };
 }
 
 /* 生成一件飞行物：起点在星球外圈（极坐标，角度随机，半径 0.36~0.5） */
@@ -2601,11 +2618,12 @@ function planetGrant(it) {
   } else if (it.kind === 'mat') {
     const q = randInt(PLANET.MAT_MIN, PLANET.MAT_MAX);
     if (invAdd(it.id, q)) s.mat += q;
-  }
-  /* 生命之种：吸收任意物品时小概率掉落（洞天「朝代」的召唤材料） */
-  if (Math.random() < DYNASTY.SEED_PLANET_P) {
-    state.seed = (state.seed || 0) + 1;
-    if (!OFFLINE_MODE) logMsg('吸收星球之物时拾得 🌱 生命之种 ×1。', 'gather');
+  } else if (it.kind === 'seed') {
+    /* 生命之种：作为飞行物抵达时直接入账，并计入本局收获与吸收件数 */
+    const q = randInt(PLANET.SEED_MIN, PLANET.SEED_MAX);
+    state.seed = (state.seed || 0) + q;
+    s.seed = (s.seed || 0) + q;
+    if (!OFFLINE_MODE) logMsg('吸收星球之物时拾得 🌱 生命之种 ×' + q + '。', 'gather');
   }
   s.count += 1;
 }
