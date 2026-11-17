@@ -12,7 +12,7 @@
      minor++  机制更新（新增/改动机制，影响存档），patch 归零
      major++  大型更新（DLC、全新机制，需重开游戏），minor/patch 归零
    改这里用 `node tools/version.js patch|minor|major`，打包前会自动同步。 */
-const VERSION = '2.7.1';
+const VERSION = '2.12.2';
 
 /* =========================================================================
  * 兑换码（集中配置）
@@ -1136,6 +1136,50 @@ function taishangStage(si) {
 }
 
 /* =========================================================================
+ * 签到（七日循环）
+ *   · 按「本地日期」判定：每日 00:00 重置，无服务器时间可用
+ *   · 连续 7 天为一轮，第 7 天领完回到第 1 天；断签（漏签）从第 1 天重来
+ *   · 每天奖励 = 资源字段（gold / spirit / stardust / seed）+ items（道具/装备）
+ *   · disciple: true 表示额外赠送 1 位神品信徒（随机身份、随机主属性）
+ *   数值口径：一周总量 ≈ 9,600 灵石 + 100 星砂 + 7 生命之种 + 1 悟道丹 + 3 件装备，
+ *   相当于「一条中前期任务线」，不足以冲垮任何一条资源线，也补不上招贤殿/小世界的造价。
+ * ========================================================================= */
+const CHECKIN = {
+  CYCLE: 7,
+  DAYS: [
+    {
+      day: 1, name: '灵石补助', icon: '💠',
+      gold: 600, items: [{ id: 'pill_juqi', qty: 2 }]
+    },
+    {
+      day: 2, name: '灵息萌发', icon: '✨',
+      spirit: 300, seed: 2
+    },
+    {
+      day: 3, name: '行囊补给', icon: '🎒',
+      gold: 1500, items: [{ id: 'pill_liao', qty: 3 }]
+    },
+    {
+      day: 4, name: '观星悟道', icon: '💫',
+      stardust: 40, items: [{ id: 'pill_wudao', qty: 1 }]
+    },
+    {
+      day: 5, name: '洞天春耕', icon: '🌱',
+      gold: 2500, seed: 5
+    },
+    {
+      day: 6, name: '兵甲双全', icon: '🗡️',
+      items: [{ id: 'w_xuan', qty: 1 }, { id: 'a_xuan', qty: 1 }]
+    },
+    {
+      day: 7, name: '七日大赏', icon: '👑',
+      gold: 5000, stardust: 60, disciple: true,
+      items: [{ id: 'w_shen', qty: 1 }]
+    }
+  ]
+};
+
+/* =========================================================================
  * 任务 / 成就
  * cond: gathered / kills / crafts / pills / breaks / level / realm / item
  * ========================================================================= */
@@ -1442,10 +1486,10 @@ const WORLD = {
  * 洞天 · 朝代（DYNASTY，v2.5.0）
  *   · 消耗「生命之种」召唤不同年代的生灵；年代沿用穿越星球的朝代序列
  *     （0=清朝 … 10=夏朝，11 起为 古一纪 / 古二纪…，由 planetDynastyName 生成）
- *   · 每个朝代是一个独立人口池：人口每 TICK_SEC 秒结算一次（被动，不占动作槽），
+ *   · 每个朝代是一个独立人口池：人口每 TICK_SEC 秒（1 小时）结算一次（被动，不占动作槽），
  *     产出粮食 + 该年代对应的主资源；人口有上限，上限只能通过合成同名朝代提升
  *   · 可拥有朝代位 = 小世界等级 × SLOTS_PER_LVL
- *   · 合成：目标获得被合者 50% 人口与 50% 上限，被合者失去这 50%（不消失、不空出位）
+ *   · 合成：目标获得被合者 50% 人口与 50% 上限，被合者随即从列表移除并腾出朝代位
  * ========================================================================= */
 const DYNASTY = {
   SLOTS_PER_LVL: 5,         // 小世界每级 +5 个朝代位（0 级 = 未建造，不能召唤）
@@ -1453,15 +1497,16 @@ const DYNASTY = {
   POP_UNIT: 10000,          // 人口显示单位：1 万 = 10000（内部存真实人数，展示统一走 fmtPop）
   START_POP: 30000,         // 新召唤朝代的人口（3.0万）
   BASE_CAP: 120000,         // 新召唤朝代的人口上限（12.0万）
-  GROWTH_RATE: 0.06,        // 每次结算向本朝上限逼近 6%
-  GROWTH_MIN: 10000,        // 每次结算至少 +1万（低人口也能看出增长）
-  TICK_SEC: 600,            // 人口 / 产出结算周期：10 分钟
+  GROWTH_RATE: 0.06,        // 每个子步向本朝上限逼近 6%（每小时 6 个子步 ≈ 41.85%）
+  GROWTH_MIN: 10000,        // 每个子步至少 +1万（折算每小时 +6万）
+  TICK_SEC: 3600,           // 结算周期：1 小时（对玩家一次结算，内部按 6 个子步累计）
+  SUBTICKS: 6,              // 单次结算内部的子步数：保证每小时产出与人口曲线和 10 分钟口径完全等价
   MERGE_SEED: 4,            // 合成消耗的生命之种
   MERGE_MIN_POP: 20000,     // 被合朝代至少要有 2万 人才能分出 50%
   MERGE_POP_RATE: 0.5,      // 人口转移比例
   MERGE_CAP_RATE: 0.5,      // 上限转移比例
   POP_HARD_CAP: 50000000,   // 单朝代人口 / 上限硬顶（5000万），防溢出与 NaN
-  OUT_FOOD_PER_WAN: 3,      // 每次结算每 1万 人口产出的粮食（洞天资源）
+  OUT_FOOD_PER_WAN: 3,      // 每个子步每 1万 人口产出的粮食（一次结算 = 6 子步累计）
   SEED_ELEM_P: 0.5,         // 五行属性裂缝修复时掉落生命之种的概率
   SEED_ELEM_QTY: 2,         // 上述掉落数量
   SEED_RIFT_BASE: 3,        // 异界裂缝必掉基础数量
@@ -1470,11 +1515,34 @@ const DYNASTY = {
   SEED_MON_TIER_STEP: 5,    // 裂缝怪物每 5 强度 +1
   SUMMON_SEED: 10,          // 每次召唤消耗的生命之种
   ERA_START_MAX: 1,         // 0 次穿越时最多能召唤到的年代下标（清朝 / 明朝）
-  ERA_MAX: 50               // 年代下标硬顶（古四十纪），避免无限膨胀
+  ERA_MAX: 50,              // 年代下标硬顶（古四十纪），避免无限膨胀
+
+  /* --- 朝代职位（v2.9.5）：8 个职位，顺序即 UI 展示顺序 ---
+     加成 = 基础 + 每品阶加成 × (品阶−1)，按位次递减；不占用招贤殿上阵位。
+     神品满编合计 +85%（×1.85），凡品满编 +52%（×1.52）。 */
+  POST_ORDER: ['emperor', 'empress', 'chancellor', 'general', 'consort', 'grandMarshal', 'rightMarshal', 'leftMarshal'],
+  POST_META: {
+    emperor: { name: '皇帝', icon: '👑' },
+    empress: { name: '皇后', icon: '🌸' },
+    chancellor: { name: '丞相', icon: '📜' },
+    general: { name: '将军', icon: '⚔️' },
+    consort: { name: '皇妃', icon: '🎀' },
+    grandMarshal: { name: '大统帅', icon: '🎖️' },
+    rightMarshal: { name: '右统帅', icon: '🛡️' },
+    leftMarshal: { name: '左统帅', icon: '🗡️' }
+  },
+  POST_BASE: {
+    emperor: 0.15, empress: 0.10, chancellor: 0.07, general: 0.06,
+    consort: 0.05, grandMarshal: 0.04, rightMarshal: 0.03, leftMarshal: 0.02
+  },
+  POST_PER_TIER: {
+    emperor: 0.03, empress: 0.02, chancellor: 0.01, general: 0.01,
+    consort: 0.01, grandMarshal: 0.01, rightMarshal: 0.01, leftMarshal: 0.01
+  }
 };
 
 /* 年代 → 主资源。索引与 DYNASTY_NAMES 对齐；超出表长的古纪按 stardust 缓慢递增。
-   数值 = 每次结算每 1万 人口产出的主资源量（粮食另算）。 */
+   数值 = 每个子步（10 分钟）每 1万 人口产出的主资源量；一次小时结算累计 6 个子步（粮食另算）。 */
 const DYNASTY_ERA_RES = [
   { res: 'wood',     per: 4 },      // 清朝
   { res: 'wood',     per: 4 },      // 明朝
@@ -1770,58 +1838,106 @@ const DISCIPLE_TIERS = {
   4: { name: '神品', color: '#e0b060', weight: 3 }
 };
 
-/* bonus 的 k 支持：speed_<技能ID>（该技能动作速度）、speed（全局动作速度）、
-   atk / def / hit / ev / hp（战斗属性）、xp / cultxp（经验与修为）、
-   gold / sell（灵石收益与出售价）、drop（掉落）、mastery（精通）、double（额外产出）、
-   spirit（灵力凝聚）、regen（脱战回血） */
+/* ---------------------------------------------------------------- 任务五行归属
+ * 主动任务（占动作槽）→ 五行。planet（穿越星球）不参与。
+ * 复用既有映射：金→炼器、木→伐木、水→钓鱼、火→炼丹、土→阵法；
+ * 其余按机制语义：采矿/战斗归金（攻伐与金石），熔炼归火（炉火），
+ * 采药/灵植归木，修炼归土（厚德载物），入世归水（随世流转）。 */
+const TASK_ELEM = {
+  woodcutting: 'wood',
+  fishing: 'water',
+  mining: 'metal',
+  smelting: 'fire',
+  crafting: 'metal',
+  herbalism: 'wood',
+  alchemy: 'fire',
+  combat: 'metal',
+  cultivation: 'earth',
+  formation: 'earth',
+  farming: 'wood',
+  thieving: 'water'
+};
+
+/* 五行 id → 显示信息 */
+function elemInfo(id) {
+  for (let i = 0; i < ELEM_RIFT.ELEMENTS.length; i++) {
+    if (ELEM_RIFT.ELEMENTS[i].id === id) return ELEM_RIFT.ELEMENTS[i];
+  }
+  return null;
+}
+
+/* 任务五行 → 显示信息（图标沿用 ELEM_RIFT，均在 Unicode 6.0~7.0） */
+function taskElemInfo(taskKey) {
+  return elemInfo(TASK_ELEM[taskKey]);
+}
+
+/* 信徒五行（v2.9.2）：每位信徒五行齐全，随机一种为主属性。
+ * 品质决定「副属性强度水平」与「主属性倍率」。
+ * 主属性命中：速度 / 经验 / 掉落 各 +mainPower；
+ * 副属性命中：速度 / 经验 / 掉落 各 +power（每个任务都能吃到，但低于主属性）。 */
+DISCIPLE.ALL_ELEMS = ELEM_RIFT.ELEMENTS.map(function (e) { return e.id; });
+DISCIPLE.ELEM_POWER = { 1: 0.020, 2: 0.030, 3: 0.045, 4: 0.065 }; // 副属性基准
+DISCIPLE.MAIN_MULT = { 1: 2.0, 2: 2.2, 3: 2.3, 4: 2.4 };           // 主属性倍率
+DISCIPLE.POWER_JITTER = 0.20;   // 副属性强度在 ±20% 内浮动
+
+/* ---------------------------------------------------------------- 道侣（DAOLV，v2.12.0）
+ * 化道式单向绑定：A 纳 B 时 B 被消耗、从仓库永久移除，A 永久保留加成。
+ * 每名信徒最多 MAX 位道侣，绑定后不可解除。
+ * 单段加成 = RATE × 对方主属性强度 + 相合系数：
+ *   同主属性 +SAME_MAIN；对方主属性生我（金→水→木→火→土→金）+GENERATES；其余 0。
+ * 合计作为乘数 (1 + Σ) 放大该信徒的任务加成（速度 / 经验 / 掉落）；
+ * 不改变朝代职位加成，也不直接影响洞天产出。 */
+const DAOLV = {
+  MAX: 7,                   // 每位信徒的道侣位上限
+  RATE: 0.5,                // 加成基数 = 对方主属性强度 × 该值
+  SAME_MAIN: 0.02,          // 双方主属性相同
+  GENERATES: 0.01,          // 对方主属性生我
+  SHENG: { metal: 'water', water: 'wood', wood: 'fire', fire: 'earth', earth: 'metal' }
+};
+
+/* 主属性强度 = 副属性强度 × 品质倍率（保留三位小数） */
+function discMainPower(tier, power) {
+  const mul = DISCIPLE.MAIN_MULT[tier] || DISCIPLE.MAIN_MULT[1];
+  return Math.round(power * mul * 1000) / 1000;
+}
+
+/* 随机主属性（五行齐全，主属性只决定哪一条吃高倍率） */
+function rollDiscMain() {
+  const pool = DISCIPLE.ALL_ELEMS;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+/* 信徒目录：只保留「身份 + 品阶 + 文案」，不再区分专属作用（旧 bonus 字段已废弃）。
+   实际加成由实例的五行（elems 齐全）、主属性（main）与强度（power）决定：
+   任务五行等于 main 吃主属性高倍率，其余四种吃副属性基础倍率。 */
 const DISCIPLES = [
   /* ---------------------------------------------------------- 凡品 tier 1 */
-  { id: 'd_wood', name: '山樵客', icon: '🌲', tier: 1, bonus: [{ k: 'speed_woodcutting', v: 0.03 }],
-    desc: '山间老樵，伐木手法利落。' },
-  { id: 'd_fish', name: '溪畔渔翁', icon: '🎣', tier: 1, bonus: [{ k: 'speed_fishing', v: 0.03 }],
-    desc: '垂钓半生，知晓鱼汛。' },
-  { id: 'd_mine', name: '挑山工', icon: '⛏️', tier: 1, bonus: [{ k: 'speed_mining', v: 0.03 }],
-    desc: '肩挑千斤，凿石如泥。' },
-  { id: 'd_herb', name: '药圃童子', icon: '🌿', tier: 1, bonus: [{ k: 'speed_herbalism', v: 0.03 }],
-    desc: '自幼识草，辨药极准。' },
-  { id: 'd_farm', name: '田舍翁', icon: '🌾', tier: 1, bonus: [{ k: 'speed_farming', v: 0.03 }],
-    desc: '耕读传家，田地打理得当。' },
-  { id: 'd_learn', name: '抄经生', icon: '📖', tier: 1, bonus: [{ k: 'xp', v: 0.03 }],
-    desc: '日抄经文，助主上参悟。' },
+  { id: 'd_wood', name: '山樵客', icon: '🌲', tier: 1, desc: '山间老樵，伐木手法利落。' },
+  { id: 'd_fish', name: '溪畔渔翁', icon: '🎣', tier: 1, desc: '垂钓半生，知晓鱼汛。' },
+  { id: 'd_mine', name: '挑山工', icon: '⛏️', tier: 1, desc: '肩挑千斤，凿石如泥。' },
+  { id: 'd_herb', name: '药圃童子', icon: '🌿', tier: 1, desc: '自幼识草，辨药极准。' },
+  { id: 'd_farm', name: '田舍翁', icon: '🌾', tier: 1, desc: '耕读传家，田地打理得当。' },
+  { id: 'd_learn', name: '抄经生', icon: '📖', tier: 1, desc: '日抄经文，助主上参悟。' },
 
   /* ---------------------------------------------------------- 灵品 tier 2 */
-  { id: 'd_sword', name: '铸剑侍', icon: '⚔️', tier: 2, bonus: [{ k: 'atk', v: 0.05 }],
-    desc: '随身佩剑，攻伐凌厉。' },
-  { id: 'd_guard', name: '护院武师', icon: '🛡️', tier: 2, bonus: [{ k: 'def', v: 0.05 }],
-    desc: '铁盾护主，临阵不避。' },
-  { id: 'd_alchemy', name: '丹房童子', icon: '⚗️', tier: 2, bonus: [{ k: 'speed_alchemy', v: 0.06 }],
-    desc: '守炉三载，丹火纯熟。' },
-  { id: 'd_smith', name: '炉前匠', icon: '🔥', tier: 2, bonus: [{ k: 'speed_smelting', v: 0.06 }],
-    desc: '控火精准，熔炼极快。' },
-  { id: 'd_gold', name: '账房先生', icon: '📿', tier: 2, bonus: [{ k: 'gold', v: 0.05 }],
-    desc: '精于算计，灵石来路更广。' },
+  { id: 'd_sword', name: '铸剑侍', icon: '⚔️', tier: 2, desc: '随身佩剑，攻伐凌厉。' },
+  { id: 'd_guard', name: '护院武师', icon: '🛡️', tier: 2, desc: '铁盾护主，临阵不避。' },
+  { id: 'd_alchemy', name: '丹房童子', icon: '⚗️', tier: 2, desc: '守炉三载，丹火纯熟。' },
+  { id: 'd_smith', name: '炉前匠', icon: '🔥', tier: 2, desc: '控火精准，熔炼极快。' },
+  { id: 'd_gold', name: '账房先生', icon: '📿', tier: 2, desc: '精于算计，灵石来路更广。' },
 
   /* ---------------------------------------------------------- 仙品 tier 3 */
-  { id: 'd_blade', name: '剑奴', icon: '🗡️', tier: 3, bonus: [{ k: 'atk', v: 0.10 }, { k: 'hit', v: 0.04 }],
-    desc: '剑意入骨，一击必中。' },
-  { id: 'd_medic', name: '药王侍', icon: '💊', tier: 3, bonus: [{ k: 'regen', v: 0.10 }, { k: 'hp', v: 0.06 }],
-    desc: '随身百草，气血自复。' },
-  { id: 'd_star', name: '观星道人', icon: '🔭', tier: 3, bonus: [{ k: 'cultxp', v: 0.10 }],
-    desc: '夜观天象，助主上悟道。' },
-  { id: 'd_trade', name: '商盟执事', icon: '💰', tier: 3, bonus: [{ k: 'gold', v: 0.10 }, { k: 'sell', v: 0.05 }],
-    desc: '八面玲珑，货卖善价。' },
-  { id: 'd_array', name: '阵眼守卫', icon: '🔯', tier: 3, bonus: [{ k: 'ev', v: 0.08 }, { k: 'def', v: 0.06 }],
-    desc: '守阵不移，身法飘忽。' },
+  { id: 'd_blade', name: '剑奴', icon: '🗡️', tier: 3, desc: '剑意入骨，一击必中。' },
+  { id: 'd_medic', name: '药王侍', icon: '💊', tier: 3, desc: '随身百草，气血自复。' },
+  { id: 'd_star', name: '观星道人', icon: '🔭', tier: 3, desc: '夜观天象，助主上悟道。' },
+  { id: 'd_trade', name: '商盟执事', icon: '💰', tier: 3, desc: '八面玲珑，货卖善价。' },
+  { id: 'd_array', name: '阵眼守卫', icon: '🔯', tier: 3, desc: '守阵不移，身法飘忽。' },
 
   /* ---------------------------------------------------------- 神品 tier 4 */
-  { id: 'd_incense', name: '香火金身', icon: '✨', tier: 4, bonus: [{ k: 'xp', v: 0.15 }],
-    desc: '受万家香火，道韵加身。' },
-  { id: 'd_thunder', name: '雷部力士', icon: '⚡', tier: 4, bonus: [{ k: 'atk', v: 0.18 }, { k: 'hit', v: 0.08 }],
-    desc: '雷法在身，出手如霆。' },
-  { id: 'd_crane', name: '白鹤童子', icon: '🕊️', tier: 4, bonus: [{ k: 'speed', v: 0.12 }],
-    desc: '御鹤随行，万事皆快。' },
-  { id: 'd_immortal', name: '剑仙遗蜕', icon: '🌠', tier: 4, bonus: [{ k: 'mastery', v: 0.20 }, { k: 'double', v: 0.05 }],
-    desc: '一缕剑仙残念，助你精进诸艺。' }
+  { id: 'd_incense', name: '香火金身', icon: '✨', tier: 4, desc: '受万家香火，道韵加身。' },
+  { id: 'd_thunder', name: '雷部力士', icon: '⚡', tier: 4, desc: '雷法在身，出手如霆。' },
+  { id: 'd_crane', name: '白鹤童子', icon: '🕊️', tier: 4, desc: '御鹤随行，万事皆快。' },
+  { id: 'd_immortal', name: '剑仙遗蜕', icon: '🌠', tier: 4, desc: '一缕剑仙残念，助你精进诸艺。' }
 ];
 
 function findDisciple(id) {

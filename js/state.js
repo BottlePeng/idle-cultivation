@@ -32,13 +32,16 @@ function defaultState() {
       pop: 2,
       res: { food: 120, wood: 40, stone: 20 },
       /* 朝代：dynasties 每项 { dyn: 年代下标, pop: 人口, cap: 人口上限 }
-         dynAccum：距下一次 10 分钟结算的累计秒数（落盘，离线走同一 tick）
-         dynScale：人口量级标记，旧档（无此字段）读档时按 POP_UNIT 放大一次 */
-      dynasties: [], dynAccum: 0, dynScale: DYNASTY.POP_UNIT
+         dynAccum：距下一次 1 小时结算的累计秒数（落盘，离线走同一 tick）
+         dynScale：人口量级标记，旧档（无此字段）读档时按 POP_UNIT 放大一次
+         dynTick：结算周期标记（3600），缺失/不同表示旧档 10 分钟口径，按比例迁移 */
+      dynasties: [], dynAccum: 0, dynScale: DYNASTY.POP_UNIT, dynTick: DYNASTY.TICK_SEC
     },
 
-    /* 信徒：owned 为仓库中的信徒 id，equipped 的位数由招贤殿等级决定（视作装备栏） */
-    disciples: { owned: [], equipped: [] },
+    /* 信徒（v2.9.0 五行制）：owned 存实例 { uid, id, tier, elems[], power }；
+       assign 存「任务 key → uid」，每个主动任务一个位置，一位信徒只挂一个任务；
+       peak 为历史招募峰值（只增不减），招募费按它计算，防止反复招募删除刷低价 */
+    disciples: { owned: [], assign: {}, peak: 0 },
 
     /* 穿越星球：仅面板打开时运转（items 为飞行中的物品，瞬态不落存档）
        aura 为灵气浓度（长期进度，不随开关清空），cross 为穿越次数 */
@@ -71,6 +74,10 @@ function defaultState() {
     taskTimer: 0,       // 任务检查计时
 
     tasks: {},          // taskId -> { done, claimed }
+    /* 签到（七日循环）：day = 下一次可领的天数（1~7）；lastKey = 最近领取的本地日期
+       'YYYY-MM-DD'；total = 累计领取次数；pending = 第 7 天信徒待入仓（仓库满/未建招贤殿）
+       —— 只按本地日期判定，无服务器时间；异常值在 mergeState 中兜底 */
+    checkin: { day: 1, lastKey: '', total: 0, pending: false },
     ui: { active: 'woodcutting', planetView: 'main', elemSlot: 0, worldView: 'main', dynMerge: -1, autoEat: true, eatFood: 'auto', eatRatio: 0.35, invFilter: 'all', invSellMode: false, itemQty: 1, shopCat: 'general', farmSeedId: null, worldTerrain: 'all' },
     log: [],
     stats: { gathered: 0, crafts: 0, kills: 0, deaths: 0, breaks: 0, pills: 0, gained: {}, perSkill: {}, startedAt: Date.now() },
@@ -235,7 +242,7 @@ function mergeState(def, saved) {
 
   /* 世界 · 洞天：建筑等级按当前配置裁剪（删除过的建筑直接丢弃），资源钳制到容量 */
   if (saved.world && typeof saved.world === 'object') {
-    out.world = { buildings: {}, pop: 0, res: { food: 0, wood: 0, stone: 0 }, dynasties: [], dynAccum: 0, dynScale: DYNASTY.POP_UNIT };
+    out.world = { buildings: {}, pop: 0, res: { food: 0, wood: 0, stone: 0 }, dynasties: [], dynAccum: 0, dynScale: DYNASTY.POP_UNIT, dynTick: DYNASTY.TICK_SEC };
     const sb = saved.world.buildings;
     if (sb && typeof sb === 'object') {
       BUILDINGS.forEach(function (b) {
@@ -272,42 +279,258 @@ function mergeState(def, saved) {
         const cap = Math.max(DYNASTY.BASE_CAP, Math.min(DYNASTY.POP_HARD_CAP, rawCap));
         let pop = Math.max(0, Math.min(DYNASTY.POP_HARD_CAP, rawPop));
         if (pop > cap) pop = cap;
-        out.world.dynasties.push({ dyn: era, pop: pop, cap: cap });
+        /* 职位映射（v2.9.5）：优先读 d.posts；v2.9.4 及更早只有 emperor / empress，
+           平移到通用映射的对应键。非法值此处先置 null，稍后统一做存在性 / 唯一性校验。 */
+        const posts = newDynPosts();
+        if (d.posts && typeof d.posts === 'object') {
+          DYNASTY.POST_ORDER.forEach(function (role) {
+            const uid = d.posts[role];
+            if (typeof uid === 'string' && uid) posts[role] = uid;
+          });
+        }
+        ['emperor', 'empress'].forEach(function (role) {
+          if (posts[role]) return;
+          const uid = d[role];
+          if (typeof uid === 'string' && uid) posts[role] = uid;
+        });
+        out.world.dynasties.push({ dyn: era, pop: pop, cap: cap, posts: posts });
       });
     }
     out.world.dynScale = DYNASTY.POP_UNIT;
-    /* 结算累计秒：缺失按 0；非法或超出 1 个周期按 0 处理，避免读档瞬间连结算 */
+    /* 结算进度：新口径直接沿用；旧档（无 dynTick 或周期不同）按 600s→3600s
+       等比放大 6 倍，保留「已完成百分比」，并夹到 3599 秒内避免读档瞬间补发。
+       正常值域 [0, 3600)；异常值归零。 */
     if (isFinite(saved.world.dynAccum)) {
-      const a = Number(saved.world.dynAccum);
-      out.world.dynAccum = a >= 0 && a < DYNASTY.TICK_SEC ? a : 0;
+      let a = Number(saved.world.dynAccum);
+      if (Number(saved.world.dynTick) !== DYNASTY.TICK_SEC) a *= 6;
+      a = Math.min(DYNASTY.TICK_SEC - 1, a);
+      out.world.dynAccum = a >= 0 ? a : 0;
     }
+    out.world.dynTick = DYNASTY.TICK_SEC;
   }
 
-  /* 信徒：id 必须存在于当前配置；上阵位数量由招贤殿等级决定（未建造 = 0） */
+  /* 信徒：统一规范为「五行齐全 + 主属性」实例（v2.9.2）
+     - v2.9.1 及更早：保留旧 power 的相对水平 → 新副属性 = 旧 power × 50%，
+       主属性优先沿用旧 elems[0]（旧属性本就随机，无需重掷）
+     - v2.9.0 及更早的 id 字符串 → 按目录还原品质，强度与主属性重掷
+     - 新档（已带 main）→ 逐字段校验，非法/缺失值重掷，杜绝 NaN 与重复 uid
+     - v2.9.1 的 assign 只要 uid 仍有效就保留；更早的 equipped 旧上阵者退回仓库
+     - 不额外扣费、不补发资源；总数仍受招贤殿容量限制，超出部分按原顺序丢弃 */
+  out.disciples = { owned: [], assign: {}, peak: 0 };
   {
     const hall = out.world.buildings.summonhall || 0;
-    const slots = hall * DISCIPLE.SLOTS_PER_LVL;
-    out.disciples = { owned: [], equipped: [] };
-    for (let i = 0; i < slots; i++) out.disciples.equipped.push(null);
+    const cap = hall > 0 ? DISCIPLE.BASE_STORE + (hall - 1) * DISCIPLE.STORE_PER_LVL : 0;
+    const sd = (saved.disciples && typeof saved.disciples === 'object') ? saved.disciples : null;
 
-    const sd = saved.disciples;
-    if (sd && typeof sd === 'object') {
-      if (Array.isArray(sd.owned)) {
-        sd.owned.forEach(function (id) { if (findDisciple(id)) out.disciples.owned.push(id); });
+    /* 旧档两处来源合并：仓库 + 上阵（旧档上阵者不在仓库里） */
+    const rawList = [];
+    if (sd && Array.isArray(sd.owned)) rawList.push.apply(rawList, sd.owned);
+    if (sd && Array.isArray(sd.equipped)) rawList.push.apply(rawList, sd.equipped);
+    const rawDao = {};   // uid → 存档里的道侣原始数组（v2.11.0 迁移用）
+
+    const seen = {};
+    rawList.forEach(function (raw) {
+      if (out.disciples.owned.length >= cap) return;
+      const obj = (raw && typeof raw === 'object') ? raw : { id: raw };
+      const cat = findDisciple(obj.id);
+      if (!cat) return;
+
+      /* uid：可复用存档里的合法且不重复值，否则按目录 id 生成稳定 uid */
+      let uid = (typeof obj.uid === 'string' && obj.uid && !seen[obj.uid]) ? obj.uid : '';
+      if (!uid) {
+        let n = 1;
+        do { uid = 'dc_' + cat.id + '_' + n; n += 1; } while (seen[uid]);
       }
-      if (Array.isArray(sd.equipped)) {
-        for (let i = 0; i < slots; i++) {
-          if (findDisciple(sd.equipped[i])) out.disciples.equipped[i] = sd.equipped[i];
+      seen[uid] = true;
+
+      /* 主属性：新档沿用合法 main；v2.9.1 沿用旧 elems[0]；其余随机补掷 */
+      const hasMain = typeof obj.main === 'string';
+      let main;
+      if (hasMain && elemInfo(obj.main)) main = obj.main;
+      else if (Array.isArray(obj.elems) && elemInfo(obj.elems[0])) main = obj.elems[0];
+      else main = rollDiscMain();
+
+      /* 副属性强度：
+         - 旧实例（有 elems、无 main）：旧 power 仅做旧区间钳制，再取 50% 映射到新副属性区间
+         - 无 elems 的旧字符串：按新副属性区间重掷
+         - 新实例（有 main）：校验后沿用，越界重掷 */
+      let power = Number(obj.power);
+      const newBase = DISCIPLE.ELEM_POWER[cat.tier] || DISCIPLE.ELEM_POWER[1];
+      if (!hasMain && Array.isArray(obj.elems) && obj.elems.length > 0) {
+        const oldBase = { 1: 0.04, 2: 0.06, 3: 0.09, 4: 0.13 }[cat.tier] || 0.04;
+        const oldLo = oldBase * (1 - DISCIPLE.POWER_JITTER);
+        const oldHi = oldBase * (1 + DISCIPLE.POWER_JITTER);
+        const oldPower = isFinite(power) ? (power > oldHi ? oldHi : (power < oldLo ? oldLo : power)) : oldBase;
+        power = Math.round(oldPower * 0.5 * 1000) / 1000;
+      } else {
+        const lo = newBase * (1 - DISCIPLE.POWER_JITTER);
+        const hi = newBase * (1 + DISCIPLE.POWER_JITTER);
+        if (!isFinite(power) || power < lo - 1e-9 || power > hi + 1e-9) {
+          power = Math.round((lo + Math.random() * (hi - lo)) * 1000) / 1000;
+        } else {
+          power = Math.round(power * 1000) / 1000;
         }
       }
+
+      /* 五行一律补全为金木水火土齐全；道侣原始记录留到全部实例建好后统一校验 */
+      rawDao[uid] = Array.isArray(obj.dao) ? obj.dao : [];
+      out.disciples.owned.push({
+        uid: uid, id: cat.id, tier: cat.tier,
+        elems: DISCIPLE.ALL_ELEMS.slice(), main: main, power: power, dao: []
+      });
+    });
+
+    /* 道侣（v2.12.0）：每个实例新增 dao[]，记录 { uid, id, tier, main, power, state }（≤7）。
+       state：'spent' 已化道（对方被消耗、加成保留）/ 'dead' 亡故 / 'alive' 旧档对称绑定。
+       校验：非对象 / 非法 uid 丢弃；禁止自我引用与同表重复；超过 7 位截断。
+       被消耗者 uid 不允许留在 owned：只要某条记录声明 spent，就把同 uid 实例移出仓库，
+       并把它在 assign / 朝代职位中的引用交给后续既有校验清空（不会留下悬空 uid）。
+       旧档无 state：有对方实例 → alive，否则 dead；power 优先用存档快照，缺失从对方补。
+       对称修复只针对 alive 记录；spent 记录不补反向、dead 记录保持永久占位。 */
+    {
+      const byUid = {};
+      out.disciples.owned.forEach(function (x) { byUid[x.uid] = x; });
+      const consumed = {};   // 被化道者 uid：本次读档必须从仓库移除
+      out.disciples.owned.forEach(function (x) {
+        const raw = rawDao[x.uid];
+        const list = [];
+        const used = {};
+        if (Array.isArray(raw)) {
+          raw.forEach(function (r) {
+            if (!r || typeof r !== 'object') return;
+            const puid = r.uid;
+            if (typeof puid !== 'string' || !puid || puid === x.uid || used[puid]) return;
+            const partner = byUid[puid];
+            const cat = findDisciple(r.id);
+            if (!partner && !cat) return;
+            const rt = Math.floor(Number(r.tier));
+            const tier = partner ? partner.tier : (rt >= 1 && rt <= 4 ? rt : 1);
+            const rid = cat ? cat.id : (partner ? partner.id : '');
+            const main = (typeof r.main === 'string' && elemInfo(r.main))
+              ? r.main : (partner ? partner.main : rollDiscMain());
+            /* 副属性强度快照：必须落在该品阶的合法区间内，防止改档堆出异常加成 */
+            const base = DISCIPLE.ELEM_POWER[tier] || DISCIPLE.ELEM_POWER[1];
+            const lo = base * (1 - DISCIPLE.POWER_JITTER);
+            const hi = base * (1 + DISCIPLE.POWER_JITTER);
+            let pw = Number(r.power);
+            if (!isFinite(pw) || pw <= 0) pw = partner ? partner.power : (lo + hi) / 2;
+            pw = Math.round(Math.max(lo, Math.min(hi, pw)) * 1000) / 1000;
+            let state;
+            if (r.state === 'spent') state = 'spent';
+            else if (r.state === 'dead' || r.alive === false) state = 'dead';
+            else state = partner ? 'alive' : 'dead';
+            if (state === 'spent') consumed[puid] = true;
+            list.push({ uid: puid, id: rid, tier: tier, main: main, power: pw, state: state });
+            used[puid] = true;
+          });
+        }
+        x.dao = list.slice(0, DAOLV.MAX);
+      });
+
+      /* 被消耗者不得再出现在仓库里（正常存档不会出现；此处兜底改档/旧异常档） */
+      if (Object.keys(consumed).length) {
+        out.disciples.owned = out.disciples.owned.filter(function (x) { return !consumed[x.uid]; });
+        const left = {};
+        out.disciples.owned.forEach(function (x) { left[x.uid] = x; });
+        out.disciples.owned.forEach(function (x) {
+          x.dao.forEach(function (rec) {
+            if (rec.state === 'spent') return;   // 化道声明本身保留
+            if (!left[rec.uid] || consumed[rec.uid]) {
+              rec.state = 'dead';
+              rec.alive = false;
+            }
+          });
+        });
+      }
+
+      const live = {};
+      out.disciples.owned.forEach(function (x) { live[x.uid] = x; });
+      /* 旧档对称修复两轮：only alive 记录；一侧 dead 则双向镜像 */
+      for (let pass = 0; pass < 2; pass++) {
+        out.disciples.owned.forEach(function (a) {
+          a.dao.forEach(function (rec) {
+            if (rec.state === 'spent') return;
+            const b = live[rec.uid];
+            if (!b) { rec.state = 'dead'; return; }
+            let back = null;
+            b.dao.forEach(function (r) { if (r && r.uid === a.uid) back = r; });
+            if (!back) {
+              if (b.dao.length < DAOLV.MAX) {
+                b.dao.push({
+                  uid: a.uid, id: a.id, tier: a.tier, main: a.main,
+                  power: a.power, state: rec.state
+                });
+              } else {
+                rec.state = 'dead';
+              }
+              return;
+            }
+            if (rec.state === 'dead' || back.state === 'dead') {
+              rec.state = 'dead';
+              back.state = 'dead';
+            }
+          });
+        });
+      }
+      out.disciples.owned.forEach(function (x) {
+        if (x.dao.length > DAOLV.MAX) x.dao.length = DAOLV.MAX;
+        /* 兼容旧字段：spent 不写 alive；其余 alive=true 仅表示加成生效 */
+        x.dao.forEach(function (rec) {
+          if (rec.state === 'spent') delete rec.alive;
+          else rec.alive = rec.state !== 'dead';
+        });
+      });
     }
 
-    /* 容量裁剪：上阵数 + 仓库数 ≤ 招贤殿容量，多出的优先保留上阵者 */
-    const cap = hall > 0 ? DISCIPLE.BASE_STORE + (hall - 1) * DISCIPLE.STORE_PER_LVL : 0;
-    let eq = 0;
-    out.disciples.equipped.forEach(function (id) { if (id) eq += 1; });
-    const storeRoom = Math.max(0, cap - eq);
-    if (out.disciples.owned.length > storeRoom) out.disciples.owned.length = storeRoom;
+    /* 上阵分配：任务必须支持五行、uid 必须存在、不超上阵位、一位信徒只挂一个任务 */
+    const slots = hall * DISCIPLE.SLOTS_PER_LVL;
+    const used = {};
+    const savedAssign = (sd && sd.assign && typeof sd.assign === 'object') ? sd.assign : null;
+    if (savedAssign) {
+      Object.keys(savedAssign).forEach(function (taskKey) {
+        if (!TASK_ELEM[taskKey]) return;
+        const uid = savedAssign[taskKey];
+        if (typeof uid !== 'string' || used[uid]) return;
+        let exists = false;
+        out.disciples.owned.forEach(function (x) { if (x.uid === uid) exists = true; });
+        if (!exists) return;
+        if (Object.keys(out.disciples.assign).length >= slots) return;
+        out.disciples.assign[taskKey] = uid;
+        used[uid] = true;
+      });
+    }
+
+    /* 招募峰值：缺失（v2.9.0 及更早）按当前总数兜底，保证费用与旧版一致；
+       异常值一律夹到 [0, 999]，且不低于当前仓库数量 */
+    const sp = Number(sd && sd.peak);
+    out.disciples.peak = Math.min(999, Math.max(
+      out.disciples.owned.length,
+      isFinite(sp) && sp > 0 ? Math.floor(sp) : 0
+    ));
+  }
+
+  /* 朝代职位（v2.9.5）：通用映射 posts{8 个职位}。
+     职位 uid 必须是 owned 中存在、未驻守任务、且全局唯一的信徒。
+     旧档没有 posts → 从 emperor / empress 平滑迁移；非法 / 悬空 / 重复引用一律清空。 */
+  {
+    const ownedUids = {};
+    out.disciples.owned.forEach(function (x) { ownedUids[x.uid] = true; });
+    const assignedUids = {};
+    Object.keys(out.disciples.assign).forEach(function (k) {
+      assignedUids[out.disciples.assign[k]] = true;
+    });
+    const postUsed = {};
+    out.world.dynasties.forEach(function (d) {
+      const src = (d.posts && typeof d.posts === 'object') ? d.posts : {};
+      const clean = newDynPosts();
+      DYNASTY.POST_ORDER.forEach(function (role) {
+        const uid = src[role];
+        if (typeof uid !== 'string' || !uid || !ownedUids[uid] || assignedUids[uid] || postUsed[uid]) return;
+        clean[role] = uid;
+        postUsed[uid] = true;
+      });
+      d.posts = clean;
+    });
   }
 
   /* 锁妖塔：current/best 永久保存且只增不减；pending 必须是「当前层」的待领奖标记。
@@ -360,9 +583,27 @@ function mergeState(def, saved) {
     });
   }
 
+  /* 签到：缺失（旧档）→ 第 1 天可领；日期键必须是合法 'YYYY-MM-DD'，
+     天数夹到 1~CYCLE，累计次数为非负整数，待入仓标记只接受布尔值。
+     不在此处做「断签重置」：由引擎按当前时间惰性判断，读档不写状态。 */
+  out.checkin = { day: 1, lastKey: '', total: 0, pending: false };
+  {
+    const sc = (saved.checkin && typeof saved.checkin === 'object') ? saved.checkin : null;
+    if (sc) {
+      if (isFinite(sc.day)) {
+        out.checkin.day = Math.max(1, Math.min(CHECKIN.CYCLE, Math.floor(Number(sc.day))));
+      }
+      if (typeof sc.lastKey === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(sc.lastKey)) {
+        out.checkin.lastKey = sc.lastKey;
+      }
+      if (isFinite(sc.total)) out.checkin.total = Math.max(0, Math.floor(Number(sc.total)));
+      out.checkin.pending = sc.pending === true;
+    }
+  }
+
   /* UI 偏好 */
   if (saved.ui && typeof saved.ui === 'object') {
-    if (SKILL_ORDER.indexOf(saved.ui.active) >= 0 || saved.ui.active === 'tasks' || saved.ui.active === 'shop' || saved.ui.active === 'bag' || saved.ui.active === 'world' || saved.ui.active === 'disciples' || saved.ui.active === 'planet' || saved.ui.active === 'tower' || saved.ui.active === 'settings') out.ui.active = saved.ui.active;
+    if (SKILL_ORDER.indexOf(saved.ui.active) >= 0 || saved.ui.active === 'tasks' || saved.ui.active === 'shop' || saved.ui.active === 'bag' || saved.ui.active === 'world' || saved.ui.active === 'disciples' || saved.ui.active === 'planet' || saved.ui.active === 'tower' || saved.ui.active === 'settings' || saved.ui.active === 'checkin') out.ui.active = saved.ui.active;
     if (typeof saved.ui.autoEat === 'boolean') out.ui.autoEat = saved.ui.autoEat;
     if (typeof saved.ui.eatFood === 'string') out.ui.eatFood = saved.ui.eatFood;
     if (isFinite(saved.ui.eatRatio)) out.ui.eatRatio = Math.max(0.1, Math.min(0.9, Number(saved.ui.eatRatio)));

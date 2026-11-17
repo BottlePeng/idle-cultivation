@@ -20,6 +20,37 @@ function setHTML(sel, html) {
   if (el) el.innerHTML = html;
 }
 
+/* ------------------------------------------------------- 应用内确认弹窗
+ * 不使用 window.confirm：在 Electron / 预览壳里它可能被替换为异步对话框，
+ * 返回值会在玩家点击前就成立。这里只有「确认」按钮会执行 onOk，
+ * 取消 / Esc / 点击遮罩只关闭弹窗，绝不写入存档。 */
+const CONFIRM_UI = { open: false, onOk: null, onCancel: null };
+
+function showConfirm(title, body, onOk, onCancel) {
+  if (CONFIRM_UI.open) return;
+  const mask = document.getElementById('confirmMask');
+  if (!mask) return;   /* 没有弹窗 DOM 时失败关闭，绝不静默执行 */
+  CONFIRM_UI.open = true;
+  CONFIRM_UI.onOk = onOk || null;
+  CONFIRM_UI.onCancel = onCancel || null;
+  document.getElementById('confirmTitle').textContent = title || '确认';
+  document.getElementById('confirmBody').textContent = body || '';
+  mask.classList.remove('hidden');
+  const ok = document.getElementById('confirmOk');
+  if (ok) ok.focus();
+}
+
+function closeConfirm(ok) {
+  if (!CONFIRM_UI.open) return;
+  const mask = document.getElementById('confirmMask');
+  if (mask) mask.classList.add('hidden');
+  const cb = ok ? CONFIRM_UI.onOk : CONFIRM_UI.onCancel;
+  CONFIRM_UI.open = false;
+  CONFIRM_UI.onOk = null;
+  CONFIRM_UI.onCancel = null;
+  if (cb) cb();
+}
+
 function esc(s) {
   return String(s).replace(/[&<>"]/g, function (c) {
     return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
@@ -192,7 +223,25 @@ function renderSidebar() {
     '<span class="slvl">成就与奖励' + (doneN ? ' <span class="badge">' + doneN + '</span>' : '') + '</span></span>' +
     '</button>';
 
-  /* 2. 背包（第二位） */
+  /* 2. 签到（每日一次，可领时挂感叹号） */
+  const ckPlan = checkinPlan();
+  const onCk = state.ui.active === 'checkin' ? ' on' : '';
+  let ckSub = '';
+  if (ckPlan.state === 'clockback') ckSub = '系统时间异常';
+  else if (ckPlan.state === 'done') {
+    const n = state.checkin.day === 1 ? CHECKIN.CYCLE : state.checkin.day - 1;
+    ckSub = '连续 ' + n + '/' + CHECKIN.CYCLE + ' · 明日再来';
+  } else {
+    ckSub = '今日可领 · 第 ' + ckPlan.day + ' 天 <span class="badge">!</span>';
+  }
+  html +=
+    '<button class="skillbtn checkinbtn' + onCk + '" data-act="select" data-skill="checkin">' +
+    '<span class="sico">📅</span>' +
+    '<span class="sinfo"><span class="sname">签到</span><br>' +
+    '<span class="slvl">' + ckSub + '</span></span>' +
+    '</button>';
+
+  /* 3. 背包（第三位） */
   const onBag = state.ui.active === 'bag' ? ' on' : '';
   html +=
     '<button class="skillbtn bagbtn' + onBag + '" data-act="select" data-skill="bag">' +
@@ -288,7 +337,7 @@ function renderSidebar() {
   const onDisc = state.ui.active === 'disciples' ? ' on' : '';
   const dInfo = discipleUnlocked()
     ? ('上阵 ' + discipleEquippedCount() + '/' + discipleSlots() +
-       ' · 仓库 ' + discipleTotal() + '/' + discipleStoreCap())
+       ' · 信徒 ' + discipleTotal() + '/' + discipleStoreCap())
     : '需营造招贤殿';
   html +=
     '<button class="skillbtn discbtn' + onDisc + '" data-act="select" data-skill="disciples">' +
@@ -331,6 +380,7 @@ function skillHeader(id) {
      鼠标悬停状态被反复清空 —— 这就是按钮"闪烁"的根因。 */
   return '<div class="phead"><h2>' + sk.icon + ' ' + sk.name + '</h2>' +
     '<span class="pdesc">' + sk.desc + '</span></div>' +
+    (TASK_ELEM[id] ? taskElemBar(id) : '') +
     '<div class="pxp"><div class="bar"><i class="xpfill" data-xpbar="' + id + '" style="width:' + (li.pct * 100).toFixed(1) + '%"></i></div>' +
     '<div class="xptext">' + lvlLabel + ' · ' +
     (li.max ? '已臻圆满' : '<span data-xp="' + id + '"></span>') + '</div></div>';
@@ -626,6 +676,106 @@ function renderTasks() {
   return html;
 }
 
+/* ========================================================== 签到 · 七日循环 */
+/* 把一天奖励拆成可读行：资源 → 道具/装备 → 信徒 */
+function checkinRewardLines(rec) {
+  const out = [];
+  if (rec.gold) out.push('💠 ' + fmtNum(rec.gold) + ' 灵石');
+  if (rec.spirit) out.push('✨ ' + fmtNum(rec.spirit) + ' 灵力');
+  if (rec.stardust) out.push('💫 ' + fmtNum(rec.stardust) + ' 星砂');
+  if (rec.seed) out.push('🌱 ' + fmtNum(rec.seed) + ' 生命之种');
+  (rec.items || []).forEach(function (i) { out.push(itemIcon(i.id) + ' ' + itemName(i.id) + '×' + i.qty); });
+  if (rec.disciple) out.push('👑 神品信徒 ×1');
+  return out;
+}
+
+/* 面板是静态骨架：只有日期状态 / 已领天数变化才会改写 HTML；
+   右上角倒计时挂在 [data-ck="cd"] 上，由 updateCheckinState 每秒改文本。 */
+function renderCheckin() {
+  const plan = checkinPlan();
+  const c = state.checkin;
+  /* streak：本轮已连续签到天数；doneThrough：卡片上「已领取」到第几天
+     领取后 c.day 指向「下一次可领」，因此已领到 c.day - 1（领完第 7 天后 c.day = 1） */
+  const streak = plan.state === 'done'
+    ? (c.day === 1 ? CHECKIN.CYCLE : c.day - 1)
+    : Math.max(0, plan.day - 1);
+  const doneThrough = plan.state === 'done'
+    ? (c.day === 1 ? CHECKIN.CYCLE : c.day - 1)
+    : (plan.broken ? 0 : plan.day - 1);
+
+  let html = '<div class="phead"><h2>📅 签到 · 七日循环</h2>' +
+    '<span class="pdesc">按本地日期判定，每日 00:00 重置；连续 7 天为一轮，第 7 天可得神品信徒与神玉剑。</span></div>';
+
+  html += '<div class="ckstat">' +
+    '<span class="ckchip">本轮连续 <b>' + streak + ' / ' + CHECKIN.CYCLE + '</b></span>' +
+    '<span class="ckchip">累计签到 <b>' + c.total + '</b> 次</span>' +
+    '<span class="ckchip">距重置 <b data-ck="cd">--:--:--</b></span>' +
+    '</div>';
+
+  if (plan.state === 'clockback') {
+    html += '<div class="dynnote warn">检测到系统日期早于上次签到日期（' + c.lastKey +
+      '），签到已锁定。请校准系统时间后刷新页面，签到进度不会丢失。</div>';
+  } else if (plan.broken) {
+    html += '<div class="dynnote warn">连续签到已中断（上次 ' + c.lastKey +
+      '），本次从第 1 天重新开始。</div>';
+  }
+  if (c.pending) {
+    html += '<div class="dynnote warn">第 7 天的「👑 神品信徒」待入仓：当前未营造招贤殿或信徒仓库已满。' +
+      '腾出 1 个信徒位后会自动补发。</div>';
+  }
+
+  html += '<div class="ckclaimbar">';
+  if (plan.state === 'ready') {
+    html += '<button class="btn ckclaim" data-act="checkin">签到 · 领取第 ' + plan.day + ' 天</button>' +
+      '<span class="cknote">今日可领「' + CHECKIN.DAYS[plan.day - 1].name + '」</span>';
+  } else if (plan.state === 'done') {
+    html += '<button class="btn ckclaim" disabled>今日已签到</button>' +
+      '<span class="cknote">明日 00:00 后可继续（下一个是第 ' + c.day + ' 天）</span>';
+  } else {
+    html += '<button class="btn ckclaim" disabled>系统时间异常</button>' +
+      '<span class="cknote">请校准系统时间后刷新页面</span>';
+  }
+  html += '</div>';
+
+  html += '<div class="secttl">七日奖励</div><div class="ckdays">';
+  CHECKIN.DAYS.forEach(function (rec) {
+    const done = rec.day <= doneThrough;
+    const isToday = plan.state === 'ready' && rec.day === plan.day;
+    const cls = 'ckday' + (rec.day === CHECKIN.CYCLE ? ' big' : '') +
+      (done ? ' done' : '') + (isToday ? ' today' : '');
+    html += '<div class="' + cls + '">' +
+      '<div class="ckd-top"><span class="ckd-no">第 ' + rec.day + ' 天</span>' +
+      '<span class="ckd-ic">' + rec.icon + '</span></div>' +
+      '<div class="ckd-name">' + rec.name + '</div>' +
+      '<div class="ckd-rw">' + checkinRewardLines(rec).map(function (s) {
+        return '<span>' + s + '</span>';
+      }).join('') + '</div>' +
+      '<div class="ckd-s">' + (done ? '✅ 已领取' : (isToday ? '🎁 今日可领' : '未解锁')) + '</div>' +
+      '</div>';
+  });
+  html += '</div>';
+
+  html += '<div class="secttl">规则</div><div class="shopnote">' +
+    '每日 00:00（本地时间）重置，同一天只能签到一次；连续 7 天为一轮，第 7 天领完自动回到第 1 天。' +
+    '漏签 1 天即视为断签，下一次签到从第 1 天重新开始（7 日阶梯以连续为前提，断签只需重走一轮）。' +
+    '第 7 天的神品信徒随机身份、随机主属性，不占上阵位，但占用招贤殿仓库容量；' +
+    '未建招贤殿或仓库已满时会暂存，腾出位置后自动补发。' +
+    '道具奖励需要背包空位：格位不足时签到会被拒绝并提示，避免奖励丢失。' +
+    '</div>';
+
+  return html;
+}
+
+/* 只改倒计时文本（每秒变化，不参与 setHTML 签名） */
+function updateCheckinState() {
+  const el = document.querySelector('[data-ck="cd"]');
+  if (!el) return;
+  const s = Math.max(0, Math.floor(checkinNextResetMs() / 1000));
+  const p = function (n) { return n < 10 ? '0' + n : String(n); };
+  const txt = p(Math.floor(s / 3600)) + ':' + p(Math.floor(s % 3600 / 60)) + ':' + p(s % 60);
+  if (el.textContent !== txt) el.textContent = txt;
+}
+
 /* 穿越星球面板：中心星球 + 四周飞来的灵石 / 星砂 / 材料 */
 /* 星球面板：只渲染一次静态骨架，所有每 tick 变化的值都走 data-* 增量更新。
    飞行物挂在 #planetItems 容器里，由 updatePlanet 按 pid 增删，不再整树重写。 */
@@ -723,6 +873,7 @@ function renderTower() {
     '<span class="pdesc">无尽层挑战：每层一场独立战斗，击败后先领奖再进入下一层。' +
     '层数与难度永久累积、永不重置；阵亡只判本次失败，不降层，可原地重试。' +
     '挑战占用全局动作槽：开始时会中断其它动作，切换到其它动作会中断挑战。</span></div>' +
+    taskElemBar('combat') +
     '<div class="planetdyn">' +
     '<span class="pbchip">当前层 <b data-tower="floor">1</b></span>' +
     '<span class="pbchip">最高已通关 <b data-tower="best">1</b></span>' +
@@ -848,6 +999,7 @@ function renderRift() {
     '<div class="phead"><h2>🌀 异界裂缝</h2>' +
     '<span class="pdesc">穿越成功后出现的异界裂隙。击败裂缝中的妖物即可完成修复；未修复时无法进行下一次穿越。' +
     '战斗占用全局动作槽，阵亡不惩罚、裂缝保持未修复，疗伤后可原地重试。</span></div>' +
+    taskElemBar('combat') +
     '<div class="planetdyn">' +
     '<span class="pbchip">裂缝层级 <b data-rift="tier">第 0 层</b></span>' +
     '<span class="pbchip">状态 <b data-rift="state">未修复</b></span>' +
@@ -1017,6 +1169,7 @@ function renderElemRift() {
     '<div class="phead"><h2>🪐 五行属性裂缝</h2>' +
     '<span class="pdesc">独立于异界裂缝的材料副本：击败裂缝即可修复并获得对应工作的当前档材料，' +
     '不影响穿越门槛。每 3 小时整轮刷新，修复位置留空到下一轮。战斗占用全局动作槽，阵亡不消耗裂缝。</span></div>' +
+    taskElemBar('combat') +
     '<div class="planetdyn">' +
     '<span class="pbchip">属性 <b data-eg="ename">—</b></span>' +
     '<span class="pbchip">强度 <b data-eg="tier">0</b></span>' +
@@ -1174,6 +1327,7 @@ function renderRiftMon() {
     '<span class="pdesc">独立于异界裂缝与五行属性裂缝的常驻怪物：同时只存在 1 只，每 24 小时按真实时间刷新。' +
     '未击败时无法开启星球运转（穿越不受影响）；击败后发放灵石 + 星砂，当天不再出现，等下一轮刷新。' +
     '战斗占用全局动作槽，阵亡不消耗怪物、不降强度。</span></div>' +
+    taskElemBar('combat') +
     '<div class="planetdyn">' +
     '<span class="pbchip">强度 <b data-rm="tier">0</b></span>' +
     '<span class="pbchip">状态 <b data-rm="state">存在</b></span>' +
@@ -1868,6 +2022,46 @@ function updateWorldState() {
 }
 
 /* ==================================================== 洞天 · 朝代（v2.5.0） */
+/* 朝代职位行（v2.9.5 · 8 个岗位）：已就任只读并标注不可取下；空缺给出下拉候选。
+   候选 = 未驻守任务 + 未担任其它朝代职位的信徒。 */
+function dynPostRowHTML(d, idx, role, cands) {
+  const label = dynPostName(role);
+  const icon = dynPostIcon(role);
+  const uid = d.posts ? d.posts[role] : null;
+  if (uid) {
+    const inst = discInstance(uid);
+    const cat = inst ? findDisciple(inst.id) : null;
+    if (inst && cat) {
+      const t = DISCIPLE_TIERS[inst.tier];
+      const e = elemInfo(inst.main);
+      const b = dynPostRoleBonus(role, inst);
+      return '<div class="dpost filled" style="--rc:' + t.color + '" title="上任后不可取下、不可更换，也没有任何撤销入口">' +
+        '<span class="dprole">' + icon + ' ' + label + '</span>' +
+        '<b class="dpbonus">+' + Math.round(b * 100) + '%</b>' +
+        '<span class="dpmain">' + cat.icon + ' ' + cat.name +
+        ' <em>' + t.name + '·主' + (e ? e.name : inst.main) + '</em></span>' +
+        '<button class="mini" disabled>已就任</button>' +
+        '<span class="dplock" title="不可取下、不可更换">🔒</span></div>';
+    }
+  }
+  if (!cands) cands = discAvailableForPost();
+  let sel = '<select class="dsel" data-act="dynpost" data-idx="' + idx + '" data-role="' + role + '"' +
+    ' title="不可逆：上任后不可取下、不可更换"' + (cands.length ? '' : ' disabled') +
+    '><option value="">— 空缺 · 上阵后不可取下 —</option>';
+  cands.forEach(function (inst) {
+    const cat = findDisciple(inst.id);
+    if (!cat) return;
+    const t = DISCIPLE_TIERS[inst.tier];
+    const e = elemInfo(inst.main);
+    sel += '<option value="' + inst.uid + '">' + cat.name + '（' + t.name + '·主' +
+      (e ? e.name : inst.main) + '）</option>';
+  });
+  sel += '</select>';
+  return '<div class="dpost"><span class="dprole">' + icon + ' ' + label + '</span>' +
+    '<b class="dpbonus off">+' + Math.round((DYNASTY.POST_BASE[role] || 0) * 100) + '%</b>' +
+    sel + '</div>';
+}
+
 /* 静态骨架 + data-dyn 占位：人口 / 上限 / 产出 / 倒计时都由 updateDynastyState
    增量写入，10 分钟一次结算不会触发 #content 整树重建。 */
 function renderWorldDynasty() {
@@ -1907,23 +2101,52 @@ function renderWorldDynasty() {
       dynastyName(w.dynasties[mergeIdx].dyn) + '</b>（第 ' + (mergeIdx + 1) + ' 位 · 当前 ' +
       fmtPop(w.dynasties[mergeIdx].pop) + ' / ' + fmtPop(w.dynasties[mergeIdx].cap) +
       '）· 点击另一个同名卡片的「并入」完成合成；' +
-      '<em class="dynwarn">被并入的朝代将消失并腾出 1 个朝代位</em>，消耗 🌱' + DYNASTY.MERGE_SEED +
+      '<em class="dynwarn">被并入的朝代将消失并腾出 1 个朝代位，其所有在任职位会永久消失</em>，消耗 🌱' + DYNASTY.MERGE_SEED +
       '<button class="mini" data-act="dynmergecancel">取消</button></div>';
   }
 
   html += '<div class="dyncards">';
+  const postCands = discAvailableForPost();
   w.dynasties.forEach(function (d, i) {
     const color = findDynastyEraColor(d.dyn);
     const r = dynastyEraRes(d.dyn);
-    const resLab = { food: '🌾', wood: '🌲', stone: '⛰️', gold: '💠', stardust: '🌠' }[r.res] || '🌾';
+    const resMeta = {
+      food: { icon: '🌾', name: '粮食' },
+      wood: { icon: '🌲', name: '木材' },
+      stone: { icon: '⛰️', name: '石料' },
+      gold: { icon: '💠', name: '灵石' },
+      stardust: { icon: '🌠', name: '星砂' }
+    }[r.res] || { icon: '🌾', name: '粮食' };
+    const eraName = dynastyName(d.dyn);
+    const crest = eraName.replace(/朝$/, '').slice(0, 1) || '朝';
+    const postBonus = dynastyPostBonus(d);
+    const filledPosts = DYNASTY.POST_ORDER.filter(function (role) {
+      return d.posts && d.posts[role];
+    }).length;
     const canMergeHere = mergeIdx >= 0 && mergeIdx !== i && w.dynasties[mergeIdx] && w.dynasties[mergeIdx].dyn === d.dyn;
     const hasPartner = w.dynasties.some(function (o, j) { return j !== i && o.dyn === d.dyn; });
-    html += '<div class="dyncard' + (mergeIdx === i ? ' targeting' : '') + '" style="--dc:' + color + '">' +
-      '<div class="dynhead"><span class="dynico">🕰️</span><b>' + dynastyName(d.dyn) + '</b>' +
-      '<span class="dyntag">第 ' + (i + 1) + ' 位</span></div>' +
-      '<div class="dynrow"><span>人口</span><b data-dyn="pop-' + i + '">—</b><span class="dyncap">/ <i data-dyn="cap-' + i + '">—</i></span></div>' +
+    html += '<article class="dyncard' + (mergeIdx === i ? ' targeting' : '') + '" style="--dc:' + color + '">' +
+      '<header class="dc-head">' +
+      '<span class="dc-crest" aria-hidden="true">' + crest + '</span>' +
+      '<div class="dc-title">' +
+      '<div class="dc-name">' + eraName + '<span class="dc-slot">第 ' + (i + 1) + ' 位</span></div>' +
+      '<div class="dc-era">🕰️ 年代 ' + (d.dyn + 1) + ' · 主产 ' + resMeta.icon + ' ' + resMeta.name + '</div>' +
+      '</div></header>' +
+      '<div class="dc-pop"><span>人口</span><b data-dyn="pop-' + i + '">—</b>' +
+      '<span class="dc-cap">/ <i data-dyn="cap-' + i + '">—</i> 上限</span></div>' +
       '<div class="dynbar2"><i data-dyn="bar-' + i + '" style="width:0%"></i></div>' +
-      '<div class="dynout">' + resLab + ' 每次结算 <b data-dyn="out-' + i + '">—</b> · 🌾 <b data-dyn="food-' + i + '">—</b></div>' +
+      '<div class="dc-out">' +
+      '<span class="dc-out-item">🌾 粮食 <b data-dyn="food-' + i + '">—</b></span>' +
+      '<span class="dc-out-item">' + resMeta.icon + ' ' + resMeta.name + ' <b data-dyn="out-' + i + '">—</b></span>' +
+      (postBonus > 0 ? '<span class="dynmul">职位 ×' + (1 + postBonus).toFixed(2) + '</span>' : '') +
+      '</div>' +
+      '<section class="dc-court">' +
+      '<div class="dc-court-head"><span>🏛️ 朝堂职位</span><span class="dc-court-n">' +
+      filledPosts + ' / ' + DYNASTY.POST_ORDER.length + '</span></div>' +
+      '<div class="dynposts">' + DYNASTY.POST_ORDER.map(function (role) {
+        return dynPostRowHTML(d, i, role, postCands);
+      }).join('') + '</div>' +
+      '</section>' +
       '<div class="dynact">' +
       (mergeIdx >= 0
         ? (canMergeHere
@@ -1934,24 +2157,31 @@ function renderWorldDynasty() {
           : '<button class="mini" disabled title="' +
             (w.dynasties.length < 2 ? '至少需要两个朝代，且同名才能合成' : '没有同名朝代可合成') +
             '">合成</button>')) +
-      '</div></div>';
+      '</div></article>';
   });
   for (let i = w.dynasties.length; i < slots; i++) {
-    html += '<div class="dyncard empty"><div class="dynhead"><span class="dynico">➕</span><b>空位</b></div>' +
-      '<div class="dynempty">消耗 🌱' + DYNASTY.SUMMON_SEED + ' 召唤一位朝代生灵</div></div>';
+    html += '<div class="dyncard empty">' +
+      '<div class="dc-empty-plus">➕</div>' +
+      '<div class="dc-empty-t">空位</div>' +
+      '<div class="dc-empty-s">消耗 🌱' + DYNASTY.SUMMON_SEED + ' 召唤一位朝代生灵</div></div>';
   }
   html += '</div>';
 
   html += '<div class="secttl">规则</div>' +
-    '<div class="shopnote">每个朝代是独立人口池：每 ' + (DYNASTY.TICK_SEC / 60) +
-    ' 分钟结算一次，按人口产出粮食与该年代对应的主资源（清朝/明朝 → 木材，元朝/宋朝/三国 → 石料，唐朝/南北朝/两晋/周朝/商朝 → 灵石，夏朝及古纪 → 星砂）。' +
-    '人口每次结算向本朝上限逼近 ' + Math.round(DYNASTY.GROWTH_RATE * 100) + '%（至少 +' + fmtPop(DYNASTY.GROWTH_MIN) +
+    '<div class="shopnote">每个朝代是独立人口池：每 ' + (DYNASTY.TICK_SEC / 3600) +
+    ' 小时结算一次，按人口产出粮食与该年代对应的主资源（清朝/明朝 → 木材，元朝/宋朝/三国 → 石料，唐朝/南北朝/两晋/周朝/商朝 → 灵石，夏朝及古纪 → 星砂）。' +
+    '人口每小时向上限逼近 ' + Math.round((Math.pow(1 + DYNASTY.GROWTH_RATE, DYNASTY.SUBTICKS) - 1) * 100) +
+    '%（至少 +' + fmtPop(DYNASTY.GROWTH_MIN * DYNASTY.SUBTICKS) +
     '），上限只能靠合成同名朝代提升。合成消耗 🌱' + DYNASTY.MERGE_SEED +
     '：目标获得被合者 ' + Math.round(DYNASTY.MERGE_POP_RATE * 100) + '% 人口与 ' +
-    Math.round(DYNASTY.MERGE_CAP_RATE * 100) + '% 上限，被合者失去这部分但不会消失。' +
+    Math.round(DYNASTY.MERGE_CAP_RATE * 100) + '% 上限，被合者随即消失并腾出 1 个朝代位。' +
     '生命之种来自穿越星球飞行物（' + Math.round(PLANET.W_SEED * 100) + '%）、五行属性裂缝（' +
     Math.round(DYNASTY.SEED_ELEM_P * 100) + '% 掉 ' + DYNASTY.SEED_ELEM_QTY + ' 颗）、异界裂缝与裂缝怪物（必掉）。' +
-    '召唤 / 合成不占用动作槽，结算为后台被动推进，离线同样按同一 tick 结算（受 12 小时离线上限约束）。</div>';
+    '召唤 / 合成不占用动作槽，结算为后台被动推进，离线同样按同一 tick 结算（受 12 小时离线上限约束）。' +
+    '每朝有 ' + DYNASTY.POST_ORDER.length + ' 个职位（皇帝 / 皇后 / 丞相 / 将军 / 皇妃 / 大统帅 / 右统帅 / 左统帅），' +
+    '从「未驻守任务、未担任其它朝代职位」的信徒中任命，加成同时作用于粮食与该年代主资源；' +
+    '<b>上任后不可取下、不可更换</b>，遣散该信徒会使职位空缺。朝代被合成时，其所有在任职位不会转移到目标朝代，' +
+    '而是<b class="dynwarn">随朝代一起永久消失（从信徒仓库移除，无法恢复）</b>。职位不占用招贤殿上阵位。</div>';
 
   return html;
 }
@@ -1986,8 +2216,8 @@ function updateDynastyState() {
     const out = dynastyOutput(d);
     set('pop-' + i, fmtPop(pop));
     set('cap-' + i, fmtPop(cap));
-    set('out-' + i, (Math.round(out.amount * 10) / 10) + '/次');
-    set('food-' + i, (Math.round(out.food * 10) / 10) + '/次');
+    set('out-' + i, (Math.round(out.amount * DYNASTY.SUBTICKS * 10) / 10) + '/小时');
+    set('food-' + i, (Math.round(out.food * DYNASTY.SUBTICKS * 10) / 10) + '/小时');
     const bar = c.querySelector('[data-dyn="bar-' + i + '"]');
     if (bar) {
       const pct = Math.max(0, Math.min(1, pop / cap)) * 100;
@@ -2140,25 +2370,208 @@ function renderThieving() {
   return html;
 }
 
-/* ============================================================ 信徒 · 招募 */
-const DISCIPLE_LABEL = {
-  speed: '全局动作速度', atk: '攻击', def: '防御', hit: '命中', ev: '闪避', hp: '生命上限',
-  xp: '全技能经验', cultxp: '打坐修为', gold: '灵石收益', sell: '出售价', drop: '掉落率',
-  mastery: '精通经验', double: '额外产出', spirit: '灵力凝聚', regen: '脱战回血'
-};
+/* ============================================================ 信徒 · 五行 */
+/* 五行徽标：配色复用「五行属性裂缝」的 ELEM_RIFT 配置 */
+function elemChipHTML(id) {
+  const e = elemInfo(id);
+  if (!e) return '';
+  return '<span class="elechip" style="--ec:' + e.color + '">' + e.icon + ' ' + e.name + '</span>';
+}
 
-/* 信徒加成文案：speed_<技能ID> 显示为「某技能速度」 */
-function discipleBonusText(d) {
-  return d.bonus.map(function (b) {
-    let label;
-    if (b.k.indexOf('speed_') === 0) {
-      const sid = b.k.slice(6);
-      label = (SKILLS[sid] ? SKILLS[sid].name : sid) + '速度';
+/* 强度文本：0.065 → 6.5% */
+function discPct(v) { return (Math.round(v * 1000) / 10) + '%'; }
+
+/* 信徒五行条：五行齐全；主属性高亮并带「主」标，命中当前任务的一条加虚线描边 */
+function discElemsHTML(inst, taskKey) {
+  const mp = discMainPower(inst.tier, inst.power);
+  const hitEl = taskKey ? TASK_ELEM[taskKey] : '';
+  return '<span class="delems">' +
+    DISCIPLE.ALL_ELEMS.map(function (id) {
+      const e = elemInfo(id);
+      if (!e) return '';
+      const isMain = id === inst.main;
+      const hit = hitEl && hitEl === id;
+      return '<span class="elechip' + (isMain ? ' main' : '') + (hit ? ' hit' : '') +
+        '" style="--ec:' + e.color + '" title="' + e.name + (isMain ? '（主属性）' : '（副属性）') + '">' +
+        e.icon + e.name + ' ' + discPct(isMain ? mp : inst.power) +
+        (isMain ? '<b class="emain">主</b>' : '') + '</span>';
+    }).join('') + '</span>';
+}
+
+/* 道侣区块（v2.12.0）：已化道 / 亡故 / 旧档存活三种 chip + 空位 + 结契下拉。
+   已化道为金色实线 chip（加成永久生效）；亡故为灰色虚线 chip（无加成）。 */
+function discDaoHTML(inst) {
+  if (!Array.isArray(inst.dao)) inst.dao = [];
+  const used = inst.dao.length;
+  const bonus = discDaoBonus(inst);
+  let chips = '';
+  inst.dao.forEach(function (rec) {
+    if (!rec) return;
+    const cat = findDisciple(rec.id);
+    const t = DISCIPLE_TIERS[rec.tier] || DISCIPLE_TIERS[1];
+    const label = cat ? cat.name : (rec.id || '旧识');
+    if (rec.state === 'spent') {
+      const b = daoPairBonus(inst, daoRecordSource(rec));
+      chips += '<span class="ddchip spent" style="--rc:' + t.color + '" title="' +
+        esc(label) + ' · ' + t.name + ' · 已化道 · 加成 +' + discPct(b) +
+        '（永久生效，不可移除）">🌟 ' + esc(label) +
+        '<em>+' + discPct(b) + '</em><i>已化道</i></span>';
+    } else if (rec.state === 'dead') {
+      chips += '<span class="ddchip dead" title="' + esc(label) +
+        ' 已亡故：道侣位永久占用、加成消失、不可恢复">💔 ' + esc(label) + ' · 亡故</span>';
     } else {
-      label = DISCIPLE_LABEL[b.k] || b.k;
+      /* 旧档遗留的对称绑定：对方仍在仓库，按实时实例计算 */
+      const other = discInstance(rec.uid);
+      const b = other ? daoPairBonus(inst, other) : 0;
+      chips += '<span class="ddchip" style="--rc:' + t.color + '" title="' +
+        esc(label) + ' · ' + t.name + ' · 加成 +' + discPct(b) + '">💞 ' + esc(label) +
+        '<em>+' + discPct(b) + '</em></span>';
     }
-    return label + ' +' + Math.round(b.v * 100) + '%';
-  }).join(' · ');
+  });
+  for (let i = used; i < DAOLV.MAX; i++) chips += '<span class="ddchip empty">＋</span>';
+
+  let pick = '';
+  if (used < DAOLV.MAX) {
+    const cands = discDaoCandidates(inst);
+    let opts = '';
+    cands.forEach(function (x) {
+      const cat = findDisciple(x.id);
+      if (!cat) return;
+      const t = DISCIPLE_TIERS[x.tier];
+      const me = elemInfo(x.main);
+      const at = discAssignedTask(x.uid);
+      const post = discDynPost(x.uid);
+      let tag = '待命';
+      if (post) tag = '任' + dynPostName(post.role);
+      else if (at) tag = '驻' + (SKILLS[at] ? SKILLS[at].name : at);
+      if (x.dao.length) tag += '·道侣' + x.dao.length;
+      opts += '<option value="' + x.uid + '">' + esc(cat.name) + '（' + t.name + '·主' +
+        (me ? me.name : x.main) + '）· ' + esc(tag) + '</option>';
+    });
+    pick = '<select class="dsel" data-act="daolv" data-uid="' + inst.uid + '"' +
+      (opts ? '' : ' disabled') + '>' +
+      (opts
+        ? '<option value="">— 选择同修结为道侣（对方将化道） —</option>' + opts
+        : '<option value="">— 暂无可结契的同修 —</option>') +
+      '</select>';
+  }
+
+  return '<div class="ddaolv">' +
+    '<div class="ddlvhead"><span class="ddlvtitle">💞 道侣</span>' +
+    '<b class="ddlvnum">' + used + ' / ' + DAOLV.MAX + '</b>' +
+    '<span class="ddlvbns' + (bonus > 0 ? '' : ' zero') + '">五行加成 +' + discPct(bonus) + '</span></div>' +
+    '<div class="ddlvchips">' + chips + '</div>' + pick + '</div>';
+}
+
+/* 结契确认：写明 B 被消耗、永久移除，并逐项列出任务 / 职位 / 既有道侣后果 */
+function daolvConfirm(a, b) {
+  const ca = findDisciple(a.id);
+  const cb = findDisciple(b.id);
+  const na = ca ? ca.name : a.id;
+  const nb = cb ? cb.name : b.id;
+  const at = discAssignedTask(b.uid);
+  const post = discDynPost(b.uid);
+  const broken = [];
+  if (Array.isArray(b.dao)) {
+    b.dao.forEach(function (rec) {
+      if (!rec || rec.state === 'dead' || rec.state === 'spent') return;
+      const p = discInstance(rec.uid);
+      if (p && p.uid !== a.uid) broken.push(daoName(p));
+    });
+  }
+  const gain = daoPairBonus(a, b);
+  return '确定将「' + nb + '」化道，并纳为「' + na + '」的道侣？\n\n' +
+    '· 「' + nb + '」将被消耗：从信徒仓库永久移除、不可恢复，' +
+    '也不再出现在任务席位、朝代职位与道侣候选中。\n' +
+    '· 「' + na + '」永久获得 +' + discPct(gain) + ' 五行任务加成（对方主属性 ' +
+    (DAOLV.RATE * 100) + '% 基数；同主属性再 +' + (DAOLV.SAME_MAIN * 100) +
+    '%，相生再 +' + (DAOLV.GENERATES * 100) + '%）。\n' +
+    '· 该道侣记录不可解除，占用「' + na + '」1 个道侣位（' +
+    (discDaoUsed(a) + 1) + ' / ' + DAOLV.MAX + '）。\n' +
+    (at ? '· 「' + nb + '」当前驻守「' + (SKILLS[at] ? SKILLS[at].name : at) +
+      '」，结契时将自动卸下。\n' : '') +
+    (post ? '· 「' + nb + '」当前担任「' + dynastyName(post.d.dyn) + '」' + dynPostName(post.role) +
+      '，结契后该职位将空缺。\n' : '') +
+    (broken.length
+      ? '· 「' + nb + '」现有 ' + broken.length + ' 段道侣关系（' + broken.join('、') +
+        '）将全部断绝：对方道侣位永久占用、加成归零。\n'
+      : '· 「' + nb + '」没有其它在世道侣关系。\n') +
+    '\n确认后立即生效，无法撤销。';
+}
+
+/* 任务席位下拉：列出仓库里所有信徒（已被别的任务占用的会标注） */
+function discOptionsHTML(taskKey) {
+  const cur = state.disciples.assign[taskKey] || '';
+  let html = '<option value="">— 空缺 —</option>';
+  state.disciples.owned.forEach(function (inst) {
+    const cat = findDisciple(inst.id);
+    if (!cat) return;
+    /* 朝代职位不可更换：该信徒不出现在任务的候选里 */
+    if (discDynPost(inst.uid)) return;
+    const t = DISCIPLE_TIERS[inst.tier];
+    const at = discAssignedTask(inst.uid);
+    const tag = (at && at !== taskKey) ? '（现驻' + (SKILLS[at] ? SKILLS[at].name : at) + '）' : '';
+    const me = elemInfo(inst.main);
+    html += '<option value="' + inst.uid + '"' + (inst.uid === cur ? ' selected' : '') + '>' +
+      cat.name + '（' + t.name + '·主' + (me ? me.name : inst.main) + ' ' +
+      discPct(discMainPower(inst.tier, inst.power)) + ' / 副 ' + discPct(inst.power) + '）' + tag + '</option>';
+  });
+  return html;
+}
+
+/* 遣散确认文案：把品质 / 五行 / 主副强度 / 驻守任务与不可恢复写清楚 */
+function discDeleteConfirm(inst) {
+  const cat = findDisciple(inst.id);
+  const t = DISCIPLE_TIERS[inst.tier];
+  const at = discAssignedTask(inst.uid);
+  const names = DISCIPLE.ALL_ELEMS.map(function (e) {
+    const el = elemInfo(e);
+    return el ? el.name : e;
+  }).join('、');
+  const me = elemInfo(inst.main);
+  const post = discDynPost(inst.uid);
+  const daoN = discDaoUsed(inst);
+  let daoSpentN = 0, daoDeadN = 0;
+  (inst.dao || []).forEach(function (rec) {
+    if (!rec) return;
+    if (rec.state === 'spent') daoSpentN += 1;
+    else if (rec.state === 'dead') daoDeadN += 1;
+  });
+  const daoLiveN = daoLivePartnerCount(inst);
+  return '确定遣散「' + (cat ? cat.name : inst.id) + '」？\n\n' +
+    '品质：' + t.name + '\n' +
+    '五行：' + names + '（齐全）\n' +
+    '主属性：' + (me ? me.name : inst.main) + ' +' + discPct(discMainPower(inst.tier, inst.power)) + '\n' +
+    '副属性：各 +' + discPct(inst.power) + '\n' +
+    (at ? '当前驻守：' + (SKILLS[at] ? SKILLS[at].name : at) + '（删除后将自动撤下）\n' : '') +
+    (post ? '当前职位：' + dynastyName(post.d.dyn) + dynPostName(post.role) +
+      '（删除后该职位将空缺，不可恢复）\n' : '') +
+    (daoN ? '道侣：' + daoN + ' / ' + DAOLV.MAX + '（已化道 ' + daoSpentN + '、亡故 ' + daoDeadN +
+      '、在世 ' + daoLiveN + '）；删除后其道侣记录一并消失' +
+      (daoLiveN ? '，在世道侣的对应位永久空缺、加成消失' : '') + '，不可恢复\n' : '') +
+    (!at && !post ? '当前状态：待命中\n' : '') +
+    '\n删除后不可恢复。';
+}
+
+/* 任务面板顶部：任务五行归属 + 已上阵信徒 + 匹配状态 */
+function taskElemBar(taskKey) {
+  if (!TASK_ELEM[taskKey]) return '';
+  const ti = taskDiscInfo(taskKey);
+  let right;
+  if (!ti) {
+    right = '<span class="telemnone">未上阵信徒</span>';
+  } else {
+    const t = DISCIPLE_TIERS[ti.inst.tier];
+    const suffix = taskKey === 'farming' ? '产量/经验' : '全效';
+    right = '<span class="telemdisc" style="--rc:' + t.color + '">' + ti.cat.icon + ' ' + ti.cat.name +
+      '（' + t.name + '）' + discElemsHTML(ti.inst, taskKey) +
+      (ti.mainHit
+        ? '<b class="tmatch ok">主属性命中 · ' + suffix + '</b>'
+        : '<b class="tmatch sub">副属性命中 · ' + suffix + '</b>') +
+      '</span>';
+  }
+  return '<div class="telembar"><span class="telemtag">任务五行 ' + elemChipHTML(TASK_ELEM[taskKey]) + '</span>' +
+    right + '<button class="mini" data-act="select" data-skill="disciples">信徒面板</button></div>';
 }
 
 function renderDisciples() {
@@ -2166,11 +2579,12 @@ function renderDisciples() {
   const cap = discipleStoreCap();
   const slots = discipleSlots();
   const d = state.disciples;
+  const slotsFull = discipleEquippedCount() >= slots;
 
   let html = '<div class="sdbar"><span class="sdico">🙏</span>' +
     '<span class="sdname">信徒</span><b class="sdval" data-dcount>' + discipleTotal() + ' / ' + cap + '</b>' +
-    '<span class="sdnote">信徒视作装备，当前可上阵 ' + slots + ' 位（招贤殿每级 +1）· 招贤殿 Lv.' + hall +
-    ' · 加成常驻，不占用动作槽</span></div>';
+    '<span class="sdnote">每位信徒五行齐全，随机 1 种主属性（强度高于其余四种）；每个主动任务可上阵 1 位，' +
+    '主属性命中吃高加成，副属性命中吃基础加成。上阵位 ' + slots + '（招贤殿每级 +1）</span></div>';
 
   if (!hall) {
     const req = findBuilding('summonhall').req;
@@ -2187,47 +2601,66 @@ function renderDisciples() {
   html += '<div class="drecruit"><button class="btn" data-act="recruit">' +
     '<span>🙏 招募信徒</span> <b data-dcost>💠' + fmtNum(cost) + '</b></button>' +
     '<span class="qhint">每多一位信徒，下次招募费 ×' + DISCIPLE.RECRUIT_GROW +
-    '；仓库总容量 ' + cap + ' 位（含上阵）</span></div>';
+    '（按历史招募峰值计算，遣散不会降价）；仓库总容量 ' + cap + ' 位（含上阵）</span></div>';
 
-  /* 上阵格：数量 = 招贤殿等级 */
-  html += '<div class="secttl">上阵（' + discipleEquippedCount() + ' / ' + slots +
-    ' · 点击已上阵信徒可卸下）</div>';
-  html += '<div class="dslots">';
-  for (let i = 0; i < slots; i++) {
-    const id = d.equipped[i];
-    const dd = id ? findDisciple(id) : null;
-    if (!dd) {
-      html += '<div class="dslot empty"><span class="dico">➕</span>' +
-        '<span class="dname">空位</span><span class="dnote">待信徒入座</span></div>';
+  /* 上阵分配：每个主动任务一个席位（穿越星球除外） */
+  html += '<div class="secttl">上阵分配（' + discipleEquippedCount() + ' / ' + slots + '）</div>';
+  html += '<div class="dtasklist">';
+  SKILL_ORDER.forEach(function (key) {
+    const ti = taskDiscInfo(key);
+    let seat;
+    if (ti) {
+      const t = DISCIPLE_TIERS[ti.inst.tier];
+      seat = '<span class="dseatstat" style="--rc:' + t.color + '">' + ti.cat.icon + ' ' + ti.cat.name +
+        discElemsHTML(ti.inst, key) +
+        (ti.mainHit ? '<b class="tmatch ok">主属性</b>' : '<b class="tmatch sub">副属性</b>') + '</span>' +
+        '<button class="mini" data-act="dunassign" data-task="' + key + '">撤下</button>';
     } else {
-      const t = DISCIPLE_TIERS[dd.tier];
-      html += '<div class="dslot" data-act="dunfollow" data-slot="' + i + '" style="--rc:' + t.color + '"' +
-        ' title="' + esc(dd.desc) + '">' +
-        '<span class="dico">' + dd.icon + '</span>' +
-        '<span class="dname">' + dd.name + '</span>' +
-        '<span class="dnote">' + t.name + ' · ' + discipleBonusText(dd) + '</span></div>';
+      seat = '<span class="dseatnone">空缺</span>';
     }
-  }
+    seat += '<select class="dsel" data-act="dassign" data-task="' + key + '"' +
+      (!ti && slotsFull ? ' disabled title="上阵位已满：先撤下一位，或升级招贤殿"' : '') + '>' +
+      discOptionsHTML(key) + '</select>';
+    html += '<div class="dtaskrow">' +
+      '<span class="dtname">' + SKILLS[key].icon + ' ' + SKILLS[key].name + elemChipHTML(TASK_ELEM[key]) + '</span>' +
+      seat + '</div>';
+  });
   html += '</div>';
 
   /* 仓库 */
-  html += '<div class="secttl">信徒仓库（待命 ' + d.owned.length + ' 位）</div>';
+  html += '<div class="secttl">信徒仓库（共 ' + d.owned.length + ' 位）</div>';
   if (!d.owned.length) {
     html += '<div class="empty">仓库空空，先招募一位信徒吧。</div>';
     return html;
   }
   html += '<div class="dgrid">';
-  d.owned.forEach(function (id) {
-    const dd = findDisciple(id);
+  d.owned.forEach(function (inst) {
+    const dd = findDisciple(inst.id);
     if (!dd) return;
-    const t = DISCIPLE_TIERS[dd.tier];
+    const t = DISCIPLE_TIERS[inst.tier];
+    const at = discAssignedTask(inst.uid);
+    let stat;
+    const post = discDynPost(inst.uid);
+    if (post) {
+      stat = '<span class="dstat ok">担任「' + dynastyName(post.d.dyn) + '」' +
+        dynPostName(post.role) + ' · 不可取下</span>';
+    } else if (!at) {
+      stat = '<span class="dstat">待命中</span>';
+    } else {
+      const mainHit = TASK_ELEM[at] === inst.main;
+      stat = '<span class="dstat' + (mainHit ? ' ok' : '') + '">驻守「' + (SKILLS[at] ? SKILLS[at].name : at) + '」· ' +
+        (mainHit ? '主属性命中' : '副属性命中') + '</span>' +
+        '<button class="mini" data-act="dunassign" data-task="' + at + '">撤下</button>';
+    }
     html += '<div class="formcard dcard" style="--rc:' + t.color + '">' +
       '<div class="fhead"><span class="fico">' + dd.icon + '</span>' +
       '<span class="fmain"><span class="fname">' + dd.name +
       '<b class="blvl">' + t.name + '</b></span>' +
       '<span class="fdesc">' + dd.desc + '</span></span></div>' +
-      '<div class="fmod"><span class="fmname">' + discipleBonusText(dd) + '</span>' +
-      '<button class="mini" data-act="dfollow" data-id="' + id + '">装备</button>' +
+      '<div class="dchips">' + discElemsHTML(inst, at) + '</div>' +
+      discDaoHTML(inst) +
+      '<div class="fmod">' + stat +
+      '<button class="mini danger" data-act="deldisc" data-uid="' + inst.uid + '">遣散</button>' +
       '</div></div>';
   });
   html += '</div>';
@@ -2250,16 +2683,12 @@ function updateDiscipleState() {
   }
   const cnt = c.querySelector('[data-dcount]');
   if (cnt) cnt.textContent = discipleTotal() + ' / ' + cap;
-  const slotsFull = discipleEquippedCount() >= discipleSlots();
-  c.querySelectorAll('[data-act="dfollow"]').forEach(function (el) {
-    if (slotsFull) el.setAttribute('data-locked', '1');
-    else el.removeAttribute('data-locked');
-  });
 }
 
 function renderContent() {
   const id = state.ui.active;
   if (id === 'tasks') { setHTML('#content', renderTasks()); return; }
+  if (id === 'checkin') { setHTML('#content', renderCheckin()); updateCheckinState(); return; }
   if (id === 'shop') { setHTML('#content', renderShop()); return; }
   if (id === 'planet') {
     if (state.ui.planetView === 'rift') {
@@ -2879,6 +3308,7 @@ function updateBars() {
   updateElemRiftMini();
   updateRiftMon();
   updateRiftMonMini();
+  if (state.ui.active === 'checkin') updateCheckinState();
 
   /* 战斗血条（对战视图） */
   const content = $('#content');

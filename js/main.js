@@ -154,6 +154,13 @@ function handleClick(e) {
     /* 任务领取 */
     case 'claim': claimTask(id); break;
 
+    /* 签到：领取今日奖励（按本地日期判定，领取后立即落盘防重复） */
+    case 'checkin':
+      claimCheckin();
+      renderAll();
+      updateCheckinState();
+      return;
+
     /* 背包筛选 */
     case 'filter': state.ui.invFilter = id; hideInvPopover(); break;
 
@@ -210,12 +217,45 @@ function handleClick(e) {
     case 'dynmerge':
       state.ui.dynMerge = Math.max(0, Math.floor(Number(id) || 0));
       break;
-    case 'dynmergetarget':
-      mergeDynasty(state.ui.dynMerge, Math.max(0, Math.floor(Number(id) || 0)));
-      state.ui.dynMerge = -1;
-      renderAll();
-      updateDynastyState();
+    case 'dynmergetarget': {
+      const ti = state.ui.dynMerge;
+      const si = Math.max(0, Math.floor(Number(id) || 0));
+      const tgt = state.world.dynasties[ti];
+      const src = state.world.dynasties[si];
+      if (!tgt || !src) { renderAll(); return; }
+      const lost = [];
+      DYNASTY.POST_ORDER.forEach(function (role) {
+        const uid = src.posts ? src.posts[role] : null;
+        if (!uid) return;
+        const inst = discInstance(uid);
+        const cat = inst ? findDisciple(inst.id) : null;
+        lost.push((cat ? cat.name : uid) + '（' + dynPostName(role) + '）');
+      });
+      const msg = '确定将「' + dynastyName(src.dyn) + '」（第 ' + (si + 1) + ' 位）并入「' +
+        dynastyName(tgt.dyn) + '」（第 ' + (ti + 1) + ' 位）？\n\n' +
+        '被并入的朝代将消失并腾出 1 个朝代位。' +
+        (lost.length
+          ? '\n该朝代的' + lost.join('、') + '将随朝代一起消失，无法恢复。'
+          : '\n该朝代没有在任职位。') +
+        '\n\n此操作不可撤销。';
+      const doMerge = function () {
+        mergeDynasty(ti, si);
+        state.ui.dynMerge = -1;
+        renderAll();
+        updateDynastyState();
+      };
+      const cancelMerge = function () {
+        renderAll();
+        updateDynastyState();
+      };
+      showConfirm('朝代合成确认', msg, function () {
+        if (!lost.length) { doMerge(); return; }
+        const warn = '再次确认：' + lost.join('、') +
+          '将随朝代一起永久消失（从信徒仓库移除），无法恢复，也不退还招募费。\n\n确定继续合成？';
+        showConfirm('二次确认', warn, doMerge, cancelMerge);
+      }, cancelMerge);
       return;
+    }
     case 'dynmergecancel':
       state.ui.dynMerge = -1;
       break;
@@ -232,10 +272,20 @@ function handleClick(e) {
     /* 世界 · 营造建筑 */
     case 'build': buildBuilding(id); break;
 
-    /* 信徒：招募 / 上阵 / 卸下 */
+    /* 信徒：招募 / 上阵（下拉选择）/ 撤下 / 遣散（二次确认） */
     case 'recruit': recruitDisciple(); break;
-    case 'dfollow': equipDisciple(id); break;
-    case 'dunfollow': unequipDisciple(Number(el.dataset.slot)); break;
+    case 'dunassign': unassignDisciple(el.dataset.task || ''); break;
+    case 'deldisc': {
+      const inst = discInstance(el.dataset.uid || '');
+      if (inst) {
+        showConfirm('遣散确认', discDeleteConfirm(inst), function () {
+          removeDisciple(inst.uid);
+          renderAll();
+          updateDiscipleState();
+        });
+      }
+      return;
+    }
 
     /* 阵法 · 点亮阵纹 */
     case 'formup': formUpgrade(id, Number(el.dataset.idx)); break;
@@ -258,13 +308,13 @@ function handleClick(e) {
     case 'heal': healWithSpirit(); break;
     case 'save': saveState(); showToast('<h4>💾 已保存进度</h4>'); break;
     case 'reset':
-      if (window.confirm('确定要重开吗？当前所有进度将被清空。')) {
+      showConfirm('重开确认', '确定要重开吗？当前所有进度将被清空。', function () {
         resetGame();
         state.ui.active = 'woodcutting';
         hideToast();
         renderAll();
-      }
-      break;
+      });
+      return;
     case 'clearlog': state.log = []; break;
     case 'closetoast': hideToast(); return;
 
@@ -276,6 +326,17 @@ function handleClick(e) {
 
 function bindEvents() {
   document.addEventListener('click', handleClick);
+
+  /* 应用内确认弹窗：只有「确认」按钮执行 onOk */
+  const okBtn = document.getElementById('confirmOk');
+  const cancelBtn = document.getElementById('confirmCancel');
+  const mask = document.getElementById('confirmMask');
+  if (okBtn) okBtn.addEventListener('click', function () { closeConfirm(true); });
+  if (cancelBtn) cancelBtn.addEventListener('click', function () { closeConfirm(false); });
+  if (mask) mask.addEventListener('click', function (e) { if (e.target === mask) closeConfirm(false); });
+  document.addEventListener('keydown', function (e) {
+    if (CONFIRM_UI.open && e.key === 'Escape') { e.preventDefault(); closeConfirm(false); }
+  });
 
   /* 点击背包弹层外区域时关闭弹层 */
   document.addEventListener('click', function (e) {
@@ -293,6 +354,66 @@ function bindEvents() {
   document.addEventListener('change', function (e) {
     const t = e.target;
     if (!t) return;
+    /* 朝代职位：任命即刻锁定，应用内确认写明不可取下 / 更换 */
+    if (t.dataset && t.dataset.act === 'dynpost') {
+      const idx = Math.floor(Number(t.dataset.idx));
+      const role = t.dataset.role;
+      const uid = t.value;
+      /* 原生 select 的选中值会先于确认生效；先复位，弹窗本身即待确认态 */
+      t.value = '';
+      if (uid) {
+        const d = state.world.dynasties[idx];
+        const inst = discInstance(uid);
+        const cat = inst ? findDisciple(inst.id) : null;
+        const label = dynPostName(role);
+        showConfirm('职位任命确认',
+          '确定任命「' + (cat ? cat.name : uid) + '」为「' +
+          (d ? dynastyName(d.dyn) : '') + '」' + label + '？\n\n' +
+          '上任后不可取下、不可更换；该信徒将无法再驻守任何任务，也无法被其它朝代任命。',
+          function () {
+            assignDynastyPost(idx, role, uid);
+            renderAll();
+            updateDynastyState();
+          },
+          function () {
+            renderAll();
+            updateDynastyState();
+          });
+      } else {
+        renderAll();
+        updateDynastyState();
+      }
+      return;
+    }
+    /* 道侣：选择只打开确认弹窗，不直接改 owned / assign / 职位 / 道侣记录。
+       只有弹窗「确认」按钮的回调会调用 bindDaolv；取消 / Esc / 遮罩一律不改数据。 */
+    if (t.dataset && t.dataset.act === 'daolv') {
+      const a = discInstance(t.dataset.uid || '');
+      const bUid = t.value || '';
+      t.value = '';
+      const b = discInstance(bUid);
+      if (a && b) {
+        showConfirm('化道确认', daolvConfirm(a, b), function () {
+          bindDaolv(a.uid, b.uid);
+          renderAll();
+          updateDiscipleState();
+        }, function () {
+          renderAll();
+          updateDiscipleState();
+        });
+      } else {
+        renderAll();
+        updateDiscipleState();
+      }
+      return;
+    }
+    if (t.dataset && t.dataset.act === 'dassign') {
+      if (t.value) assignDisciple(t.dataset.task || '', t.value);
+      else unassignDisciple(t.dataset.task || '');
+      renderAll();
+      updateDiscipleState();
+      return;
+    }
     if (t.dataset && t.dataset.qtyinput !== undefined) {
       setItemQty(Number(t.value));
       renderAll();

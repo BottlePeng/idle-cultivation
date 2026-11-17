@@ -59,6 +59,18 @@
   <div id="toast" class="hidden"></div>
   <div id="invPopover" class="hidden"></div>
 
+  <!-- 应用内确认弹窗：确认按钮是唯一执行入口，Esc / 遮罩 / 取消只关闭 -->
+  <div id="confirmMask" class="hidden">
+    <div class="confirmbox" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+      <h3 id="confirmTitle">确认</h3>
+      <div id="confirmBody" class="confirmbody"></div>
+      <div class="confirmbtns">
+        <button class="btn ghost small" id="confirmCancel">取消</button>
+        <button class="btn small" id="confirmOk">确认</button>
+      </div>
+    </div>
+  </div>
+
   <script src="js/data.js"></script>
   <script src="js/state.js"></script>
   <script src="js/engine.js"></script>

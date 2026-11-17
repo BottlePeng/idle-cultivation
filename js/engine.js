@@ -204,7 +204,7 @@ function invRemove(id, qty) {
 function sellPrice(id) {
   const it = ITEMS[id];
   if (!it) return 0;
-  return Math.max(1, Math.floor((it.value || 0) * CONFIG.SELL_RATIO * (1 + formBonus('sell') + discipleBonus('sell')) * (1 + worldBonus('sell'))));
+  return Math.max(1, Math.floor((it.value || 0) * CONFIG.SELL_RATIO * (1 + formBonus('sell')) * (1 + worldBonus('sell'))));
 }
 
 /* 出售 qty 个物品（qty 为负数表示全部出售） */
@@ -441,13 +441,91 @@ function dynastyEraRes(era) {
 }
 function dynastyName(era) { return planetDynastyName(era); }
 
-/* 单个朝代每次结算的产出：人口按「万」折算，避免放大人口后资源也放大一万倍 */
+/* 单个朝代每次结算的产出：人口按「万」折算，避免放大人口后资源也放大一万倍。
+   v2.9.3：皇帝 / 皇后的职位加成同时作用于粮食与该年代主资源。 */
 function dynastyOutput(d) {
   const r = dynastyEraRes(d.dyn);
   const pop = Math.max(0, Number(d.pop) || 0);
   const wan = pop / DYNASTY.POP_UNIT;
-  const out = { food: wan * DYNASTY.OUT_FOOD_PER_WAN, res: r.res, amount: wan * r.per };
+  const mul = 1 + dynastyPostBonus(d);
+  const out = { food: wan * DYNASTY.OUT_FOOD_PER_WAN * mul, res: r.res, amount: wan * r.per * mul, mul: mul };
   return out;
+}
+
+/* ============================================ 朝代职位（8 个岗位） */
+function dynPostName(role) {
+  const meta = DYNASTY.POST_META[role];
+  return meta ? meta.name : role;
+}
+function dynPostIcon(role) {
+  const meta = DYNASTY.POST_META[role];
+  return meta ? meta.icon : '•';
+}
+/* 新建一个朝代的空职位表（固定 8 个键，值均为 null） */
+function newDynPosts() {
+  const p = {};
+  DYNASTY.POST_ORDER.forEach(function (role) { p[role] = null; });
+  return p;
+}
+
+/* 职位加成：基础 + 每品阶加成 × (品阶−1)。缺人返回 0。 */
+function dynPostRoleBonus(role, inst) {
+  if (!inst) return 0;
+  const base = DYNASTY.POST_BASE[role] || 0;
+  const per = DYNASTY.POST_PER_TIER[role] || 0;
+  const raw = Number(inst.tier);
+  const tier = isFinite(raw) ? Math.max(1, Math.min(4, Math.floor(raw))) : 1;
+  return base + per * (tier - 1);
+}
+function dynPostBonus(d, role) {
+  if (!d || !d.posts || !d.posts[role]) return 0;
+  return dynPostRoleBonus(role, discInstance(d.posts[role]));
+}
+/* 单个朝代 8 个职位加成之和（满编神品 = 0.85） */
+function dynastyPostBonus(d) {
+  if (!d) return 0;
+  let sum = 0;
+  DYNASTY.POST_ORDER.forEach(function (role) { sum += dynPostBonus(d, role); });
+  return sum;
+}
+
+/* 信徒当前担任的朝代职位：{ d, idx, role }；没有则 null */
+function discDynPost(uid) {
+  const list = (state.world && Array.isArray(state.world.dynasties)) ? state.world.dynasties : [];
+  for (let i = 0; i < list.length; i++) {
+    const posts = list[i].posts;
+    if (!posts) continue;
+    for (let j = 0; j < DYNASTY.POST_ORDER.length; j++) {
+      const role = DYNASTY.POST_ORDER[j];
+      if (posts[role] === uid) return { d: list[i], idx: i, role: role };
+    }
+  }
+  return null;
+}
+
+/* 可上任的信徒：未驻守任务、未担任任何朝代职位 */
+function discAvailableForPost() {
+  return state.disciples.owned.filter(function (inst) {
+    return !discAssignedTask(inst.uid) && !discDynPost(inst.uid);
+  });
+}
+
+/* 上任：不可取下、不可更换；一位信徒全局只能有一个身份（任务 / 职位） */
+function assignDynastyPost(idx, role, uid) {
+  const d = state.world.dynasties[Math.floor(Number(idx))];
+  if (!d) return false;
+  if (DYNASTY.POST_ORDER.indexOf(role) < 0) return false;
+  if (!d.posts) d.posts = newDynPosts();
+  if (d.posts[role]) { logMsg('该职位已有人就任，不可更换。', 'warn'); return false; }
+  const inst = discInstance(uid);
+  if (!inst) return false;
+  if (discAssignedTask(uid)) { logMsg('该信徒正在驻守任务，需先在信徒面板撤下。', 'warn'); return false; }
+  if (discDynPost(uid)) { logMsg('该信徒已担任其它朝代职位。', 'warn'); return false; }
+  d.posts[role] = uid;
+  const cat = findDisciple(inst.id);
+  logMsg('「' + (cat ? cat.name : inst.id) + '」就任「' + dynastyName(d.dyn) + '」' + dynPostName(role) +
+    '，该朝产出 +' + Math.round(dynPostRoleBonus(role, inst) * 100) + '%（不可取下）。', 'good');
+  return true;
 }
 
 /* 召唤：随机年代（不超过当前可召唤上限），人口与上限取初始值 */
@@ -472,9 +550,9 @@ function summonDynasty() {
   const max = dynastyEraMax();
   const era = randInt(0, max);
   state.seed -= DYNASTY.SUMMON_SEED;
-  w.dynasties.push({ dyn: era, pop: DYNASTY.START_POP, cap: DYNASTY.BASE_CAP });
+  w.dynasties.push({ dyn: era, pop: DYNASTY.START_POP, cap: DYNASTY.BASE_CAP, posts: newDynPosts() });
   logMsg('生命之种萌发，「' + dynastyName(era) + '」生灵降世（人口 ' + fmtPop(DYNASTY.START_POP) +
-    ' / ' + fmtPop(DYNASTY.BASE_CAP) + '，每 ' + (DYNASTY.TICK_SEC / 60) + ' 分钟结算一次）。', 'good');
+    ' / ' + fmtPop(DYNASTY.BASE_CAP) + '，每 ' + (DYNASTY.TICK_SEC / 3600) + ' 小时结算一次）。', 'good');
   return true;
 }
 
@@ -502,6 +580,58 @@ function mergeDynasty(targetIdx, srcIdx) {
   const dstName = dynastyName(dst.dyn);
   const movePop = src.pop * DYNASTY.MERGE_POP_RATE;
   const moveCap = Math.max(DYNASTY.GROWTH_MIN, Math.ceil(src.cap * DYNASTY.MERGE_CAP_RATE));
+  /* 先记录被合朝代的职位（v2.9.4 起随朝代一起永久消失） */
+  const lostPosts = [];
+  const lostUids = [];
+  const srcPosts = src.posts || {};
+  DYNASTY.POST_ORDER.forEach(function (role) {
+    const uid = srcPosts[role];
+    if (!uid) return;
+    lostUids.push(uid);
+    const inst = discInstance(uid);
+    const cat = inst ? findDisciple(inst.id) : null;
+    lostPosts.push((cat ? cat.name : uid) + '（' + dynPostName(role) + '）');
+  });
+
+  /* ------------------------------------------------------------------
+   * v2.9.3 旧行为（释放回信徒仓库）：注释保留，可一键切回。
+   * 旧逻辑不删除 state.disciples.owned 中的实例，只让职位引用随朝代对象消失，
+   * 因此信徒会回到仓库、可再次任命或驻守任务。旧日志片段：
+   *   (lostPosts.length ? ' 原皇帝/皇后 ' + lostPosts.join('、') +
+   *     ' 已失去职位并回到信徒仓库。' : '')
+   * 切回方式：注释掉下方「v2.9.4 新行为」整段，恢复上面的释放语义与旧日志即可。
+   * ------------------------------------------------------------------ */
+  // (v2.9.3 释放分支：不删除 owned / assign，信徒保留)
+
+  /* v2.9.4 新行为（销毁分支）：皇帝 / 皇后随朝代一起永久消失。
+     同步清理任务驻守与所有朝代职位引用，保证不留下悬空 uid；
+     不退还招募费、不修改 peak（招募费仍按历史峰值计算）。
+     道侣（v2.11.0）：其道侣位记录同样永久标记为亡故，对方加成消失且不可恢复。 */
+  let widowed = 0;
+  lostUids.forEach(function (uid) {
+    const inst = discInstance(uid);
+    if (inst) widowed += daoLivePartnerCount(inst);
+  });
+  lostUids.forEach(function (uid) {
+    if (state.disciples.assign) {
+      Object.keys(state.disciples.assign).forEach(function (k) {
+        if (state.disciples.assign[k] === uid) delete state.disciples.assign[k];
+      });
+    }
+    list.forEach(function (dd) {
+      if (!dd.posts) return;
+      DYNASTY.POST_ORDER.forEach(function (role) {
+        if (dd.posts[role] === uid) dd.posts[role] = null;
+      });
+    });
+    daoWidow(uid);
+    const inst = discInstance(uid);
+    if (inst) {
+      const oi = state.disciples.owned.indexOf(inst);
+      if (oi >= 0) state.disciples.owned.splice(oi, 1);
+    }
+  });
+
   /* 先移除被合者（dst 是对象引用，不受 splice 影响），再给目标加人口与上限 */
   list.splice(si, 1);
   dst.pop = Math.min(DYNASTY.POP_HARD_CAP, dst.pop + movePop);
@@ -509,7 +639,9 @@ function mergeDynasty(targetIdx, srcIdx) {
   if (dst.pop > dst.cap) dst.pop = dst.cap;
   state.seed -= DYNASTY.MERGE_SEED;
   logMsg('「' + srcName + '」（第 ' + (si + 1) + ' 位）并入「' + dstName + '」（第 ' + (ti + 1) +
-    ' 位）后消失：人口 +' + fmtPop(movePop) + '、上限 +' + fmtPop(moveCap) + '，腾出 1 个朝代位。', 'good');
+    ' 位）后消失：人口 +' + fmtPop(movePop) + '、上限 +' + fmtPop(moveCap) + '，腾出 1 个朝代位。' +
+    (lostPosts.length ? ' 该朝代的 ' + lostPosts.join('、') + ' 已随朝代一起消失，无法恢复。' : '') +
+    (widowed ? ' 其 ' + widowed + ' 段道侣关系随之断绝，对方道侣位永久空缺、加成消失。' : ''), 'warn');
   return true;
 }
 
@@ -528,27 +660,32 @@ function dynastyTick(dt) {
   }
 }
 
+/* 一次小时结算 = SUBTICKS 个 10 分钟子步。
+   子步内「先按当前人口产出、再增长」，与旧版逐 10 分钟结算的顺序完全一致，
+   因此每小时产出与人口曲线都和 10 分钟口径逐位等价（对玩家只显示一次结算）。 */
 function settleDynastyOnce() {
   const w = state.world;
   const cap = worldCap(worldLevel());
   let food = 0, wood = 0, stone = 0, gold = 0, stardust = 0;
+  const subs = Math.max(1, Math.floor(DYNASTY.SUBTICKS) || 1);
 
-  w.dynasties.forEach(function (d) {
-    const out = dynastyOutput(d);
-    /* 先按本次人口结算产出，再让人口向上限逼近（至少 +1万），保证结算顺序可解释 */
-    food += out.food;
-    if (out.res === 'gold') gold += out.amount;
-    else if (out.res === 'stardust') stardust += out.amount;
-    else if (out.res === 'wood') wood += out.amount;
-    else stone += out.amount;
+  for (let k = 0; k < subs; k++) {
+    w.dynasties.forEach(function (d) {
+      const out = dynastyOutput(d);
+      food += out.food;
+      if (out.res === 'gold') gold += out.amount;
+      else if (out.res === 'stardust') stardust += out.amount;
+      else if (out.res === 'wood') wood += out.amount;
+      else stone += out.amount;
 
-    const grow = Math.max(DYNASTY.GROWTH_MIN, d.pop * DYNASTY.GROWTH_RATE);
-    d.pop = Math.min(d.cap, d.pop + grow);
-    if (!isFinite(d.pop) || d.pop < 0) d.pop = 0;
-    if (!isFinite(d.cap) || d.cap < DYNASTY.BASE_CAP) d.cap = DYNASTY.BASE_CAP;
-    if (d.cap > DYNASTY.POP_HARD_CAP) d.cap = DYNASTY.POP_HARD_CAP;
-    if (d.pop > d.cap) d.pop = d.cap;
-  });
+      const grow = Math.max(DYNASTY.GROWTH_MIN, d.pop * DYNASTY.GROWTH_RATE);
+      d.pop = Math.min(d.cap, d.pop + grow);
+      if (!isFinite(d.pop) || d.pop < 0) d.pop = 0;
+      if (!isFinite(d.cap) || d.cap < DYNASTY.BASE_CAP) d.cap = DYNASTY.BASE_CAP;
+      if (d.cap > DYNASTY.POP_HARD_CAP) d.cap = DYNASTY.POP_HARD_CAP;
+      if (d.pop > d.cap) d.pop = d.cap;
+    });
+  }
 
   w.res.food = clamp(w.res.food + food, 0, cap.food);
   w.res.wood = clamp(w.res.wood + wood, 0, cap.wood);
@@ -572,15 +709,15 @@ function discipleUnlocked() { return hallLevel() > 0; }
 /* 上阵位数：招贤殿每级 +1，未建造时为 0（此时信徒只能待在仓库） */
 function discipleSlots() { return hallLevel() * DISCIPLE.SLOTS_PER_LVL; }
 
-/* 让 equipped 数组长度与上阵位数一致；缩位时把被挤下的信徒退回仓库 */
+/* 让上阵分配与招贤殿位数一致；缩位时把超出部分的信徒退回仓库（即解除分配） */
 function syncDiscipleSlots() {
-  const eq = state.disciples.equipped;
   const slots = discipleSlots();
-  while (eq.length < slots) eq.push(null);
-  while (eq.length > slots) {
-    const id = eq.pop();
-    if (id) state.disciples.owned.push(id);
-  }
+  const keys = Object.keys(state.disciples.assign);
+  keys.forEach(function (k) {
+    if (!TASK_ELEM[k] || !discInstance(state.disciples.assign[k])) delete state.disciples.assign[k];
+  });
+  const left = Object.keys(state.disciples.assign);
+  while (left.length > slots) delete state.disciples.assign[left.pop()];
 }
 
 /* 信徒总容量（含上阵），由招贤殿等级决定 */
@@ -589,30 +726,152 @@ function discipleStoreCap() {
   return lv > 0 ? DISCIPLE.BASE_STORE + (lv - 1) * DISCIPLE.STORE_PER_LVL : 0;
 }
 function discipleTierCap() { return discipleTierByHall(hallLevel()); }
-function discipleEquippedCount() {
-  let n = 0;
-  state.disciples.equipped.forEach(function (id) { if (id) n += 1; });
-  return n;
-}
-function discipleTotal() { return state.disciples.owned.length + discipleEquippedCount(); }
+function discipleEquippedCount() { return Object.keys(state.disciples.assign).length; }
+function discipleTotal() { return state.disciples.owned.length; }
 
-/* 招募费随信徒总数递增（1.12 倍/位） */
+/* 招募费随「历史招募峰值」递增（1.12 倍/位）
+   删除信徒不会让峰值回落，避免「反复招募再删除」刷低招募价。 */
+function disciplePeak() {
+  const p = Number(state.disciples.peak);
+  const peak = isFinite(p) && p > 0 ? Math.floor(p) : 0;
+  return Math.min(999, Math.max(peak, discipleTotal()));
+}
 function discipleRecruitCost() {
-  return Math.floor(DISCIPLE.RECRUIT_BASE * Math.pow(DISCIPLE.RECRUIT_GROW, discipleTotal()));
+  return Math.floor(DISCIPLE.RECRUIT_BASE * Math.pow(DISCIPLE.RECRUIT_GROW, disciplePeak()));
 }
 
-/* 上阵信徒的加成汇总（返回小数，如 0.1 表示 +10%） */
-function discipleBonus(key) {
-  let sum = 0;
-  state.disciples.equipped.forEach(function (id) {
-    const d = findDisciple(id);
-    if (!d) return;
-    d.bonus.forEach(function (b) { if (b.k === key) sum += b.v; });
+/* 信徒实例（owned 中按 uid 查找）；实例 = { uid, id, tier, elems[], power } */
+function discInstance(uid) {
+  const list = state.disciples.owned;
+  for (let i = 0; i < list.length; i++) if (list[i].uid === uid) return list[i];
+  return null;
+}
+
+/* 信徒当前驻守的任务（没有则 null） */
+function discAssignedTask(uid) {
+  const keys = Object.keys(state.disciples.assign);
+  for (let i = 0; i < keys.length; i++) {
+    if (state.disciples.assign[keys[i]] === uid) return keys[i];
+  }
+  return null;
+}
+
+/* 单条属性强度：品质基准 ×(1 ± 20%)，保留三位小数 */
+function discPowerRoll(tier) {
+  const base = DISCIPLE.ELEM_POWER[tier] || DISCIPLE.ELEM_POWER[1];
+  const j = DISCIPLE.POWER_JITTER;
+  return Math.round(base * (1 - j + Math.random() * 2 * j) * 1000) / 1000;
+}
+
+let _discSeq = 0;
+function newDiscInstance(catId) {
+  const d = findDisciple(catId);
+  if (!d) return null;
+  _discSeq += 1;
+  return {
+    uid: 'dc' + _discSeq + 'x' + Math.floor(Math.random() * 1e6),
+    id: d.id, tier: d.tier,
+    elems: DISCIPLE.ALL_ELEMS.slice(),
+    main: rollDiscMain(),
+    power: discPowerRoll(d.tier),
+    dao: []
+  };
+}
+
+/* 任务实际加成：主属性命中 → mainPower；其余四种副属性命中 → power。
+   两者都作用于速度 / 经验 / 掉落，只是系数不同。
+   道侣加成（v2.11.0）作为乘数同时放大两者。 */
+function elemBonus(taskKey, kind) {
+  const uid = state.disciples.assign[taskKey];
+  if (!uid) return 0;
+  const inst = discInstance(uid);
+  if (!inst) return 0;
+  const el = TASK_ELEM[taskKey];
+  if (!el) return 0;
+  if (kind !== 'speed' && kind !== 'drop' && kind !== 'xp') return 0;
+  const base = el === inst.main ? discMainPower(inst.tier, inst.power) : inst.power;
+  return base * (1 + discDaoBonus(inst));
+}
+
+/* 某任务是否已上阵、是否主属性命中（UI 用） */
+function taskDiscInfo(taskKey) {
+  const uid = state.disciples.assign[taskKey];
+  if (!uid) return null;
+  const inst = discInstance(uid);
+  if (!inst) return null;
+  const d = findDisciple(inst.id);
+  const el = TASK_ELEM[taskKey];
+  return {
+    inst: inst, cat: d, elem: el,
+    mainHit: !!(el && el === inst.main)
+  };
+}
+
+/* 上阵：每个任务一个信徒位，一位信徒只能挂一个任务；总位数受招贤殿限制 */
+function assignDisciple(taskKey, uid) {
+  if (!TASK_ELEM[taskKey]) { logMsg('该任务不支持上阵信徒。', 'warn'); return false; }
+  const inst = discInstance(uid);
+  if (!inst) { logMsg('仓库中没有这位信徒。', 'warn'); return false; }
+  const post = discDynPost(uid);
+  if (post) {
+    logMsg('该信徒正在担任「' + dynastyName(post.d.dyn) + '」' + dynPostName(post.role) +
+      '，不可驻守任务。', 'warn');
+    return false;
+  }
+  const slots = discipleSlots();
+  if (!slots) { logMsg('尚未营造「招贤殿」，无上阵位。', 'warn'); return false; }
+  /* 换任务时，原任务会随本信徒一起腾出，因此不计入已占用位 */
+  const occupied = Object.keys(state.disciples.assign).filter(function (k) {
+    return k !== taskKey && state.disciples.assign[k] !== uid;
   });
-  return sum;
+  if (!state.disciples.assign[taskKey] && occupied.length >= slots) {
+    logMsg('上阵位已满（招贤殿 Lv.' + hallLevel() + ' 仅提供 ' + slots + ' 位）。', 'warn');
+    return false;
+  }
+  /* 先从原任务上撤下，保证一位信徒只挂一个任务 */
+  Object.keys(state.disciples.assign).forEach(function (k) {
+    if (state.disciples.assign[k] === uid) delete state.disciples.assign[k];
+  });
+  state.disciples.assign[taskKey] = uid;
+  const d = findDisciple(inst.id);
+  const info = taskElemInfo(taskKey);
+  const mainHit = TASK_ELEM[taskKey] === inst.main;
+  logMsg('「' + (d ? d.name : inst.id) + '」入驻「' + (info ? info.name : '') + '」任务' +
+    (mainHit ? '，命中主属性，加成全效。' : '，命中副属性，获得基础加成。'), mainHit ? 'good' : 'info');
+  return true;
 }
 
-/* 招募一位信徒：按品阶权重随机，灵石花费随总数递增 */
+function unassignDisciple(taskKey) {
+  if (!state.disciples.assign[taskKey]) return false;
+  delete state.disciples.assign[taskKey];
+  logMsg('已撤下「' + (SKILLS[taskKey] ? SKILLS[taskKey].name : taskKey) + '」的信徒。', 'info');
+  return true;
+}
+
+/* 遣散信徒：先解除其驻守任务 / 朝代职位，再从仓库移除；招募峰值不回落（防刷价）。
+   道侣关系按用户口径永久处理：对方记录标记为亡故、道侣位永久占用、加成消失且不可恢复。
+   返回 true 表示已删除，false 表示 uid 不存在。 */
+function removeDisciple(uid) {
+  const inst = discInstance(uid);
+  if (!inst) return false;
+  const d = findDisciple(inst.id);
+  const taskKey = discAssignedTask(uid);
+  if (taskKey) delete state.disciples.assign[taskKey];
+  const post = discDynPost(uid);
+  if (post && post.d.posts) post.d.posts[post.role] = null;
+  const widowed = daoLivePartnerCount(inst);
+  daoWidow(uid);
+  const idx = state.disciples.owned.indexOf(inst);
+  if (idx >= 0) state.disciples.owned.splice(idx, 1);
+  let extra = '';
+  if (taskKey) extra += '，并撤下其在「' + (SKILLS[taskKey] ? SKILLS[taskKey].name : taskKey) + '」的驻守';
+  if (post) extra += '，其「' + dynastyName(post.d.dyn) + '」' + dynPostName(post.role) + '职位随之空缺';
+  if (widowed) extra += '；' + widowed + ' 位道侣的道侣位永久空缺、加成消失，不可恢复';
+  logMsg('已遣散「' + (d ? d.name : inst.id) + '」（' + discElemText(inst) + '）' + extra + '。', 'info');
+  return true;
+}
+
+/* 招募一位信徒：按品阶权重随机，灵石花费随历史峰值递增 */
 function recruitDisciple() {
   if (!discipleUnlocked()) {
     logMsg('尚未营造「招贤殿」，无法招募信徒（世界 · 秘境）。', 'warn');
@@ -641,40 +900,180 @@ function recruitDisciple() {
   }
 
   state.gold -= cost;
-  state.disciples.owned.push(picked.id);
-  logMsg('「' + picked.name + '」（' + DISCIPLE_TIERS[picked.tier].name + '）慕名而来，已入信徒仓库。', 'good');
+  const inst = newDiscInstance(picked.id);
+  state.disciples.owned.push(inst);
+  /* 峰值只增不减：删除信徒不会让后续招募更便宜 */
+  state.disciples.peak = Math.min(999, Math.max(disciplePeak(), state.disciples.owned.length));
+  const t = DISCIPLE_TIERS[picked.tier];
+  logMsg('「' + picked.name + '」（' + t.name + ' · ' + discElemText(inst) + '）慕名而来，已入信徒仓库。', 'good');
   return true;
 }
 
-/* 上阵：自动占用第一个空位 */
-function equipDisciple(id) {
-  const d = findDisciple(id);
-  if (!d) return false;
-  const idx = state.disciples.owned.indexOf(id);
-  if (idx < 0) { logMsg('仓库中没有这位信徒。', 'warn'); return false; }
-  syncDiscipleSlots();
-  const slot = state.disciples.equipped.indexOf(null);
-  if (slot < 0) {
-    logMsg('上阵位已满（招贤殿 Lv.' + hallLevel() + ' 仅提供 ' + discipleSlots() + ' 位），可升级招贤殿。', 'warn');
+/* 信徒五行文案，如「主·木 15.6% / 副 6.5%」 */
+function discElemText(inst) {
+  const e = elemInfo(inst.main);
+  return '主·' + (e ? e.name : inst.main) + ' ' + Math.round(discMainPower(inst.tier, inst.power) * 1000) / 10 +
+    '% / 副 ' + Math.round(inst.power * 1000) / 10 + '%';
+}
+
+/* ------------------------------------------------------- 道侣（v2.12.0）
+ * 化道式单向绑定：A 纳 B 时，B 被消耗、从仓库永久移除，A 的记录永久保留并继续吃加成；
+ * A 最多 7 位道侣，B 的道侣位容量不再参与判定。
+ * 记录 { uid, id, tier, main, power, state } 存于 A 实例的 dao[]：
+ *   state = 'spent' 已化道（加成永久生效） / 'dead' 亡故（无加成） / 'alive' 旧档对称绑定。
+ * 加成作为乘数，仅放大该信徒的任务加成（速度 / 经验 / 掉落），
+ * 与朝代职位加成互不干扰，也不改变洞天产出。 */
+function daoName(inst) {
+  if (!inst) return '（已消失）';
+  const cat = findDisciple(inst.id);
+  return cat ? cat.name : inst.id;
+}
+
+/* 记录对应的加成来源：已化道用快照；旧档存活记录用仓库里的实时实例 */
+function daoRecordSource(rec) {
+  if (!rec) return null;
+  if (rec.state === 'spent') {
+    return { tier: rec.tier, main: rec.main, power: rec.power };
+  }
+  return discInstance(rec.uid);
+}
+
+/* 单段加成：my 本人，other 为对方实例或化道快照 */
+function daoPairBonus(my, other) {
+  if (!my || !other) return 0;
+  const pw = Number(other.power);
+  if (!isFinite(pw) || pw <= 0 || !other.main) return 0;
+  let v = DAOLV.RATE * discMainPower(other.tier, pw);
+  if (other.main === my.main) v += DAOLV.SAME_MAIN;
+  else if (DAOLV.SHENG[other.main] === my.main) v += DAOLV.GENERATES;
+  return Math.round(v * 10000) / 10000;
+}
+
+/* 本信徒当前生效的道侣加成合计（亡故记录不计；已化道继续生效） */
+function discDaoBonus(inst) {
+  if (!inst || !Array.isArray(inst.dao)) return 0;
+  let sum = 0;
+  inst.dao.forEach(function (rec) {
+    if (!rec || rec.state === 'dead') return;
+    const src = daoRecordSource(rec);
+    if (!src) return;
+    sum += daoPairBonus(inst, src);
+  });
+  return Math.round(sum * 10000) / 10000;
+}
+
+/* 已占用的道侣位（含已化道 / 亡故；永久占位，不会释放） */
+function discDaoUsed(inst) {
+  return (inst && Array.isArray(inst.dao)) ? inst.dao.length : 0;
+}
+function discDaoHas(inst, uid) {
+  if (!inst || !Array.isArray(inst.dao)) return false;
+  for (let i = 0; i < inst.dao.length; i++) {
+    if (inst.dao[i] && inst.dao[i].uid === uid) return true;
+  }
+  return false;
+}
+
+/* 候选：同仓库、非自己、尚未结契；只检查 A 的道侣位是否已满。
+   对方即使已有 7 段道侣关系也可以被选中（化道后这些关系全部寡妇化，确认框会逐项列出），
+   且允许对方正在驻守任务或担任朝代职位（结契时自动卸下）。 */
+function discDaoCandidates(inst) {
+  if (!inst) return [];
+  return state.disciples.owned.filter(function (x) {
+    if (!x || x.uid === inst.uid) return false;
+    return !discDaoHas(inst, x.uid);
+  });
+}
+
+/* 结为道侣（化道）：B 从仓库永久移除，A 获得并永久保留 B 的加成。
+   B 的任务驻守自动卸下、朝代职位自动空缺；B 原有的道侣关系全部寡妇化。
+   采用「自动卸下」而非「禁止选择 / 要求先卸下」：B 本就要永久消失，
+   先卸下只是多一步操作；自动清理可保证 assign 与 posts 不留下悬空 uid。 */
+function bindDaolv(aUid, bUid) {
+  const a = discInstance(aUid);
+  const b = discInstance(bUid);
+  if (!a || !b) { logMsg('结契失败：信徒已不存在。', 'warn'); return false; }
+  if (a.uid === b.uid) { logMsg('不能与自己结为道侣。', 'warn'); return false; }
+  if (discDaoHas(a, b.uid)) {
+    logMsg('「' + daoName(b) + '」已是「' + daoName(a) + '」的道侣。', 'warn');
     return false;
   }
-  state.disciples.owned.splice(idx, 1);
-  state.disciples.equipped[slot] = id;
-  logMsg('「' + d.name + '」已入座上阵。', 'good');
+  if (!Array.isArray(a.dao)) a.dao = [];
+  if (a.dao.length >= DAOLV.MAX) {
+    logMsg('「' + daoName(a) + '」的道侣位已满（' + DAOLV.MAX + ' 位）。', 'warn');
+    return false;
+  }
+
+  /* 先收集 B 的后果，供日志与界面确认使用 */
+  const bTask = discAssignedTask(b.uid);
+  const bPost = discDynPost(b.uid);
+  const broken = [];
+  if (Array.isArray(b.dao)) {
+    b.dao.forEach(function (rec) {
+      if (!rec || rec.state === 'dead' || rec.state === 'spent') return;
+      const p = discInstance(rec.uid);
+      if (p && p.uid !== a.uid) broken.push(daoName(p));
+    });
+  }
+
+  /* 自动清理 B 的身份与既有关系 */
+  if (bTask) delete state.disciples.assign[bTask];
+  if (bPost && bPost.d.posts) bPost.d.posts[bPost.role] = null;
+  daoWidow(b.uid);
+  const bi = state.disciples.owned.indexOf(b);
+  if (bi >= 0) state.disciples.owned.splice(bi, 1);
+
+  /* A 的永久记录：快照 B 的品阶 / 主属性 / 副属性强度，B 消失后加成仍可计算 */
+  a.dao.push({
+    uid: b.uid, id: b.id, tier: b.tier, main: b.main, power: b.power, state: 'spent'
+  });
+
+  let extra = '';
+  if (bTask) extra += '；已卸下其在「' + (SKILLS[bTask] ? SKILLS[bTask].name : bTask) + '」的驻守';
+  if (bPost) extra += '；其「' + dynastyName(bPost.d.dyn) + '」' + dynPostName(bPost.role) + '职位随之空缺';
+  if (broken.length) {
+    extra += '；其原有 ' + broken.length + ' 段道侣关系（' + broken.join('、') + '）全部断绝，' +
+      '对方的道侣位永久占用、加成归零';
+  }
+  logMsg('「' + daoName(b) + '」化道，纳为「' + daoName(a) + '」的道侣：' +
+    '道侣位 ' + a.dao.length + ' / ' + DAOLV.MAX + '，五行任务加成 ×' +
+    (1 + discDaoBonus(a)).toFixed(3) + '。' + daoName(b) + ' 已从仓库永久移除、不可恢复' + extra + '。', 'good');
   return true;
 }
 
-/* 卸下：回到仓库（总数不变，故不受容量限制） */
-function unequipDisciple(slot) {
-  const i = Math.floor(Number(slot));
-  if (!(i >= 0 && i < state.disciples.equipped.length)) return false;
-  const id = state.disciples.equipped[i];
-  if (!id) return false;
-  state.disciples.equipped[i] = null;
-  state.disciples.owned.push(id);
-  const d = findDisciple(id);
-  logMsg('「' + (d ? d.name : id) + '」已回到信徒仓库。', 'info');
-  return true;
+/* 信徒消失（遣散 / 朝代合成）时：把其它记录中的该 uid 标记为亡故。
+   不删除记录 → 道侣位永久占用、加成失效、不可补位。 */
+function daoWidow(uid) {
+  if (!state || !state.disciples) return;
+  state.disciples.owned.forEach(function (x) {
+    if (!x || !Array.isArray(x.dao)) return;
+    x.dao.forEach(function (rec) {
+      if (!rec || rec.uid !== uid || rec.state === 'spent') return;
+      rec.state = 'dead';
+      rec.alive = false;
+    });
+  });
+}
+
+/* 当前加成生效的道侣记录数（含已化道，不含亡故；用于确认文案） */
+function daoActiveCount(inst) {
+  if (!inst || !Array.isArray(inst.dao)) return 0;
+  let n = 0;
+  inst.dao.forEach(function (rec) {
+    if (rec && rec.state !== 'dead') n += 1;
+  });
+  return n;
+}
+
+/* 仍在世、会因本信徒消失而寡妇化的道侣数（已化道者不算） */
+function daoLivePartnerCount(inst) {
+  if (!inst || !Array.isArray(inst.dao)) return 0;
+  let n = 0;
+  inst.dao.forEach(function (rec) {
+    if (!rec || rec.state === 'dead' || rec.state === 'spent') return;
+    if (discInstance(rec.uid)) n += 1;
+  });
+  return n;
 }
 
 /* ------------------------------------------------- 属性 / 境界 / 生命上限 */
@@ -725,18 +1124,6 @@ function calcStats() {
   if (wbHit > 0) hit = Math.round(hit * (1 + wbHit));
   if (wbHp > 0) hp = hp * (1 + wbHp);
 
-  /* 信徒加持（视作装备栏，最多 5 位） */
-  const dbAtk = discipleBonus('atk');
-  const dbDef = discipleBonus('def');
-  const dbHit = discipleBonus('hit');
-  const dbEv = discipleBonus('ev');
-  const dbHp = discipleBonus('hp');
-  if (dbAtk > 0) atk = Math.round(atk * (1 + dbAtk));
-  if (dbDef > 0) def = Math.round(def * (1 + dbDef));
-  if (dbHit > 0) hit = Math.round(hit * (1 + dbHit));
-  if (dbEv > 0) ev = Math.round(ev * (1 + dbEv));
-  if (dbHp > 0) hp = hp * (1 + dbHp);
-
   const dr = Math.min(CONFIG.DR_CAP, def / (def + CONFIG.DR_DIVISOR));
 
   return {
@@ -747,7 +1134,7 @@ function calcStats() {
     hit: hit,
     ev: ev,
     dr: dr,
-    attackTime: CONFIG.PLAYER_ATTACK_TIME / (1 + discipleBonus('speed_combat'))
+    attackTime: CONFIG.PLAYER_ATTACK_TIME / (1 + elemBonus('combat', 'speed'))
   };
 }
 
@@ -759,15 +1146,15 @@ function clampHp() {
   if (state.hp < 0) state.hp = 0;
 }
 
-/* 动作速度：受大境界、疾风阵与风阵坊加成 */
+/* 动作速度：受大境界、疾风阵与风阵坊加成（任务五行加成在 actionSpeed 叠加） */
 function speedMul() {
   return (1 + realmIndex() * CONFIG.SPEED_REALM_BONUS) *
-    (1 + formBonus('speed') + worldBonus('speed') + discipleBonus('speed'));
+    (1 + formBonus('speed') + worldBonus('speed'));
 }
 
-/* 单技能动作速度：全局速度 × 该技能专属信徒加成（如「山樵客」只加快伐木） */
+/* 单技能动作速度：全局速度 × 该任务上阵信徒的五行加成 */
 function actionSpeed(skillId) {
-  return speedMul() * (1 + discipleBonus('speed_' + skillId));
+  return speedMul() * (1 + elemBonus(skillId, 'speed'));
 }
 
 /* 技能 → 阵法经验加成通道（阵法自身不受加成） */
@@ -778,13 +1165,14 @@ function xpMul(skillId) {
   const ri = realmIndex();
   const grp = XP_GROUP[skillId] || (skillId === 'formation' ? null : 'gather');
   const fb = grp ? (1 + formBonus('xp_' + grp)) : 1;
-  const wb = 1 + worldBonus('xp') + discipleBonus('xp');
+  const wb = 1 + worldBonus('xp');
+  const eb = 1 + elemBonus(skillId, 'xp');
   if (skillId === 'cultivation') {
-    /* 悟性每点 +1% 修为收益，叠加境界、阵法、书院、静心堂与信徒加成 */
+    /* 悟性每点 +1% 修为收益，叠加境界、阵法、书院、静心堂与上阵信徒加成 */
     return (1 + ri * CONFIG.CULT_XP_PER_REALM) * (1 + state.insight * 0.01) * fb * wb *
-      (1 + worldBonus('cultxp') + discipleBonus('cultxp'));
+      (1 + worldBonus('cultxp')) * eb;
   }
-  return (1 + ri * CONFIG.XP_REALM_BONUS) * fb * wb;
+  return (1 + ri * CONFIG.XP_REALM_BONUS) * fb * wb * eb;
 }
 
 /* --------------------------------------------------------------- 经验升级 */
@@ -876,7 +1264,7 @@ function effTime(def, id) {
 function doubleChance(id, skillId) {
   const m = masteryOf(id);
   const sk = state.skills[skillId] ? state.skills[skillId].lvl : 1;
-  const c = m.lvl * CONFIG.MASTERY_DOUBLE_PER_LVL + sk * CONFIG.SKILL_DOUBLE_PER_LVL + formBonus('double') + worldBonus('double') + discipleBonus('double');
+  const c = m.lvl * CONFIG.MASTERY_DOUBLE_PER_LVL + sk * CONFIG.SKILL_DOUBLE_PER_LVL + formBonus('double') + worldBonus('double');
   return clamp(c, 0, 0.9);
 }
 
@@ -895,7 +1283,7 @@ function matsOk(rec) {
 }
 
 function masteryGain(def) {
-  return Math.max(1, Math.round(def.xp * CONFIG.MASTERY_XP_RATIO * (1 + formBonus('mastery') + worldBonus('mastery') + discipleBonus('mastery'))));
+  return Math.max(1, Math.round(def.xp * CONFIG.MASTERY_XP_RATIO * (1 + formBonus('mastery') + worldBonus('mastery'))));
 }
 
 /* 入世（红尘历练）单次体验结算：参考梅尔沃盗窃——
@@ -916,12 +1304,12 @@ function thievingCycle(def) {
   }
 
   const gold = Math.round(randInt(def.gold[0], def.gold[1]) * masteryYield(def.id) *
-    (1 + formBonus('gold') + worldBonus('gold') + discipleBonus('gold')));
+    (1 + formBonus('gold') + worldBonus('gold')));
   state.gold += gold;
 
   const got = [];
   const lost = [];
-  const dropMul = 1 + formBonus('drop') + worldBonus('drop') + discipleBonus('drop');
+  const dropMul = 1 + formBonus('drop') + worldBonus('drop') + elemBonus('thieving', 'drop');
   const dchance = doubleChance(def.id, 'thieving');
   def.loot.forEach(function (l) {
     if (Math.random() >= Math.min(1, l.chance * dropMul)) return;
@@ -956,7 +1344,7 @@ function completeActivity(act, def) {
     let shown = out;
     if (out.spirit) { shown = { spirit: Math.round(out.spirit * masteryYield(def.id)) }; state.spirit += shown.spirit; }
     else if (out.gold) {
-      shown = { gold: Math.round(out.gold * (1 + formBonus('gold') + worldBonus('gold') + discipleBonus('gold'))) };
+      shown = { gold: Math.round(out.gold * (1 + formBonus('gold') + worldBonus('gold'))) };
       state.gold += shown.gold;
     }
     else if (out.heal) { shown = { heal: Math.round(out.heal * masteryYield(def.id)) }; state.hp = Math.min(maxHp(), state.hp + shown.heal); }
@@ -965,6 +1353,8 @@ function completeActivity(act, def) {
       /* 精通：成品有概率翻倍（材料只消耗一次） */
       let qty = out.qty || 1;
       if (Math.random() < doubleChance(def.id, skillId)) { qty *= 2; bonus = '（精通·双倍）'; }
+      /* 上阵信徒五行相合：每件产出有 power 概率额外 +1 */
+      if (Math.random() < elemBonus(skillId, 'drop')) { qty += 1; bonus += '（信徒·额外）'; }
       shown = { id: out.id, qty: qty };
       invAdd(out.id, qty);
     }
@@ -984,6 +1374,8 @@ function completeActivity(act, def) {
   let bonus = '';
   if (out.id) {
     if (Math.random() < doubleChance(def.id, skillId)) { qty *= 2; bonus = '（精通·双倍）'; }
+    /* 上阵信徒五行相合：每件产出有 power 概率额外 +1 */
+    if (Math.random() < elemBonus(skillId, 'drop')) { qty += 1; bonus += '（信徒·额外）'; }
     invAdd(out.id, qty);
     state.stats.gathered += 1;
     state.stats.perSkill[skillId] = (state.stats.perSkill[skillId] || 0) + 1;
@@ -993,6 +1385,7 @@ function completeActivity(act, def) {
   if (out.stardust) {
     let sd = out.stardust;
     if (Math.random() < doubleChance(def.id, skillId)) { sd *= 2; bonus = '（精通·双倍）'; }
+    if (Math.random() < elemBonus(skillId, 'drop')) { sd += 1; bonus += '（信徒·额外）'; }
     state.stardust += sd;
     state.stats.gathered += 1;
     state.stats.perSkill[skillId] = (state.stats.perSkill[skillId] || 0) + 1;
@@ -1008,7 +1401,7 @@ function completeActivity(act, def) {
     });
   }
   if (out.spirit) state.spirit += Math.round(out.spirit * masteryYield(def.id));
-  if (out.gold) state.gold += Math.round(out.gold * (1 + formBonus('gold') + worldBonus('gold') + discipleBonus('gold')));
+  if (out.gold) state.gold += Math.round(out.gold * (1 + formBonus('gold') + worldBonus('gold')));
   if (out.heal) state.hp = Math.min(maxHp(), state.hp + Math.round(out.heal * masteryYield(def.id)));
 
   addXp(skillId, def.xp);
@@ -1110,7 +1503,7 @@ function dungeonUnlockInfo(dg) {
 
 /* 通关一轮：发放额外奖励并累计通关次数 */
 function dungeonReward(dg) {
-  const gold = Math.round(dg.reward.gold * (1 + formBonus('gold') + worldBonus('gold') + discipleBonus('gold')));
+  const gold = Math.round(dg.reward.gold * (1 + formBonus('gold') + worldBonus('gold')));
   state.gold += gold;
   if (dg.reward.xp) addXp('combat', dg.reward.xp);
   const got = [];
@@ -1166,7 +1559,7 @@ function towerReward(floor) {
   const decade = f % TOWER.DECADE_EVERY === 0;
   let gold = Math.round(TOWER.GOLD_BASE * Math.pow(f, TOWER.GOLD_POW));
   if (milestone) gold = Math.round(gold * TOWER.MILESTONE_GOLD);
-  gold = Math.round(gold * (1 + formBonus('gold') + worldBonus('gold') + discipleBonus('gold')));
+  gold = Math.round(gold * (1 + formBonus('gold') + worldBonus('gold')));
   let star = Math.max(1, Math.round(TOWER.STAR_BASE * Math.pow(f, TOWER.STAR_POW)));
   if (milestone) star *= TOWER.MILESTONE_STAR;
   const xp = Math.round(TOWER.XP_BASE * Math.pow(f, TOWER.XP_POW));
@@ -1312,7 +1705,7 @@ function riftEnemy(tier) {
 function riftReward(tier) {
   const t = riftTierClamp(tier);
   let gold = Math.round(RIFT.GOLD_BASE * Math.pow(t + 1, RIFT.GOLD_POW));
-  gold = Math.round(gold * (1 + formBonus('gold') + worldBonus('gold') + discipleBonus('gold')));
+  gold = Math.round(gold * (1 + formBonus('gold') + worldBonus('gold')));
   const star = Math.max(1, Math.round(RIFT.STAR_BASE * Math.pow(t + 1, RIFT.STAR_POW)));
   const xp = Math.round(RIFT.XP_BASE * Math.pow(t + 1, RIFT.XP_POW));
   return { tier: t, gold: gold, star: star, xp: xp };
@@ -1660,7 +2053,7 @@ function riftMonEnemy(tier) {
 function riftMonReward(tier) {
   const t = riftMonTierClamp(tier);
   let gold = Math.round(RIFT_MON.GOLD_BASE * Math.pow(t + 1, RIFT_MON.GOLD_POW));
-  gold = Math.round(gold * (1 + formBonus('gold') + worldBonus('gold') + discipleBonus('gold')));
+  gold = Math.round(gold * (1 + formBonus('gold') + worldBonus('gold')));
   const star = Math.max(1, Math.round(RIFT_MON.STAR_BASE * Math.pow(t + 1, RIFT_MON.STAR_POW)));
   return { tier: t, gold: gold, star: star };
 }
@@ -1827,14 +2220,14 @@ function onMonsterKilled(target) {
 
   const dg = c.dungeon ? findDungeon(c.dungeon) : null;
   const gold = Math.round(randInt(m.gold[0], m.gold[1]) * (dg ? dg.scale.gold : 1) *
-    masteryYield(m.id) * (1 + formBonus('gold') + worldBonus('gold') + discipleBonus('gold')));
+    masteryYield(m.id) * (1 + formBonus('gold') + worldBonus('gold')));
   state.gold += gold;
   state.stats.kills += 1;
   addXp('combat', Math.round(m.xp * (dg ? dg.scale.xp : 1)));
   addMastery(m.id, Math.max(1, Math.round(m.xp * CONFIG.MASTERY_XP_RATIO * (1 + formBonus('mastery') + worldBonus('mastery')))));
 
   const drops = [];
-  const dropMul = 1 + formBonus('drop') + worldBonus('drop') + discipleBonus('drop');
+  const dropMul = 1 + formBonus('drop') + worldBonus('drop') + elemBonus('combat', 'drop');
   const dbl = doubleChance(m.id, 'combat');
   m.drops.forEach(function (d) {
     if (Math.random() < Math.min(1, d.chance * dropMul)) {
@@ -1932,7 +2325,7 @@ function passiveTick(dt) {
   }
 
   /* 灵力自然凝聚（不占用动作槽，受聚灵阵加成） */
-  state.spirit += CONFIG.SPIRIT_PER_SEC * (1 + formBonus('spirit') + worldBonus('spirit') + discipleBonus('spirit')) * dt;
+  state.spirit += CONFIG.SPIRIT_PER_SEC * (1 + formBonus('spirit') + worldBonus('spirit')) * dt;
 
   /* 灵植地块：被动生长，离线同样推进 */
   growPlots(dt);
@@ -1944,7 +2337,7 @@ function passiveTick(dt) {
     while (state.regenTimer >= CONFIG.HP_REGEN_INTERVAL && guard++ < 50) {
       state.regenTimer -= CONFIG.HP_REGEN_INTERVAL;
       if (state.hp < maxHp()) {
-        const h = Math.max(1, Math.round(maxHp() * CONFIG.HP_REGEN_RATIO * (1 + formBonus('regen') + worldBonus('regen') + discipleBonus('regen'))));
+        const h = Math.max(1, Math.round(maxHp() * CONFIG.HP_REGEN_RATIO * (1 + formBonus('regen') + worldBonus('regen'))));
         state.hp = Math.min(maxHp(), state.hp + h);
       }
     }
@@ -2095,6 +2488,8 @@ function harvestPlot(plotIdx) {
   let qty = seed.yield;
   let bonus = '';
   if (Math.random() < doubleChance('farm_harvest', 'farming')) { qty *= 2; bonus = '（精通·双倍）'; }
+  /* 灵植为地块被动生长，不吃速度加成；五行相合时改为提高单次收获量 */
+  if (Math.random() < elemBonus('farming', 'drop')) { qty += 1; bonus += '（信徒·额外）'; }
   invAdd(seed.outId, qty);
   state.stats.gathered += 1;
   state.stats.perSkill.farming = (state.stats.perSkill.farming || 0) + 1;
@@ -2341,6 +2736,116 @@ function claimTask(id) {
   if (t.reward.items) t.reward.items.forEach(function (i) { invAdd(i.id, i.qty); });
   logMsg('领取任务奖励：「' + t.name + '」。', 'good');
   return true;
+}
+
+/* ------------------------------------------------------------ 签到（七日循环）
+   判定口径：本地日期（YYYY-MM-DD），每日 00:00 重置。
+   - 同一 lastKey → 今日已签，拦截；
+   - 日期回退（lastKey 晚于今天）→ 判定时钟异常，拒绝签到且不动进度；
+   - 间隔 > 1 天 → 断签，下一次签到从第 1 天开始（惰性计算，改状态只在领取时发生）。 */
+function checkinDayKey(ts) {
+  const d = new Date(ts == null ? Date.now() : ts);
+  const p = function (n) { return n < 10 ? '0' + n : String(n); };
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+}
+/* 两个日期键相差的自然日（按本地 0 点计算，四舍五入吃掉夏令时的 ±1 小时） */
+function checkinDayDiff(fromKey, toKey) {
+  const a = String(fromKey).split('-'), b = String(toKey).split('-');
+  if (a.length !== 3 || b.length !== 3) return 0;
+  const ta = new Date(Number(a[0]), Number(a[1]) - 1, Number(a[2])).getTime();
+  const tb = new Date(Number(b[0]), Number(b[1]) - 1, Number(b[2])).getTime();
+  return Math.round((tb - ta) / 86400000);
+}
+/* 当前签到状态：state = ready 可签 / done 今日已签 / clockback 时间回退；
+   day 为「下一次实际可领的天数」（断签时为 1），broken 仅用于界面提示 */
+function checkinPlan() {
+  const c = state.checkin;
+  const today = checkinDayKey();
+  if (!c.lastKey) return { state: 'ready', day: c.day, today: today, diff: 0, broken: false };
+  const diff = checkinDayDiff(c.lastKey, today);
+  if (diff < 0) return { state: 'clockback', day: c.day, today: today, diff: diff, broken: false };
+  if (diff === 0) return { state: 'done', day: c.day, today: today, diff: 0, broken: false };
+  if (diff > 1) return { state: 'ready', day: 1, today: today, diff: diff, broken: true };
+  return { state: 'ready', day: c.day, today: today, diff: diff, broken: false };
+}
+function checkinCanClaim() { return checkinPlan().state === 'ready'; }
+/* 距离本地 0 点重置的毫秒数（界面倒计时用） */
+function checkinNextResetMs() {
+  const d = new Date(Date.now());
+  const next = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1, 0, 0, 0, 0);
+  return Math.max(0, next.getTime() - Date.now());
+}
+/* 第 7 天大奖：随机抽一位神品信徒入仓。
+   不占上阵位、不写招募峰值；必须占用仓库容量（未建招贤殿 / 仓库满 → 返回 null，调用方挂起） */
+function checkinTryGrantDisciple() {
+  const cap = discipleStoreCap();
+  if (cap <= 0 || discipleTotal() >= cap) return null;
+  const pool = DISCIPLES.filter(function (d) { return d.tier === 4; });
+  if (!pool.length) return null;
+  const cat = pool[Math.floor(Math.random() * pool.length)];
+  const inst = newDiscInstance(cat.id);
+  if (!inst) return null;
+  state.disciples.owned.push(inst);
+  return inst;
+}
+/* 领取今日签到：先校验背包格位，再发放资源 / 道具；第 7 天额外处理信徒。
+   返回 true 表示领取成功（失败时写日志给出原因） */
+function claimCheckin() {
+  const plan = checkinPlan();
+  if (plan.state === 'done') { logMsg('今日已签到，明日 00:00 后可再签。', 'info'); return false; }
+  if (plan.state === 'clockback') {
+    logMsg('检测到系统日期早于上次签到日期，请校准系统时间后再签到。', 'warn');
+    return false;
+  }
+  const rec = CHECKIN.DAYS[plan.day - 1];
+  if (!rec) return false;
+
+  /* 背包格位：只统计「尚未拥有」的物品（已有物品不占新格），不足则整单拒签，避免奖励丢失 */
+  const newKinds = (rec.items || []).filter(function (i) { return invCount(i.id) <= 0; }).length;
+  const freeSlots = CONFIG.INV_SLOTS - invSlotsUsed();
+  if (newKinds > freeSlots) {
+    logMsg('背包剩余格位不足（需 ' + newKinds + ' 格，仅剩 ' + freeSlots + ' 格），请清理背包后再签到。', 'warn');
+    return false;
+  }
+
+  const got = [];
+  if (rec.gold) { state.gold += rec.gold; got.push('💠' + rec.gold); }
+  if (rec.spirit) { state.spirit += rec.spirit; got.push('✨' + rec.spirit); }
+  if (rec.stardust) { state.stardust += rec.stardust; got.push('💫' + rec.stardust); }
+  if (rec.seed) { state.seed += rec.seed; got.push('🌱' + rec.seed); }
+  (rec.items || []).forEach(function (i) {
+    if (invAdd(i.id, i.qty)) got.push(itemName(i.id) + '×' + i.qty);
+  });
+
+  let msg = '签到第 ' + plan.day + ' 天「' + rec.name + '」：' + got.join('、');
+  if (rec.disciple) {
+    const inst = checkinTryGrantDisciple();
+    if (inst) {
+      const cat = findDisciple(inst.id);
+      msg += '；神品信徒「' + (cat ? cat.name : inst.id) + '」已入驻招贤殿';
+    } else {
+      state.checkin.pending = true;
+      msg += '；神品信徒暂存待入仓（需招贤殿空位，腾出后自动补发）';
+    }
+  }
+
+  const c = state.checkin;
+  c.lastKey = plan.today;
+  c.day = plan.day >= CHECKIN.CYCLE ? 1 : plan.day + 1;
+  c.total += 1;
+  logMsg(msg + '。', 'good');
+  saveState();
+  return true;
+}
+/* 待入仓补发：每秒随 tick 检查一次（仅在 pending 时做一次容量判断，开销可忽略） */
+function checkinFlushPending() {
+  const c = state.checkin;
+  if (!c || !c.pending) return;
+  const inst = checkinTryGrantDisciple();
+  if (!inst) return;
+  c.pending = false;
+  const cat = findDisciple(inst.id);
+  logMsg('签到奖励补发：神品信徒「' + (cat ? cat.name : inst.id) + '」已入驻招贤殿。', 'good');
 }
 
 /* ------------------------------------------------------------ 装备 */
@@ -2727,7 +3232,7 @@ function tick(dt) {
   clampHp();
 
   state.taskTimer += dt;
-  if (state.taskTimer >= 1) { state.taskTimer = 0; checkTasks(); }
+  if (state.taskTimer >= 1) { state.taskTimer = 0; checkTasks(); checkinFlushPending(); }
 }
 
 /* ---------------------------------------------------------------- 离线结算 */
