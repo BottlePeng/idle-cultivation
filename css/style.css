@@ -479,7 +479,15 @@ main {
 .btn.ghost { background: rgba(255, 255, 255, .04); color: var(--muted); border-color: var(--line2); }
 .btn.ghost:hover { color: var(--text); border-color: var(--line); background: rgba(255, 255, 255, .08); }
 .btn.small { padding: 4px 9px; font-size: 11px; }
-.btn.danger:hover { color: #ffbdb7; border-color: var(--red); }
+/* 破坏性操作：红色描边 + 红色渐变底，与普通金色按钮明显区分 */
+.btn.danger {
+  color: #ff9d95; border-color: rgba(226, 100, 92, .55);
+  background: linear-gradient(180deg, rgba(226, 100, 92, .20), rgba(226, 100, 92, .07));
+}
+.btn.danger:hover {
+  color: #fff; border-color: var(--red);
+  background: linear-gradient(180deg, rgba(226, 100, 92, .38), rgba(226, 100, 92, .14));
+}
 .btn.off { color: var(--red); border-color: rgba(226, 100, 92, .5); }
 .mini {
   font-family: inherit; font-size: 10px; padding: 2px 7px;
@@ -530,6 +538,51 @@ main {
   font-size: 12px; line-height: 1.8; color: #c6cede;
 }
 .confirmbtns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+
+/* 危险确认（v2.14.2）：红色描边 + 顶部警示条 + 关键行高亮 + 红色确认按钮 */
+.confirmbox.danger {
+  border-color: rgba(226, 100, 92, .88);
+  box-shadow:
+    0 0 0 1px rgba(226, 100, 92, .22) inset,
+    0 18px 50px rgba(0, 0, 0, .7),
+    0 0 34px rgba(226, 100, 92, .26);
+}
+.confirmbox.danger h3 { color: #ff9d95; letter-spacing: 2px; }
+.confirmwarn {
+  display: flex; align-items: center; gap: 10px;
+  margin: 0 0 12px; padding: 8px 11px;
+  border: 1px solid rgba(226, 100, 92, .5);
+  border-left: 3px solid var(--red); border-radius: 8px;
+  background: linear-gradient(180deg, rgba(226, 100, 92, .2), rgba(226, 100, 92, .06));
+}
+.confirmwarn.hidden { display: none; }
+.confirmwarn .cwicon {
+  font-size: 20px; line-height: 1; color: #ffb3ad;
+  text-shadow: 0 0 10px rgba(226, 100, 92, .6);
+}
+.confirmwarn b { display: block; font-size: 12px; letter-spacing: 2px; color: #ffb3ad; }
+.confirmwarn i {
+  display: block; margin-top: 2px; font-style: normal;
+  font-size: 11px; color: rgba(255, 157, 149, .82);
+}
+.confirmbox.danger .confirmbody {
+  padding: 10px 12px;
+  border-left: 2px solid rgba(226, 100, 92, .55);
+  border-radius: 0 8px 8px 0;
+  background: rgba(226, 100, 92, .06);
+  color: #e7d8d6;
+}
+.confirmbox.danger .cwarnline { display: block; color: #ffb3ad; font-weight: 700; }
+#confirmOk.danger {
+  color: #fff; border-color: var(--red);
+  background: linear-gradient(180deg, rgba(226, 100, 92, .78), rgba(168, 48, 42, .82));
+  box-shadow: 0 0 12px rgba(226, 100, 92, .32);
+}
+#confirmOk.danger:hover {
+  background: linear-gradient(180deg, #e2645c, #b8413a);
+  border-color: #ffb3ad;
+}
+#confirmOk.danger:focus-visible { outline: 2px solid #ffb3ad; outline-offset: 2px; }
 
 /* ------------------------------------------------------------- 自适应 */
 @media (max-width: 1080px) {
@@ -691,6 +744,23 @@ main {
 .shopitem .sname { font-size: 13px; font-weight: 600; }
 .shopitem .smeta { font-size: 11px; color: var(--muted); line-height: 1.5; margin: 3px 0; display: block; }
 .shopitem .sprice { font-size: 12px; color: var(--gold2); font-variant-numeric: tabular-nums; }
+/* 未解锁商品：整卡降透明并锁图标，仍展示价格与解锁条件 */
+.shopitem.locked { opacity: .58; background: rgba(255, 255, 255, .012); }
+.shopitem.locked .sprice { color: var(--muted); }
+
+/* --- 背包扩容条 --- */
+.bagup {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  padding: 9px 12px; margin-bottom: 12px;
+  border: 1px solid var(--line2); border-left: 3px solid var(--gold);
+  border-radius: 10px; background: rgba(216, 178, 106, .06);
+}
+.bagup .bupinfo { font-size: 12px; color: var(--muted); }
+.bagup .bupinfo b { color: var(--gold2); font-variant-numeric: tabular-nums; }
+.bagup .mini[disabled] { opacity: .45; cursor: not-allowed; }
+
+/* 任务进度行（由 updateTaskState 增量写入） */
+.taskentry .tprog { font-size: 11px; color: var(--gold2); font-variant-numeric: tabular-nums; }
 
 /* --- 信徒 · 招募 --- */
 .discbtn.on { border-color: #b98ce0; }
@@ -1459,6 +1529,50 @@ body.compact .planetstage { height: min(50vh, 420px); }
 .setmsg.bad, .devmsg.bad { color: var(--red); }
 .setmsg.warn, .devmsg.warn { color: #e8c98a; }
 
+/* 通用分组：设置页的视觉主体（v2.14.2）——金色描边、提亮底、放大标题 */
+.secttl.primary {
+  color: var(--gold2); font-size: 13px; letter-spacing: 3px;
+  margin-top: 20px; border-bottom-color: rgba(216, 178, 106, .38);
+}
+.setcard.primary {
+  padding: 16px;
+  border-color: rgba(216, 178, 106, .44);
+  background: linear-gradient(180deg, rgba(216, 178, 106, .13), rgba(216, 178, 106, .035));
+  box-shadow: 0 0 0 1px rgba(216, 178, 106, .08) inset, 0 8px 22px rgba(0, 0, 0, .22);
+}
+.setcard.primary .setlab { font-size: 14px; font-weight: 600; color: var(--gold2); }
+.setcard.primary .setph { color: #c6cede; }
+.setcard.primary .setmsg { color: #b9c2d4; }
+
+/* 存档 · 危险操作：刻意压低体量与对比，藏在底部；只有悬停/聚焦才恢复红色 */
+.secttl.danger {
+  color: rgba(226, 100, 92, .6); font-size: 11px; letter-spacing: 1px;
+  margin-top: 26px; border-bottom-color: rgba(255, 255, 255, .05);
+}
+.setcard.dangerzone {
+  padding: 9px 11px;
+  border-style: dashed; border-color: rgba(226, 100, 92, .18);
+  background: rgba(255, 255, 255, .012);
+  opacity: .8; transition: opacity .15s, border-color .15s;
+}
+.setcard.dangerzone:hover, .setcard.dangerzone:focus-within {
+  opacity: 1; border-color: rgba(226, 100, 92, .36);
+}
+.setcard.dangerzone .setlab { font-size: 12px; font-weight: 400; color: var(--muted); }
+.setcard.dangerzone .setph { flex: 1 1 220px; font-size: 11px; color: rgba(139, 151, 173, .75); }
+.setmsg.danger { color: rgba(255, 157, 149, .6); font-size: 11px; }
+/* 危险按钮默认只留淡描边，悬停/键盘聚焦时才亮红，避免抢过通用区 */
+.setcard.dangerzone .btn.danger {
+  color: rgba(255, 157, 149, .72);
+  border-color: rgba(226, 100, 92, .28);
+  background: transparent;
+}
+.setcard.dangerzone .btn.danger:hover,
+.setcard.dangerzone .btn.danger:focus-visible {
+  color: #fff; border-color: var(--red);
+  background: rgba(226, 100, 92, .32);
+}
+
 .devmsg {
   margin: 2px 0 12px; padding: 9px 12px; border-radius: 8px;
   border: 1px dashed var(--line2); background: rgba(255,255,255,.02);
@@ -1488,3 +1602,61 @@ body.compact .planetstage { height: min(50vh, 420px); }
   .devcur { text-align: left; }
   .devgo { flex: 1 1 auto; }
 }
+
+/* =========================================================================
+ * 问道指引（v2.14.0）：常驻教学卡 + 侧栏高亮 + 清单面板
+ * 高亮只用边框/光晕，不使用位移，避免撑大祖先滚动区产生横向滚动条。
+ * ========================================================================= */
+.skillbtn.guidefocus {
+  border-color: var(--gold);
+  animation: guidePulse 1.7s ease-in-out infinite;
+}
+@keyframes guidePulse {
+  0%, 100% { box-shadow: 0 0 0 1px var(--gold) inset, 0 0 8px rgba(216, 178, 106, .12); }
+  50% { box-shadow: 0 0 0 2px var(--gold) inset, 0 0 18px rgba(216, 178, 106, .38); }
+}
+
+.guidecard {
+  padding: 12px;
+  border-left: 3px solid var(--gold);
+  background: linear-gradient(180deg, rgba(216, 178, 106, .10), rgba(22, 28, 42, .9));
+}
+.guidecard .ghead { display: flex; align-items: center; gap: 8px; }
+.guidecard .gname { font-size: 13px; font-weight: 700; color: var(--gold2); }
+.guidecard .gprog { margin-left: auto; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.guidecard .gx { padding: 0 6px; line-height: 20px; }
+.guidecard .gtitle { margin-top: 8px; font-size: 13px; font-weight: 600; }
+.guidecard .gdesc { margin-top: 4px; font-size: 11.5px; color: var(--muted); line-height: 1.55; }
+.guidecard .ghint { margin-top: 6px; font-size: 11px; color: var(--gold2); line-height: 1.5; }
+.guidecard .gacts { display: flex; gap: 6px; margin-top: 9px; flex-wrap: wrap; }
+
+.gdonebanner, .gnudgebanner {
+  padding: 9px 12px; margin-bottom: 12px;
+  border: 1px solid var(--line2); border-left: 3px solid var(--jade);
+  border-radius: 10px; background: rgba(125, 216, 184, .06);
+  font-size: 12px; color: var(--muted); line-height: 1.6;
+}
+.gnudgebanner { border-left-color: var(--gold); background: rgba(216, 178, 106, .07); color: var(--text); }
+.gnudgebanner b { color: var(--gold2); }
+
+.gbarwrap { display: flex; align-items: center; gap: 10px; margin: 4px 0 12px; }
+.gbarwrap .bar { flex: 1; }
+.gbarfill { display: block; height: 100%; background: linear-gradient(90deg, var(--jade), var(--gold)); }
+.gbarpct { font-size: 12px; color: var(--gold2); font-variant-numeric: tabular-nums; }
+.gpanelacts { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+
+.gsteps { display: flex; flex-direction: column; gap: 8px; }
+.gstep {
+  display: flex; gap: 10px; align-items: flex-start;
+  padding: 10px 12px; border: 1px solid var(--line2); border-radius: 10px;
+  background: rgba(255, 255, 255, .015);
+}
+.gstep.cur { border-color: var(--gold); background: rgba(216, 178, 106, .07); }
+.gstep.done { opacity: .72; }
+.gstep .gno { width: 20px; text-align: center; flex: none; }
+.gstep .gmain { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.gstep .gst { font-size: 13px; font-weight: 600; }
+.gstep .gsd { font-size: 11.5px; color: var(--muted); line-height: 1.5; }
+.gstep .gsh { font-size: 11px; color: var(--gold2); line-height: 1.5; }
+.gstep .gsr { font-size: 11px; color: var(--muted); }
+.gstep .mini { flex: none; }

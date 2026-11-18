@@ -20,6 +20,8 @@ function handleClick(e) {
     /* 侧栏切换面板 */
     case 'select':
       state.ui.active = el.dataset.skill;
+      /* 问道指引：记录「打开过背包 / 市集」这类行为，而不是点下一步 */
+      if (el.dataset.skill === 'bag' || el.dataset.skill === 'shop') guideFlag(el.dataset.skill);
       /* 从侧栏进入穿越星球时回到主视图（裂缝视图内另有返回按钮） */
       if (el.dataset.skill === 'planet') state.ui.planetView = 'main';
       /* 测试控制台：仅本次运行兑换后可用 */
@@ -30,6 +32,36 @@ function handleClick(e) {
       hideInvPopover();
       /* 星球已改为动作槽行为：仅切面板不启停，由面板按钮控制 */
       break;
+
+    /* 问道指引：前往当前步骤 / 打开清单 / 跳过 / 收起 / 重新开启 */
+    case 'guidego': {
+      const step = guideCurrent();
+      if (step) {
+        state.ui.active = step.tab;
+        if (step.tab === 'planet') state.ui.planetView = 'main';
+        if (step.tab === 'bag' || step.tab === 'shop') guideFlag(step.tab);
+      }
+      hideInvPopover();
+      break;
+    }
+    case 'guidelist':
+      state.ui.active = 'guide';
+      hideInvPopover();
+      break;
+    case 'guideskip':
+      guideSkip();
+      renderAll();
+      return;
+    case 'guideclose':
+      guideClose();
+      renderAll();
+      updateGuide();
+      return;
+    case 'guidereopen':
+      guideReopen();
+      renderAll();
+      updateGuide();
+      return;
 
     /* 设置：兑换码校验（成功/失败都写回提示，不落存档） */
     case 'redeem': {
@@ -260,14 +292,15 @@ function handleClick(e) {
       state.ui.dynMerge = -1;
       break;
     case 'buy':
-      buyItem(id, Number(el.dataset.qty) || 1, Number(el.dataset.price) || 0);
+      shopBuy(id, Number(el.dataset.qty) || 1);
       break;
-    case 'buymax': {
-      const price = Number(el.dataset.price) || 0;
-      let qty = price > 0 ? Math.floor(state.gold / price) : 0;
-      if (qty > 0) buyItem(id, qty, price);
+    case 'buymax':
+      shopBuyMax(id);
       break;
-    }
+    /* 背包扩容：每次购买 +固空格数，价格逐次递增 */
+    case 'invup':
+      buyInvSlot();
+      break;
 
     /* 世界 · 营造建筑 */
     case 'build': buildBuilding(id); break;
@@ -308,12 +341,16 @@ function handleClick(e) {
     case 'heal': healWithSpirit(); break;
     case 'save': saveState(); showToast('<h4>💾 已保存进度</h4>'); break;
     case 'reset':
-      showConfirm('重开确认', '确定要重开吗？当前所有进度将被清空。', function () {
-        resetGame();
-        state.ui.active = 'woodcutting';
-        hideToast();
-        renderAll();
-      });
+      showConfirm('重开确认',
+        '确定要重开吗？\n\n' +
+        '当前存档与全部进度（境界、技能、背包、洞天、朝代、签到）将被清空。\n\n' +
+        '此操作不可恢复，也无法撤销。',
+        function () {
+          resetGame();
+          state.ui.active = 'woodcutting';
+          hideToast();
+          renderAll();
+        }, null, 'danger');
       return;
     case 'clearlog': state.log = []; break;
     case 'closetoast': hideToast(); return;

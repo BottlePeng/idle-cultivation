@@ -29,7 +29,6 @@
 
       <div class="topright">
         <button class="btn ghost small" data-act="save">保存</button>
-        <button class="btn ghost small danger" data-act="reset">重开</button>
       </div>
     </header>
 
@@ -40,6 +39,22 @@
       <section id="content" class="scroll"></section>
 
       <aside id="right" class="scroll">
+        <!-- 问道指引：常驻轻量教学卡，完成/跳过后不再提示；内容由 updateGuide 增量刷新 -->
+        <div class="card guidecard hidden" id="guideCard">
+          <div class="ghead">
+            <span class="gname">📖 问道指引</span>
+            <span class="gprog" data-gprog>0 / 0</span>
+            <button class="mini gx" data-act="guideclose" title="收起提示">×</button>
+          </div>
+          <div class="gtitle" data-gtitle></div>
+          <div class="gdesc" data-gdesc></div>
+          <div class="ghint" data-ghint></div>
+          <div class="gacts">
+            <button class="mini gold" data-act="guidego">前往</button>
+            <button class="mini" data-act="guidelist">清单</button>
+            <button class="mini ghost" data-act="guideskip">跳过</button>
+          </div>
+        </div>
         <div class="card" id="charCard"></div>
         <div class="card">
           <h3>装备</h3>
@@ -62,6 +77,10 @@
   <!-- 应用内确认弹窗：确认按钮是唯一执行入口，Esc / 遮罩 / 取消只关闭 -->
   <div id="confirmMask" class="hidden">
     <div class="confirmbox" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+      <div class="confirmwarn hidden" id="confirmWarn">
+        <span class="cwicon">⚠</span>
+        <span><b>危险操作</b><i>此操作不可恢复</i></span>
+      </div>
       <h3 id="confirmTitle">确认</h3>
       <div id="confirmBody" class="confirmbody"></div>
       <div class="confirmbtns">

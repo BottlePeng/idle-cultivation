@@ -172,23 +172,54 @@ function devRun(action, vals) {
 function invCount(id) { return state.inv[id] || 0; }
 function invHas(id, qty) { return invCount(id) >= qty; }
 
+/* 背包当前容量（v2.13.0）：基础 100 + 已购扩容；所有读取点统一走这里 */
+function invCap() {
+  const base = CONFIG.INV_SLOTS;
+  const step = CONFIG.INV_SLOT_STEP;
+  const max = CONFIG.INV_SLOT_MAX;
+  const extra = Math.max(0, Math.floor(Number(state && state.invSlots) || 0)) * step;
+  return Math.max(base, Math.min(max, base + extra));
+}
+/* 下一次扩容价格（指数递增，已满则返回 0） */
+function invSlotPrice() {
+  if (invCap() >= CONFIG.INV_SLOT_MAX) return 0;
+  const n = Math.max(0, Math.floor(Number(state.invSlots) || 0));
+  return Math.max(1, Math.floor(CONFIG.INV_SLOT_COST_BASE * Math.pow(CONFIG.INV_SLOT_COST_GROW, n)));
+}
+/* 购买一次背包扩容：扣灵石、扩容、写日志 */
+function buyInvSlot() {
+  if (invCap() >= CONFIG.INV_SLOT_MAX) {
+    logMsg('背包已扩至上限 ' + CONFIG.INV_SLOT_MAX + ' 格。', 'info');
+    return false;
+  }
+  const price = invSlotPrice();
+  if (state.gold < price) {
+    logMsg('灵石不足，扩容背包需要 💠' + price + '。', 'warn');
+    return false;
+  }
+  state.gold -= price;
+  state.invSlots = Math.floor(Number(state.invSlots) || 0) + 1;
+  logMsg('背包扩容至 ' + invCap() + ' 格，花费 💠' + price + '。', 'good');
+  return true;
+}
+
 /* 已占用的槽位数（不同物品种类数） */
 function invSlotsUsed() {
   let n = 0;
   Object.keys(state.inv).forEach(function (id) { if (state.inv[id] > 0) n += 1; });
   return n;
 }
-function invFull() { return invSlotsUsed() >= CONFIG.INV_SLOTS; }
+function invFull() { return invSlotsUsed() >= invCap(); }
 
 /* 能否再放入 qty 个 id：已有该物品则不占新槽；否则需有空槽 */
 function invCanAdd(id, qty) {
   if (invCount(id) > 0) return true;
-  return invSlotsUsed() < CONFIG.INV_SLOTS;
+  return invSlotsUsed() < invCap();
 }
 
 function invAdd(id, qty) {
   if (!qty || qty <= 0) return false;
-  if (invCount(id) <= 0 && invSlotsUsed() >= CONFIG.INV_SLOTS) return false;
+  if (invCount(id) <= 0 && invSlotsUsed() >= invCap()) return false;
   state.inv[id] = Math.floor(invCount(id) + qty);
   state.stats.gained[id] = (state.stats.gained[id] || 0) + Math.floor(qty);
   return true;
@@ -227,8 +258,45 @@ function buyItem(id, qty, price) {
   if (!invCanAdd(id, qty)) return false;
   state.gold -= cost;
   invAdd(id, qty);
+  /* 问道指引：购买行为标记（首次购买后推进教学步骤） */
+  guideFlag('buy');
   if (!OFFLINE_MODE) logMsg('购入 ' + qty + ' × ' + itemIcon(id) + itemName(id) + '，花费 💠 ' + cost + ' 灵石', 'gold');
   return true;
+}
+
+/* 市集条目查询：同一 id 可能跨店上架，优先返回「已解锁」的那一条 */
+function findShopEntry(id) {
+  let fallback = null;
+  for (let i = 0; i < SHOPS.length; i++) {
+    const list = SHOPS[i].items;
+    for (let j = 0; j < list.length; j++) {
+      if (list[j].id !== id) continue;
+      if (!list[j].unlock || condDone(list[j].unlock)) return list[j];
+      if (!fallback) fallback = list[j];
+    }
+  }
+  return fallback;
+}
+/* 市集购买：先校验解锁条件，再按配置价购买 */
+function shopBuy(id, qty) {
+  const si = findShopEntry(id);
+  if (!si) return false;
+  if (si.unlock && !condDone(si.unlock)) {
+    logMsg('「' + itemName(id) + '」尚未解锁：需 ' + unlockText(si.unlock) + '。', 'warn');
+    return false;
+  }
+  return buyItem(id, qty, shopPrice(si));
+}
+function shopBuyMax(id) {
+  const si = findShopEntry(id);
+  if (!si) return;
+  if (si.unlock && !condDone(si.unlock)) {
+    logMsg('「' + itemName(id) + '」尚未解锁：需 ' + unlockText(si.unlock) + '。', 'warn');
+    return;
+  }
+  const price = shopPrice(si);
+  const qty = price > 0 ? Math.floor(state.gold / price) : 0;
+  if (qty > 0) buyItem(id, qty, price);
 }
 
 /* ------------------------------------------------------------------ 阵法 */
@@ -1426,7 +1494,7 @@ function cycleTick(dt) {
   if (act.skill === 'combat' || act.skill === 'planet' || act.skill === 'tower' || act.skill === 'rift' || act.skill === 'elem' || act.skill === 'riftmon') return;
 
   const def = findActivity(act.skill, act.id);
-  if (!def) { state.action = null; state.actionTimer = 0; return; }
+  if (!def) { state.action = null; state.actionExplicit = false; state.actionTimer = 0; return; }
 
   const t = effTime(def, act.id);
 
@@ -1634,7 +1702,7 @@ function towerClaim() {
   rw.items.forEach(function (it) { unique[it.id] = true; });
   let needSlots = 0;
   Object.keys(unique).forEach(function (id) { if (invCount(id) <= 0) needSlots += 1; });
-  if (invSlotsUsed() + needSlots > CONFIG.INV_SLOTS) {
+  if (invSlotsUsed() + needSlots > invCap()) {
     logMsg('背包已满，无法领取第 ' + floor + ' 层奖励（需 ' + needSlots + ' 个空位）。', 'warn');
     return false;
   }
@@ -2528,6 +2596,7 @@ function startAction(skillId, actionId) {
   planetInterrupt();
   cancelCombat();
   state.action = { skill: skillId, id: actionId };
+  state.actionExplicit = true;   /* 玩家主动开启：读档时才允许恢复 */
   state.actionTimer = 0;
   state.actionCur = 0;
   state.actionWaiting = false;
@@ -2557,6 +2626,7 @@ function stopAction(silent) {
   planetInterrupt();
   cancelCombat();
   state.action = null;
+  state.actionExplicit = false;
   state.actionTimer = 0;
   state.actionCur = 0;
   state.actionWaiting = false;
@@ -2701,18 +2771,129 @@ function breakthrough() {
 }
 
 /* ---------------------------------------------------------------- 任务 */
-function taskDone(t) {
-  const c = t.cond;
+/* 系统状态读数：任务进度 / 市集解锁共用的唯一口径 */
+function dynPostCount() {
+  let n = 0;
+  state.world.dynasties.forEach(function (d) {
+    DYNASTY.POST_ORDER.forEach(function (role) { if (d.posts && d.posts[role]) n += 1; });
+  });
+  return n;
+}
+function dynMaxEra() {
+  let m = 0;
+  state.world.dynasties.forEach(function (d) { if (d.dyn > m) m = d.dyn; });
+  return state.world.dynasties.length ? m + 1 : 0;   // 返回「第几朝」，1 起算
+}
+/* 道侣对数：活跃（alive）关系按双向记录折半；化道 / 亡故不计 */
+function daoPairs() {
+  let n = 0;
+  state.disciples.owned.forEach(function (x) {
+    (x.dao || []).forEach(function (r) { if (r && r.state === 'alive') n += 1; });
+  });
+  return Math.floor(n / 2);
+}
+/* 阵纹等级合计（所有阵法、所有阵纹） */
+function formTotalLevel() {
+  let n = 0;
+  FORMATIONS.forEach(function (f) {
+    const st = state.formations[f.id];
+    if (!st || !Array.isArray(st.levels)) return;
+    st.levels.forEach(function (v) { n += v || 0; });
+  });
+  return n;
+}
+function maxMasteryLevel() {
+  let m = 0;
+  Object.keys(state.mastery).forEach(function (id) {
+    const v = state.mastery[id] && state.mastery[id].lvl;
+    if (v > m) m = v;
+  });
+  return m;
+}
+function totalDungeonClears() {
+  let n = 0;
+  Object.keys(state.dungeons).forEach(function (id) { n += state.dungeons[id] || 0; });
+  return n;
+}
+function discTierCount(tier) {
+  let n = 0;
+  state.disciples.owned.forEach(function (x) { if (x.tier >= tier) n += 1; });
+  return n;
+}
+/* 条件判定（任务 + 市集解锁共用） */
+function condDone(c) {
+  if (!c) return true;
   switch (c.type) {
     case 'gathered': return state.stats.gathered >= c.n;
     case 'kills': return state.stats.kills >= c.n;
     case 'crafts': return state.stats.crafts >= c.n;
     case 'pills': return state.stats.pills >= c.n;
     case 'breaks': return state.stats.breaks >= c.n;
-    case 'level': return state.skills[c.skill] && state.skills[c.skill].lvl >= c.lvl;
+    case 'level': return !!state.skills[c.skill] && state.skills[c.skill].lvl >= c.lvl;
     case 'realm': return state.skills.cultivation.lvl >= c.stage;
     case 'item': return (state.stats.gained[c.id] || 0) >= c.qty;
+    case 'tower': return state.tower.best >= c.n;
+    case 'cross': return (state.planet.cross || 0) >= c.n;
+    case 'dynasty': return state.world.dynasties.length >= c.n;
+    case 'era': return dynMaxEra() >= c.n;
+    case 'post': return dynPostCount() >= c.n;
+    case 'dao': return daoPairs() >= c.n;
+    case 'form': return formTotalLevel() >= c.n;
+    case 'world': return worldLevel() >= c.n;
+    case 'mastery': return maxMasteryLevel() >= c.lvl;
+    case 'disciple': return state.disciples.owned.length >= c.n;
+    case 'dtier': return discTierCount(c.tier || 4) >= c.n;
+    case 'dungeon': return totalDungeonClears() >= c.n;
+    case 'checkin': return (state.checkin.total || 0) >= c.n;
+    case 'alllevel': {
+      const list = c.skills || TASK_PROD_SKILLS;
+      let ok = 0;
+      list.forEach(function (id) { if (state.skills[id] && state.skills[id].lvl >= c.lvl) ok += 1; });
+      return ok >= list.length;
+    }
     default: return false;
+  }
+}
+function taskDone(t) { return condDone(t.cond); }
+
+/* 任务进度文本（data-taskprog 增量刷新用）；无进度概念时返回空串 */
+function taskProgress(t) {
+  const c = t.cond;
+  switch (c.type) {
+    case 'realm': {
+      const have = state.skills.cultivation.lvl;
+      return '进度 ' + realmInfo(have).full + ' / 目标 ' + realmInfo(c.stage).full;
+    }
+    case 'level': {
+      const have = state.skills[c.skill] ? state.skills[c.skill].lvl : 1;
+      return '进度 Lv.' + have + ' / ' + c.lvl;
+    }
+    case 'alllevel': {
+      const list = c.skills || TASK_PROD_SKILLS;
+      let ok = 0;
+      list.forEach(function (id) { if (state.skills[id] && state.skills[id].lvl >= c.lvl) ok += 1; });
+      return '进度 ' + ok + ' / ' + list.length + ' 项达 Lv.' + c.lvl;
+    }
+    case 'tower': return '进度 ' + Math.min(state.tower.best, c.n) + ' / ' + c.n + ' 层';
+    case 'cross': return '进度 ' + Math.min(state.planet.cross || 0, c.n) + ' / ' + c.n + ' 次';
+    case 'dynasty': return '进度 ' + Math.min(state.world.dynasties.length, c.n) + ' / ' + c.n + ' 座';
+    case 'era': return '进度 最高第 ' + Math.min(dynMaxEra(), c.n) + ' 朝 / 第 ' + c.n + ' 朝';
+    case 'post': return '进度 ' + Math.min(dynPostCount(), c.n) + ' / ' + c.n + ' 位';
+    case 'dao': return '进度 ' + Math.min(daoPairs(), c.n) + ' / ' + c.n + ' 对';
+    case 'form': return '进度 ' + Math.min(formTotalLevel(), c.n) + ' / ' + c.n + ' 级';
+    case 'world': return '进度 ' + Math.min(worldLevel(), c.n) + ' / ' + c.n;
+    case 'mastery': return '进度 Lv.' + Math.min(maxMasteryLevel(), c.lvl) + ' / ' + c.lvl;
+    case 'disciple': return '进度 ' + Math.min(state.disciples.owned.length, c.n) + ' / ' + c.n + ' 位';
+    case 'dtier': return '进度 ' + Math.min(discTierCount(c.tier || 4), c.n) + ' / ' + c.n + ' 位';
+    case 'dungeon': return '进度 ' + Math.min(totalDungeonClears(), c.n) + ' / ' + c.n + ' 次';
+    case 'checkin': return '进度 ' + Math.min(state.checkin.total || 0, c.n) + ' / ' + c.n + ' 天';
+    case 'gathered': return '进度 ' + Math.min(state.stats.gathered, c.n) + ' / ' + c.n;
+    case 'kills': return '进度 ' + Math.min(state.stats.kills, c.n) + ' / ' + c.n;
+    case 'crafts': return '进度 ' + Math.min(state.stats.crafts, c.n) + ' / ' + c.n;
+    case 'pills': return '进度 ' + Math.min(state.stats.pills, c.n) + ' / ' + c.n;
+    case 'breaks': return '进度 ' + Math.min(state.stats.breaks, c.n) + ' / ' + c.n;
+    case 'item': return '进度 ' + Math.min(state.stats.gained[c.id] || 0, c.qty) + ' / ' + c.qty;
+    default: return '';
   }
 }
 
@@ -2726,16 +2907,147 @@ function checkTasks() {
   });
 }
 
+/* 任务奖励里的信徒：仓库容量校验 + 随机抽取指定品阶（与签到同一逻辑） */
+function taskTryGrantDisciple(tier) {
+  const cap = discipleStoreCap();
+  if (cap <= 0 || discipleTotal() >= cap) return null;
+  const pool = DISCIPLES.filter(function (d) { return d.tier === (tier || 4); });
+  if (!pool.length) return null;
+  const cat = pool[Math.floor(Math.random() * pool.length)];
+  const inst = newDiscInstance(cat.id);
+  if (!inst) return null;
+  state.disciples.owned.push(inst);
+  return inst;
+}
+
 function claimTask(id) {
   const t = findTask(id);
   const rec = state.tasks[id];
   if (!t || !rec || !rec.done || rec.claimed) return false;
+
+  /* 信徒奖励需要招贤殿空位：不足时拒绝领取，保留可领取状态，避免奖励丢失 */
+  if (t.reward.disciple) {
+    const cap = discipleStoreCap();
+    if (cap <= 0) {
+      logMsg('需先营造「招贤殿」并腾出仓库空位，才能领取「' + t.name + '」的信徒奖励。', 'warn');
+      return false;
+    }
+    if (discipleTotal() >= cap) {
+      logMsg('信徒仓库已满（' + discipleTotal() + ' / ' + cap + '），请先遣散或腾位后再领取。', 'warn');
+      return false;
+    }
+  }
+
   rec.claimed = true;
   if (t.reward.gold) state.gold += t.reward.gold;
   if (t.reward.spirit) state.spirit += t.reward.spirit;
+  if (t.reward.stardust) state.stardust = (state.stardust || 0) + t.reward.stardust;
+  if (t.reward.seed) state.seed = (state.seed || 0) + t.reward.seed;
   if (t.reward.items) t.reward.items.forEach(function (i) { invAdd(i.id, i.qty); });
+  if (t.reward.disciple) {
+    const inst = taskTryGrantDisciple(t.reward.disciple.tier);
+    if (inst) {
+      const cat = findDisciple(inst.id);
+      logMsg('任务奖励：神品信徒「' + (cat ? cat.name : inst.id) + '」已入驻招贤殿。', 'good');
+    }
+  }
   logMsg('领取任务奖励：「' + t.name + '」。', 'good');
   return true;
+}
+
+/* ------------------------------------------------------------ 问道指引（v2.14.0）
+   轻量教学清单：只推进「第一个未完成步骤」，玩家实际做出行为才打勾；
+   完成即自动发奖（星砂 / 生命之种 / 丹药），不发灵石。
+   旧档推断（guideInfer）只打勾不补奖，避免一次性资源注入。 */
+function guideDoneCount() {
+  if (!state || !state.guide) return 0;
+  let n = 0;
+  GUIDE_STEPS.forEach(function (s) { if (state.guide.done[s.id]) n += 1; });
+  return n;
+}
+function guideCurrent() {
+  if (!state || !state.guide) return null;
+  for (let i = 0; i < GUIDE_STEPS.length; i++) {
+    if (!state.guide.done[GUIDE_STEPS[i].id]) return GUIDE_STEPS[i];
+  }
+  return null;
+}
+function guideFinished() { return !guideCurrent(); }
+/* 当前步骤是否已被玩家行为满足 */
+function guideStepDone(step) {
+  if (!step) return false;
+  if (step.flag) return !!(state.guide.flags && state.guide.flags[step.flag]);
+  return !!(step.cond && condDone(step.cond));
+}
+function guideGrant(step) {
+  const r = step.reward || {};
+  if (r.stardust) state.stardust = (state.stardust || 0) + r.stardust;
+  if (r.seed) state.seed = (state.seed || 0) + r.seed;
+  (r.items || []).forEach(function (i) { invAdd(i.id, i.qty); });
+}
+/* 行为标记：打开背包 / 市集、完成一次购买等 */
+function guideFlag(key) {
+  if (!state || !state.guide || !key) return;
+  if (state.guide.flags[key]) return;
+  state.guide.flags[key] = true;
+  guideSync();
+}
+/* 推进检查：按顺序连续完成所有已满足的步骤 */
+function guideSync() {
+  if (!state || !state.guide) return;
+  let guard = 0;
+  while (guard < GUIDE_STEPS.length + 1) {
+    guard += 1;
+    const cur = guideCurrent();
+    if (!cur || !guideStepDone(cur)) return;
+    state.guide.done[cur.id] = true;
+    guideGrant(cur);
+    logMsg('问道指引：完成「' + cur.title + '」，奖励已发放。', 'good');
+  }
+}
+/* 旧档推断：按现有进度把已完成/明显越过的前置步骤补勾（不补奖） */
+function guideInfer() {
+  if (!state || !state.guide) return;
+  let last = -1;
+  GUIDE_STEPS.forEach(function (s, i) {
+    if (s.cond && condDone(s.cond)) last = i;
+  });
+  /* 已经明显进入中期的老存档，视为已完成前 6 步（修炼/采集/背包/市集/购买/战斗），
+     避免让老玩家从教学第一步重新点起 */
+  const advanced = state.skills.cultivation.lvl >= 15 ||
+    state.stats.gathered >= 50 ||
+    (state.stats.kills || 0) >= 10 ||
+    worldLevel() >= 10;
+  if (advanced) last = Math.max(last, 5);
+  if ((state.planet.cross || 0) > 0) last = GUIDE_STEPS.length - 1;
+  GUIDE_STEPS.forEach(function (s, i) {
+    if (i <= last && !state.guide.done[s.id]) {
+      state.guide.done[s.id] = true;
+      state.guide.inferred[s.id] = true;
+    }
+  });
+}
+function guideSkip() {
+  if (!state || !state.guide) return;
+  state.guide.skipped = true;
+  state.guide.closed = true;
+  logMsg('已跳过问道指引，可在侧栏「问道」随时查阅或重新开启。', 'info');
+}
+function guideClose() {
+  if (!state || !state.guide) return;
+  state.guide.closed = true;
+  logMsg('已收起问道提示，侧栏「问道」仍可查看进度。', 'info');
+}
+function guideReopen() {
+  if (!state || !state.guide) return;
+  state.guide.skipped = false;
+  state.guide.closed = false;
+  logMsg('已重新开启问道提示。', 'info');
+}
+/* 是否需要在右侧常驻卡片里提示（完成 / 跳过 / 收起后都不再打扰） */
+function guideNudging() {
+  if (!state || !state.guide) return false;
+  return !state.guide.skipped && !state.guide.closed && !guideFinished();
 }
 
 /* ------------------------------------------------------------ 签到（七日循环）
@@ -2802,7 +3114,7 @@ function claimCheckin() {
 
   /* 背包格位：只统计「尚未拥有」的物品（已有物品不占新格），不足则整单拒签，避免奖励丢失 */
   const newKinds = (rec.items || []).filter(function (i) { return invCount(i.id) <= 0; }).length;
-  const freeSlots = CONFIG.INV_SLOTS - invSlotsUsed();
+  const freeSlots = invCap() - invSlotsUsed();
   if (newKinds > freeSlots) {
     logMsg('背包剩余格位不足（需 ' + newKinds + ' 格，仅剩 ' + freeSlots + ' 格），请清理背包后再签到。', 'warn');
     return false;
@@ -2940,8 +3252,9 @@ function planetAuraStart(s) {
 }
 
 /* ---------------------------------------------------------- 穿越朝代 */
-/* 中文数字（1~99）：古一纪 / 古十纪 / 古二十三纪… 更大时退回阿拉伯数字 */
-function cnNum(n) {
+/* 中文数字（1~99）：古一纪 / 古十纪 / 古二十三纪… 更大时退回阿拉伯数字
+   注意：不要命名为 cnNum，data.js 已有同名函数负责境界大数中文，后者会被本文件覆盖 */
+function cnSmallNum(n) {
   const d = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
   n = Math.floor(Number(n) || 0);
   if (n <= 0) return '零';
@@ -2955,7 +3268,7 @@ function cnNum(n) {
 function planetDynastyName(n) {
   n = Math.max(0, Math.min(10000, Math.floor(Number(n) || 0)));
   if (n < DYNASTY_NAMES.length) return DYNASTY_NAMES[n];
-  return '古' + cnNum(n - DYNASTY_NAMES.length + 1) + '纪';
+  return '古' + cnSmallNum(n - DYNASTY_NAMES.length + 1) + '纪';
 }
 
 /* 第 n 次穿越的灵气浓度价格（n 从 1 起算）：
@@ -3033,6 +3346,7 @@ function planetStop(silent) {
   if (!planetRunning()) { planetReset(); return; }
   planetReset();
   state.action = null;
+  state.actionExplicit = false;
   state.actionTimer = 0;
   state.actionWaiting = false;
   if (!silent) logMsg('已停止「穿越星球」，未吸收的物品已清空。', 'info');
@@ -3232,7 +3546,7 @@ function tick(dt) {
   clampHp();
 
   state.taskTimer += dt;
-  if (state.taskTimer >= 1) { state.taskTimer = 0; checkTasks(); checkinFlushPending(); }
+  if (state.taskTimer >= 1) { state.taskTimer = 0; checkTasks(); guideSync(); checkinFlushPending(); }
 }
 
 /* ---------------------------------------------------------------- 离线结算 */

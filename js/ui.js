@@ -26,17 +26,34 @@ function setHTML(sel, html) {
  * 取消 / Esc / 点击遮罩只关闭弹窗，绝不写入存档。 */
 const CONFIRM_UI = { open: false, onOk: null, onCancel: null };
 
-function showConfirm(title, body, onOk, onCancel) {
+function showConfirm(title, body, onOk, onCancel, tone) {
   if (CONFIRM_UI.open) return;
   const mask = document.getElementById('confirmMask');
   if (!mask) return;   /* 没有弹窗 DOM 时失败关闭，绝不静默执行 */
   CONFIRM_UI.open = true;
   CONFIRM_UI.onOk = onOk || null;
   CONFIRM_UI.onCancel = onCancel || null;
-  document.getElementById('confirmTitle').textContent = title || '确认';
-  document.getElementById('confirmBody').textContent = body || '';
-  mask.classList.remove('hidden');
+  /* tone = 'danger'：加红色警示条与红色确认按钮；其他弹窗复位为普通样式 */
+  const danger = tone === 'danger';
+  const box = mask.querySelector('.confirmbox');
+  const warn = document.getElementById('confirmWarn');
   const ok = document.getElementById('confirmOk');
+  if (box) box.classList.toggle('danger', danger);
+  if (warn) warn.classList.toggle('hidden', !danger);
+  if (ok) ok.classList.toggle('danger', danger);
+  document.getElementById('confirmTitle').textContent = title || '确认';
+  /* 危险弹窗把「不可恢复 / 清空」这类关键行单独高亮；普通弹窗保持纯文本 */
+  const bodyEl = document.getElementById('confirmBody');
+  if (danger) {
+    bodyEl.innerHTML = esc(body || '').split('\n').map(function (line) {
+      return /不可恢复|无法撤销|清空/.test(line)
+        ? '<span class="cwarnline">' + line + '</span>'
+        : line;
+    }).join('\n');
+  } else {
+    bodyEl.textContent = body || '';
+  }
+  mask.classList.remove('hidden');
   if (ok) ok.focus();
 }
 
@@ -241,13 +258,29 @@ function renderSidebar() {
     '<span class="slvl">' + ckSub + '</span></span>' +
     '</button>';
 
+  /* 2.5 问道指引（轻量教学清单；完成/跳过后仍可查阅） */
+  const gCur = guideCurrent();
+  const gDoneN = guideDoneCount();
+  const gFin = !gCur;
+  const onGuide = state.ui.active === 'guide' ? ' on' : '';
+  const gSub = gFin
+    ? ('已完成 ' + gDoneN + '/' + GUIDE_STEPS.length + ' · 可查阅')
+    : (state.guide.skipped ? ('已跳过 · ' + gDoneN + '/' + GUIDE_STEPS.length) :
+      ('新手引导 ' + gDoneN + '/' + GUIDE_STEPS.length + ' <span class="badge">!</span>'));
+  html +=
+    '<button class="skillbtn guidebtn' + onGuide + '" data-act="select" data-skill="guide">' +
+    '<span class="sico">📖</span>' +
+    '<span class="sinfo"><span class="sname">问道</span><br>' +
+    '<span class="slvl">' + gSub + '</span></span>' +
+    '</button>';
+
   /* 3. 背包（第三位） */
   const onBag = state.ui.active === 'bag' ? ' on' : '';
   html +=
     '<button class="skillbtn bagbtn' + onBag + '" data-act="select" data-skill="bag">' +
     '<span class="sico">🎒</span>' +
     '<span class="sinfo"><span class="sname">背包</span><br>' +
-    '<span class="slvl"><span data-invcount>' + invSlotsUsed() + ' / ' + CONFIG.INV_SLOTS + '</span></span></span>' +
+    '<span class="slvl"><span data-invcount>' + invSlotsUsed() + ' / ' + invCap() + '</span></span></span>' +
     '</button>';
 
   /* 3. 市集（第三位） */
@@ -367,6 +400,19 @@ function renderSidebar() {
   }
 
   setHTML('#sidebar', html);
+  applyGuideFocus();
+}
+
+/* 当前引导步骤对应的侧栏入口高亮（不改变布局，只用边框+光晕脉冲） */
+function applyGuideFocus() {
+  if (!state || !state.guide) return;
+  const cur = guideNudging() ? guideCurrent() : null;
+  const tab = (cur && state.ui.active !== cur.tab) ? cur.tab : null;
+  const btns = document.querySelectorAll('#sidebar [data-skill]');
+  for (let i = 0; i < btns.length; i++) {
+    if (tab && btns[i].dataset.skill === tab) btns[i].classList.add('guidefocus');
+    else btns[i].classList.remove('guidefocus');
+  }
 }
 
 /* ============================================================= 中间内容面板 */
@@ -647,33 +693,71 @@ function renderCombat() {
   return html;
 }
 
-/* 任务面板 */
+/* 任务面板（v2.13.0）：按阶段分组 + data-taskprog 增量进度 */
+function taskRewardText(t) {
+  const r = t.reward || {};
+  const out = [];
+  if (r.gold) out.push('💠 ' + fmtNum(r.gold));
+  if (r.spirit) out.push('✨ ' + fmtNum(r.spirit));
+  if (r.stardust) out.push('💫 ' + fmtNum(r.stardust));
+  if (r.seed) out.push('🌱 ' + fmtNum(r.seed) + ' 生命之种');
+  (r.items || []).forEach(function (i) { out.push(itemIcon(i.id) + itemName(i.id) + '×' + i.qty); });
+  if (r.disciple) out.push('👑 神品信徒 ×1');
+  return out.length ? out.join(' · ') : '—';
+}
+
 function renderTasks() {
-  let html = '<div class="phead"><h2>📜 任务 · 成就</h2><span class="pdesc">达成条件后可领取奖励</span></div>';
-  html += '<div class="grid">';
-  let claimedN = 0;
+  let html = '<div class="phead"><h2>📜 任务 · 成就</h2><span class="pdesc">达成条件后可领取奖励 · 按阶段推进</span></div>';
+
+  let claimedAll = 0;
   TASKS.forEach(function (t) {
-    const rec = state.tasks[t.id] || { done: false, claimed: false };
-    if (rec.claimed) claimedN += 1;
-    const cls = rec.claimed ? ' done' : (rec.done ? ' ready' : '');
-    const reward = [];
-    if (t.reward.gold) reward.push('💠 ' + fmtNum(t.reward.gold));
-    if (t.reward.spirit) reward.push('✨ ' + fmtNum(t.reward.spirit));
-    (t.reward.items || []).forEach(function (i) { reward.push(itemIcon(i.id) + itemName(i.id) + '×' + i.qty); });
-
-    let btn = '<span class="etag">进行中</span>';
-    if (rec.claimed) btn = '<span class="etag">已领取</span>';
-    else if (rec.done) btn = '<button class="mini gold" data-act="claim" data-id="' + t.id + '">领取</button>';
-
-    html += '<div class="entry taskentry' + cls + '">' +
-      '<span class="eico">' + (rec.claimed ? '✅' : (rec.done ? '🎁' : '🔲')) + '</span>' +
-      '<span class="emain"><span class="ename">' + t.name + ' ' + btn + '</span>' +
-      '<span class="emeta">' + t.desc + '<br>奖励：' + reward.join(' · ') + '</span></span>' +
-      '</div>';
+    const rec = state.tasks[t.id];
+    if (rec && rec.claimed) claimedAll += 1;
   });
-  html += '</div>';
-  html += '<div class="secttl">进度 ' + claimedN + ' / ' + TASKS.length + '</div>';
+
+  const phases = [];
+  TASKS.forEach(function (t) {
+    const p = t.phase || '任务';
+    if (phases.indexOf(p) < 0) phases.push(p);
+  });
+  phases.forEach(function (phase) {
+    const list = TASKS.filter(function (t) { return (t.phase || '任务') === phase; });
+    let claimedN = 0;
+    list.forEach(function (t) { if (state.tasks[t.id] && state.tasks[t.id].claimed) claimedN += 1; });
+    html += '<div class="secttl">' + phase + ' · 已领 ' + claimedN + ' / ' + list.length + '</div>';
+    html += '<div class="grid">';
+    list.forEach(function (t) {
+      const rec = state.tasks[t.id] || { done: false, claimed: false };
+      const cls = rec.claimed ? ' done' : (rec.done ? ' ready' : '');
+
+      let btn = '<span class="etag">进行中</span>';
+      if (rec.claimed) btn = '<span class="etag">已领取</span>';
+      else if (rec.done) btn = '<button class="mini gold" data-act="claim" data-id="' + t.id + '">领取</button>';
+
+      html += '<div class="entry taskentry' + cls + '">' +
+        '<span class="eico">' + (rec.claimed ? '✅' : (rec.done ? '🎁' : '🔲')) + '</span>' +
+        '<span class="emain"><span class="ename">' + t.name + ' ' + btn + '</span>' +
+        '<span class="emeta">' + t.desc +
+        '<br><span class="tprog" data-taskprog="' + t.id + '"></span>' +
+        '<br>奖励：' + taskRewardText(t) + '</span></span>' +
+        '</div>';
+    });
+    html += '</div>';
+  });
+  html += '<div class="secttl">总进度 ' + claimedAll + ' / ' + TASKS.length + '</div>';
   return html;
+}
+
+/* 任务进度文本增量刷新（不重建任务列表） */
+function updateTaskState() {
+  if (!state || state.ui.active !== 'tasks') return;
+  const c = $('#content');
+  if (!c) return;
+  const els = c.querySelectorAll('[data-taskprog]');
+  for (let i = 0; i < els.length; i++) {
+    const t = findTask(els[i].dataset.taskprog);
+    if (t) setText(els[i], taskProgress(t));
+  }
 }
 
 /* ========================================================== 签到 · 七日循环 */
@@ -774,6 +858,95 @@ function updateCheckinState() {
   const p = function (n) { return n < 10 ? '0' + n : String(n); };
   const txt = p(Math.floor(s / 3600)) + ':' + p(Math.floor(s % 3600 / 60)) + ':' + p(s % 60);
   if (el.textContent !== txt) el.textContent = txt;
+}
+
+/* =============================================================== 问道指引 */
+function guideRewardText(step) {
+  const r = (step && step.reward) || {};
+  const out = [];
+  if (r.stardust) out.push('💫 星砂 ' + fmtNum(r.stardust));
+  if (r.seed) out.push('🌱 生命之种 ' + fmtNum(r.seed));
+  (r.items || []).forEach(function (i) { out.push(itemIcon(i.id) + itemName(i.id) + '×' + i.qty); });
+  return out.length ? out.join(' · ') : '—';
+}
+
+function renderGuide() {
+  const cur = guideCurrent();
+  const doneN = guideDoneCount();
+  const total = GUIDE_STEPS.length;
+  const finished = !cur;
+  const pct = total ? (doneN / total * 100) : 0;
+
+  let html = '<div class="phead"><h2>📖 问道指引</h2>' +
+    '<span class="pdesc">按实际行为自动打勾 · 完成即发奖励 · 与任务链相互独立</span></div>';
+
+  if (finished) {
+    html += '<div class="gdonebanner">🎉 全部指引已完成，可随时回来查阅。后续长期目标请前往「📜 任务」面板。</div>';
+  } else if (state.guide.skipped) {
+    html += '<div class="gdonebanner">已跳过引导，不会再自动弹出提示。可随时点下方按钮重新开启。</div>';
+  } else if (state.guide.closed) {
+    html += '<div class="gdonebanner">提示已收起。需要时可在下方重新开启常驻提示。</div>';
+  } else {
+    html += '<div class="gnudgebanner">当前步骤：<b>' + cur.title + '</b>　' + cur.hint + '</div>';
+  }
+
+  html += '<div class="gbarwrap"><div class="bar"><i class="gbarfill" style="width:' + pct.toFixed(1) + '%"></i></div>' +
+    '<span class="gbarpct">' + doneN + ' / ' + total + '</span></div>';
+
+  html += '<div class="gpanelacts">';
+  if (!finished) {
+    html += '<button class="mini gold" data-act="guidego">前往当前步骤</button>';
+    html += (state.guide.skipped
+      ? '<button class="mini" data-act="guidereopen">重新开启提示</button>'
+      : '<button class="mini" data-act="guideskip">跳过引导</button>');
+    if (state.guide.closed) html += '<button class="mini" data-act="guidereopen">重新显示提示</button>';
+  } else {
+    html += '<span class="etag">已完成</span>';
+  }
+  html += '</div>';
+
+  html += '<div class="gsteps">';
+  GUIDE_STEPS.forEach(function (s, i) {
+    const done = !!state.guide.done[s.id];
+    const inferred = !!state.guide.inferred[s.id];
+    const isCur = !!cur && cur.id === s.id;
+    const cls = done ? ' done' : (isCur ? ' cur' : '');
+    html += '<div class="gstep' + cls + '">' +
+      '<span class="gno">' + (done ? '✅' : (isCur ? '▶' : '○')) + '</span>' +
+      '<span class="gmain">' +
+      '<span class="gst">' + (i + 1) + '. ' + s.title +
+      (isCur ? ' <span class="etag warn">当前</span>' : '') +
+      (inferred ? ' <span class="etag">旧档推断</span>' : '') + '</span>' +
+      '<span class="gsd">' + s.desc + '</span>' +
+      '<span class="gsh">👉 ' + s.hint + '</span>' +
+      '<span class="gsr">奖励：' + guideRewardText(s) + (done ? ' · 已发放' : '') + '</span>' +
+      '</span>' +
+      (isCur ? '<button class="mini gold" data-act="guidego">前往</button>' : '') +
+      '</div>';
+  });
+  html += '</div>';
+  return html;
+}
+
+/* 右侧常驻引导卡：静态骨架在 index.html，这里只增量写文本 / 显隐 */
+function updateGuide() {
+  const card = $('#guideCard');
+  if (!card || !state) return;
+  const show = guideNudging();
+  if (card.classList.contains('hidden') === show) {
+    if (show) card.classList.remove('hidden'); else card.classList.add('hidden');
+  }
+  const cur = guideCurrent();
+  if (!cur) return;
+  const doneN = guideDoneCount();
+  const gp = card.querySelector('[data-gprog]');
+  if (gp) setText(gp, doneN + ' / ' + GUIDE_STEPS.length);
+  const gt = card.querySelector('[data-gtitle]');
+  if (gt) setText(gt, (doneN + 1) + '. ' + cur.title);
+  const gd = card.querySelector('[data-gdesc]');
+  if (gd) setText(gd, cur.desc);
+  const gh = card.querySelector('[data-ghint]');
+  if (gh) setText(gh, '👉 ' + cur.hint);
 }
 
 /* 穿越星球面板：中心星球 + 四周飞来的灵石 / 星砂 / 材料 */
@@ -1705,13 +1878,15 @@ function renderShop() {
     const it = ITEMS[si.id];
     if (!it) return;
     const price = shopPrice(si);
-    const canBuy = state.gold >= price;
-    const full = !invCanAdd(si.id, 1);
-    const disabled = (!canBuy || full) ? ' disabled' : '';
-    const note = full ? '<span class="etag warn">背包已满</span>' : (canBuy ? '' : '<span class="etag warn">灵石不足</span>');
+    const locked = si.unlock && !condDone(si.unlock);
+    const canBuy = !locked && state.gold >= price;
+    const full = !locked && !invCanAdd(si.id, 1);
+    const disabled = (locked || !canBuy || full) ? ' disabled' : '';
+    const note = locked ? '<span class="etag warn">🔒 需 ' + unlockText(si.unlock) + '</span>'
+      : (full ? '<span class="etag warn">背包已满</span>' : (canBuy ? '' : '<span class="etag warn">灵石不足</span>'));
     html +=
-      '<div class="shopitem">' +
-      '<span class="sico">' + it.icon + '</span>' +
+      '<div class="shopitem' + (locked ? ' locked' : '') + '">' +
+      '<span class="sico">' + (locked ? '🔒' : it.icon) + '</span>' +
       '<span class="smain"><span class="sname">' + it.name + note + '</span>' +
       '<span class="smeta">' + esc(it.desc) + '</span>' +
       '<span class="sprice">💠 ' + price + ' / 个</span></span>' +
@@ -2687,8 +2862,9 @@ function updateDiscipleState() {
 
 function renderContent() {
   const id = state.ui.active;
-  if (id === 'tasks') { setHTML('#content', renderTasks()); return; }
+  if (id === 'tasks') { setHTML('#content', renderTasks()); updateTaskState(); return; }
   if (id === 'checkin') { setHTML('#content', renderCheckin()); updateCheckinState(); return; }
+  if (id === 'guide') { setHTML('#content', renderGuide()); return; }
   if (id === 'shop') { setHTML('#content', renderShop()); return; }
   if (id === 'planet') {
     if (state.ui.planetView === 'rift') {
@@ -2745,7 +2921,7 @@ let _devDirty = false;
 
 function renderSettings() {
   let html = '<div class="phead"><h2>🔧 设置</h2>' +
-    '<span class="pdesc">兑换码与后续设置的落位骨架；本次仅「兑换码」可用。</span></div>';
+    '<span class="pdesc">兑换码、测试控制台与存档管理</span></div>';
 
   html += '<div class="secttl">兑换码</div>' +
     '<div class="setcard">' +
@@ -2766,10 +2942,19 @@ function renderSettings() {
       '</div>';
   }
 
-  html += '<div class="secttl">通用</div>' +
-    '<div class="setcard">' +
+  html += '<div class="secttl primary">通用</div>' +
+    '<div class="setcard primary">' +
     '<div class="setrow"><span class="setlab">更多设置</span><span class="setph">（预留分组）</span></div>' +
     '<div class="setmsg">音效、画面、自动化等设置将在后续版本逐步加入；此处只保留分组容器与占位条目。</div>' +
+    '</div>';
+
+  /* 危险操作（v2.14.1）：原先在顶栏的「重开」移到这里，保留二次确认逻辑 */
+  html += '<div class="secttl danger">存档 · 危险操作</div>' +
+    '<div class="setcard dangerzone">' +
+    '<div class="setrow"><span class="setlab">重开游戏</span>' +
+    '<span class="setph">清空当前存档与全部进度，且无法恢复</span>' +
+    '<button class="btn small danger" data-act="reset">重开游戏</button></div>' +
+    '<div class="setmsg danger">⚠ 此操作会删除当前存档并从头开始；点击后仍需二次确认，建议先「保存」或备份存档。</div>' +
     '</div>';
 
   return html;
@@ -3019,8 +3204,20 @@ function renderBag() {
   ids.sort(function (a, b) { return (ITEMS[a].value || 0) - (ITEMS[b].value || 0); });
 
   let html = '<div class="phead"><h2>🎒 背包</h2>' +
-    '<span class="pdesc">容量 <span data-invcount>' + invSlotsUsed() + ' / ' + CONFIG.INV_SLOTS + '</span>' +
+    '<span class="pdesc">容量 <span data-invcount>' + invSlotsUsed() + ' / ' + invCap() + '</span>' +
     ' · 点击物品查看操作，背包满时产出会原地等待</span></div>';
+
+  /* 背包扩容（v2.13.0）：每次 +固定格数，价格指数递增到上限为止 */
+  const capFull = invCap() >= CONFIG.INV_SLOT_MAX;
+  const upPrice = invSlotPrice();
+  html += '<div class="bagup"><span class="bupinfo">📦 当前容量 <b data-bagcap>' + invCap() + '</b> 格 · 每次扩容 +' +
+    CONFIG.INV_SLOT_STEP + ' 格' +
+    (capFull ? ' · 已达上限' : ' · 下次 💠 <b data-bagprice>' + fmtNum(upPrice) + '</b>') +
+    '</span>' +
+    (capFull
+      ? '<span class="etag">容量已满</span>'
+      : '<button class="mini gold" data-act="invup" data-bagup' + (state.gold < upPrice ? ' disabled' : '') + '>扩容 +' + CONFIG.INV_SLOT_STEP + '</button>') +
+    '</div>';
 
   /* 筛选 chips + 出售模式开关 */
   const sellTip = state.ui.invSellMode
@@ -3118,10 +3315,14 @@ function hideInvPopover() {
 }
 
 function updateInvQty() {
-  /* 容量计数（背包页标题 + 侧栏背包按钮） */
-  const cnt = invSlotsUsed() + ' / ' + CONFIG.INV_SLOTS;
+  /* 容量计数（背包页标题 + 侧栏背包按钮），统一使用 invCap() */
+  const cnt = invSlotsUsed() + ' / ' + invCap();
   const cc = document.querySelectorAll('[data-invcount]');
   for (let k = 0; k < cc.length; k++) setText(cc[k], cnt);
+  const cap = document.querySelector('[data-bagcap]');
+  if (cap) setText(cap, String(invCap()));
+  const up = document.querySelector('[data-bagup]');
+  if (up) up.disabled = state.gold < invSlotPrice();
 
   const list = $('#invList');
   if (!list) return;
@@ -3255,6 +3456,7 @@ function renderAll() {
   renderSidebar();
   renderContent();
   renderRight();
+  updateGuide();
 }
 
 /* ------------------------------------------------------ 高频：只更进度条 */
@@ -3294,6 +3496,8 @@ function updateBars() {
 
   /* 数量类信息增量刷新，避免重建可点击行 */
   updateInvQty();
+  updateTaskState();
+  updateGuide();
   updateMatNeeds();
   updateXpText();
   updateXpBars();

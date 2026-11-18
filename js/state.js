@@ -18,6 +18,7 @@ function defaultState() {
     seed: 0,            // 生命之种（穿越星球 / 裂缝掉落，用于洞天「朝代」召唤与合成）
     hp: CONFIG.BASE_HP,
     inv: { fish_qing: 3, log_qing: 2, herb_juqi: 2 },   // 一点起步物资
+    invSlots: 0,        // 背包扩容次数（每次 +INV_SLOT_STEP 格，价格逐次递增）
     equip: { weapon: null, armor: null, helmet: null, boots: null, amulet: null, ring: null },
     insight: 0,         // 悟性：每点 修炼速度 +1% / 突破成功率 +1%（悟道丹提升）
     skills: {},
@@ -64,8 +65,11 @@ function defaultState() {
        tier 生成时的穿越次数快照。新档与旧档兜底都会立刻出现一只 */
     riftMon: { alive: true, born: Date.now(), next: Date.now() + RIFT_MON.REFRESH_MS, tier: 0 },
 
-    /* 单一动作槽：同一时刻只能进行一件事 */
-    action: { skill: 'cultivation', id: 'meditate' },
+    /* 单一动作槽：同一时刻只能进行一件事；新档默认空闲，不自动开启任何动作。
+       actionExplicit 标记该动作是否由玩家主动点击开启，用于读档时区分「玩家保留的挂机」
+       与旧版默认塞入的打坐（旧档没有该字段，需要清理历史默认值）。 */
+    action: null,
+    actionExplicit: false,
     actionTimer: 0,     // 当前周期已累计秒数
     actionWaiting: false,
 
@@ -78,6 +82,9 @@ function defaultState() {
        'YYYY-MM-DD'；total = 累计领取次数；pending = 第 7 天信徒待入仓（仓库满/未建招贤殿）
        —— 只按本地日期判定，无服务器时间；异常值在 mergeState 中兜底 */
     checkin: { day: 1, lastKey: '', total: 0, pending: false },
+    /* 问道指引（v2.14.0）：done = 已完成步骤 id 集合；inferred = 旧档推断完成（不补发奖励）
+       flags = 面板访问 / 购买等行为标记；skipped = 已跳过（不再弹提示）；closed = 已收起（可手动重开） */
+    guide: { done: {}, inferred: {}, flags: {}, skipped: false, closed: false },
     ui: { active: 'woodcutting', planetView: 'main', elemSlot: 0, worldView: 'main', dynMerge: -1, autoEat: true, eatFood: 'auto', eatRatio: 0.35, invFilter: 'all', invSellMode: false, itemQty: 1, shopCat: 'general', farmSeedId: null, worldTerrain: 'all' },
     log: [],
     stats: { gathered: 0, crafts: 0, kills: 0, deaths: 0, breaks: 0, pills: 0, gained: {}, perSkill: {}, startedAt: Date.now() },
@@ -118,7 +125,11 @@ function loadState() {
 
   let saved = null;
   try { saved = JSON.parse(raw); } catch (e) { state = def; return 0; }
+  /* 旧档（v2.14.0 之前没有 guide 字段）：读档后按现有进度推断已完成步骤，
+     只打勾不补发奖励，避免老玩家一次性获得全部教学奖励。 */
+  const needGuideInfer = !(saved && saved.guide && typeof saved.guide === 'object');
   state = mergeState(def, saved);
+  if (needGuideInfer && typeof guideInfer === 'function') guideInfer();
 
   const elapsed = Math.max(0, (Date.now() - state.lastSave) / 1000);
   return elapsed;
@@ -143,6 +154,12 @@ function mergeState(def, saved) {
     Object.keys(saved.inv).forEach(function (id) {
       if (ITEMS[id] && isFinite(saved.inv[id]) && saved.inv[id] > 0) out.inv[id] = Math.floor(saved.inv[id]);
     });
+  }
+  /* 背包扩容次数（v2.13.0）：旧档缺失按 0，异常值夹到 [0, 最大次数] */
+  {
+    const maxSteps = Math.max(0, Math.floor((CONFIG.INV_SLOT_MAX - CONFIG.INV_SLOTS) / CONFIG.INV_SLOT_STEP));
+    const n = Math.floor(Number(saved.invSlots));
+    out.invSlots = isFinite(n) ? Math.max(0, Math.min(maxSteps, n)) : 0;
   }
   if (saved.equip) {
     EQUIP_SLOTS.forEach(function (sl) {
@@ -555,21 +572,34 @@ function mergeState(def, saved) {
     out.tower.best = Math.min(TOWER.MAX_FLOOR, out.tower.best);
   }
 
-  /* 动作槽合法性校验（防止旧存档引用已删除的动作） */
-  if (saved.action && typeof saved.action === 'object' && saved.action.skill && saved.action.id) {
-    if (findActivity(saved.action.skill, saved.action.id)) {
-      out.action = { skill: saved.action.skill, id: saved.action.id };
+  /* 动作槽恢复规则（v2.14.3）：
+     - 新档 action 为 null，进游戏保持空闲；
+     - 玩家主动开启的采集 / 配方动作可恢复，离线结算沿用该动作；
+     - 旧版把 cultivation/meditate 写死在默认存档里，旧档没有 actionExplicit 标记，
+       这类打坐一律视为历史默认值清空，避免每次进游戏自动打坐；
+     - 星球 / 塔 / 裂缝等瞬态动作不恢复。 */
+  const sa = (saved.action && typeof saved.action === 'object') ? saved.action : null;
+  if (sa && sa.skill && sa.id && findActivity(sa.skill, sa.id)) {
+    const legacyAutoMeditate = sa.skill === 'cultivation' && sa.id === 'meditate' &&
+      saved.actionExplicit !== true;
+    if (!legacyAutoMeditate) {
+      out.action = { skill: sa.skill, id: sa.id };
+      out.actionExplicit = true;
     }
   }
   if (isFinite(saved.actionTimer)) out.actionTimer = Math.max(0, Number(saved.actionTimer));
   if (typeof saved.actionWaiting === 'boolean') out.actionWaiting = saved.actionWaiting;
 
-  /* 星球是主动动作，但不在 ACTIONS/RECIPES 表内：读档一律不恢复，
-     保持「未开启」，也避免 defaultState 的打坐动作顶替它偷偷占槽 */
-  if (saved.action && (saved.action.skill === 'planet' || saved.action.skill === 'tower' || saved.action.skill === 'rift' || saved.action.skill === 'elem' || saved.action.skill === 'riftmon')) {
+  /* 星球 / 锁妖塔 / 异界裂缝 / 属性裂缝 / 裂缝怪物均为主动或瞬态动作：读档一律不恢复，
+     保持「未开启」，也避免默认值顶替它们偷偷占槽 */
+  if (sa && (sa.skill === 'planet' || sa.skill === 'tower' || sa.skill === 'rift' || sa.skill === 'elem' || sa.skill === 'riftmon')) {
     out.action = null;
+  }
+  /* 没有合法动作时清掉残留计时，避免 UI 显示半截进度 */
+  if (!out.action) {
     out.actionTimer = 0;
     out.actionWaiting = false;
+    out.actionExplicit = false;
   }
   if (isFinite(saved.regenTimer)) out.regenTimer = Math.max(0, Number(saved.regenTimer));
   if (isFinite(saved.stun)) out.stun = Math.max(0, Number(saved.stun));
@@ -601,9 +631,26 @@ function mergeState(def, saved) {
     }
   }
 
+  /* 问道指引：只接受 GUIDE_STEPS 中存在的步骤 id 与 flag，异常值静默丢弃。
+     旧档（无 guide 字段）不在此处推断：由 loadState 在 state 就绪后调用 guideInfer()，
+     推断完成只打勾、不补发奖励，避免一次性资源注入。 */
+  out.guide = { done: {}, inferred: {}, flags: {}, skipped: false, closed: false };
+  {
+    const sg = (saved.guide && typeof saved.guide === 'object') ? saved.guide : null;
+    if (sg) {
+      GUIDE_STEPS.forEach(function (step) {
+        if (sg.done && typeof sg.done === 'object' && sg.done[step.id] === true) out.guide.done[step.id] = true;
+        if (sg.inferred && typeof sg.inferred === 'object' && sg.inferred[step.id] === true) out.guide.inferred[step.id] = true;
+        if (step.flag && sg.flags && typeof sg.flags === 'object' && sg.flags[step.flag] === true) out.guide.flags[step.flag] = true;
+      });
+      out.guide.skipped = sg.skipped === true;
+      out.guide.closed = sg.closed === true;
+    }
+  }
+
   /* UI 偏好 */
   if (saved.ui && typeof saved.ui === 'object') {
-    if (SKILL_ORDER.indexOf(saved.ui.active) >= 0 || saved.ui.active === 'tasks' || saved.ui.active === 'shop' || saved.ui.active === 'bag' || saved.ui.active === 'world' || saved.ui.active === 'disciples' || saved.ui.active === 'planet' || saved.ui.active === 'tower' || saved.ui.active === 'settings' || saved.ui.active === 'checkin') out.ui.active = saved.ui.active;
+    if (SKILL_ORDER.indexOf(saved.ui.active) >= 0 || saved.ui.active === 'tasks' || saved.ui.active === 'shop' || saved.ui.active === 'bag' || saved.ui.active === 'world' || saved.ui.active === 'disciples' || saved.ui.active === 'planet' || saved.ui.active === 'tower' || saved.ui.active === 'settings' || saved.ui.active === 'checkin' || saved.ui.active === 'guide') out.ui.active = saved.ui.active;
     if (typeof saved.ui.autoEat === 'boolean') out.ui.autoEat = saved.ui.autoEat;
     if (typeof saved.ui.eatFood === 'string') out.ui.eatFood = saved.ui.eatFood;
     if (isFinite(saved.ui.eatRatio)) out.ui.eatRatio = Math.max(0.1, Math.min(0.9, Number(saved.ui.eatRatio)));

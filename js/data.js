@@ -12,7 +12,7 @@
      minor++  机制更新（新增/改动机制，影响存档），patch 归零
      major++  大型更新（DLC、全新机制，需重开游戏），minor/patch 归零
    改这里用 `node tools/version.js patch|minor|major`，打包前会自动同步。 */
-const VERSION = '2.12.2';
+const VERSION = '2.14.3';
 
 /* =========================================================================
  * 兑换码（集中配置）
@@ -102,7 +102,11 @@ const CONFIG = {
   HEAL_SPIRIT_COST: 25,
 
   /* --- 背包与市集 --- */
-  INV_SLOTS: 100,            // 背包容量（不同物品种类数上限）
+  INV_SLOTS: 100,            // 背包基础容量（不同物品种类数上限）
+  INV_SLOT_STEP: 2,          // 每次扩容增加的格数
+  INV_SLOT_MAX: 220,         // 背包容量硬上限（100 + 60 次扩容）
+  INV_SLOT_COST_BASE: 300,   // 第一次扩容价格
+  INV_SLOT_COST_GROW: 1.14,  // 每次扩容后的价格倍率
   SELL_RATIO: 0.55           // 出售价 = 物品价值 × 该比例（梅尔沃式折价回收）
 };
 
@@ -1180,26 +1184,188 @@ const CHECKIN = {
 };
 
 /* =========================================================================
- * 任务 / 成就
- * cond: gathered / kills / crafts / pills / breaks / level / realm / item
+ * 任务 / 成就（v2.13.0 扩充为全流程阶段目标）
+ * cond: gathered / kills / crafts / pills / breaks / level / realm / item /
+ *       tower / cross / dynasty / era / post / dao / form / world / mastery /
+ *       disciple / dtier / dungeon / alllevel / checkin
+ * reward: gold / spirit / stardust / seed / items / disciple
+ * phase: 仅用于任务面板分组，不影响判定与存档（state.tasks 仍按 id 记录）
  * ========================================================================= */
+/* 五行五职（金木水火土对应的五个工作）与「全部生产技能」分组 */
+const TASK_ELEM_SKILLS = ['crafting', 'woodcutting', 'fishing', 'alchemy', 'formation'];
+const TASK_PROD_SKILLS = ['woodcutting', 'fishing', 'mining', 'smelting', 'crafting',
+  'herbalism', 'alchemy', 'formation', 'farming', 'thieving'];
+
 const TASKS = [
-  { id: 't_first', name: '初入仙途', desc: '累计采集 10 次资源', cond: { type: 'gathered', n: 10 }, reward: { gold: 30 } },
-  { id: 't_wc', name: '樵夫之始', desc: '伐木等级达到 Lv.5', cond: { type: 'level', skill: 'woodcutting', lvl: 5 }, reward: { gold: 50, items: [{ id: 'w_tie', qty: 1 }] } },
-  { id: 't_forge', name: '初试炼器', desc: '炼器成功 10 次', cond: { type: 'crafts', n: 10 }, reward: { gold: 80, items: [{ id: 'a_tie', qty: 1 }] } },
-  { id: 't_hunt', name: '除魔卫道', desc: '击败 10 只妖兽', cond: { type: 'kills', n: 10 }, reward: { gold: 120, items: [{ id: 'pill_liao', qty: 3 }] } },
-  { id: 't_mine', name: '矿脉之心', desc: '采矿等级达到 Lv.10', cond: { type: 'level', skill: 'mining', lvl: 10 }, reward: { gold: 150, items: [{ id: 'h_tie', qty: 1 }] } },
-  { id: 't_pill', name: '丹道入门', desc: '炼出 5 枚丹药', cond: { type: 'pills', n: 5 }, reward: { gold: 200, spirit: 100 } },
-  { id: 't_zhuji', name: '筑基之资', desc: '修为境界达到 筑基期', cond: { type: 'realm', stage: 14 }, reward: { gold: 500, spirit: 300, items: [{ id: 'pill_zhuji', qty: 2 }] } },
-  { id: 't_kill50', name: '百战之身', desc: '击败 50 只妖兽', cond: { type: 'kills', n: 50 }, reward: { gold: 600, items: [{ id: 'w_xuan', qty: 1 }] } },
-  { id: 't_jindan', name: '金丹大道', desc: '修为境界达到 结丹期', cond: { type: 'realm', stage: 18 }, reward: { gold: 2000, spirit: 800, items: [{ id: 'pill_ning', qty: 2 }] } },
-  { id: 't_yuanying', name: '元婴惊世', desc: '修为境界达到 元婴期', cond: { type: 'realm', stage: 22 }, reward: { gold: 8000, spirit: 2000, items: [{ id: 'pill_ying', qty: 2 }] } }
+  /* ---------------------------------------------------- 一、初入仙途（11） */
+  { id: 't_first', phase: '初入仙途', name: '初入仙途', desc: '累计采集 10 次资源', cond: { type: 'gathered', n: 10 }, reward: { gold: 30 } },
+  { id: 't_wc', phase: '初入仙途', name: '樵夫之始', desc: '伐木等级达到 Lv.5', cond: { type: 'level', skill: 'woodcutting', lvl: 5 }, reward: { gold: 50, items: [{ id: 'w_tie', qty: 1 }] } },
+  { id: 't_forge', phase: '初入仙途', name: '初试炼器', desc: '炼器成功 10 次', cond: { type: 'crafts', n: 10 }, reward: { gold: 80, items: [{ id: 'a_tie', qty: 1 }] } },
+  { id: 't_hunt', phase: '初入仙途', name: '除魔卫道', desc: '击败 10 只妖兽', cond: { type: 'kills', n: 10 }, reward: { gold: 120, items: [{ id: 'pill_liao', qty: 3 }] } },
+  { id: 't_mine', phase: '初入仙途', name: '矿脉之心', desc: '采矿等级达到 Lv.10', cond: { type: 'level', skill: 'mining', lvl: 10 }, reward: { gold: 150, items: [{ id: 'h_tie', qty: 1 }] } },
+  { id: 't_pill', phase: '初入仙途', name: '丹道入门', desc: '炼出 5 枚丹药', cond: { type: 'pills', n: 5 }, reward: { gold: 200, spirit: 100 } },
+  { id: 't_fish_lv', phase: '初入仙途', name: '垂钓之趣', desc: '钓鱼等级达到 Lv.8', cond: { type: 'level', skill: 'fishing', lvl: 8 }, reward: { seed: 1, stardust: 8 } },
+  { id: 't_herb_lv', phase: '初入仙途', name: '识药辨草', desc: '采药等级达到 Lv.10', cond: { type: 'level', skill: 'herbalism', lvl: 10 }, reward: { seed: 1, stardust: 10 } },
+  { id: 't_gather100', phase: '初入仙途', name: '勤修不辍', desc: '累计采集 100 次资源', cond: { type: 'gathered', n: 100 }, reward: { seed: 1, stardust: 15 } },
+  { id: 't_farm', phase: '初入仙途', name: '灵田初耕', desc: '灵植等级达到 Lv.10', cond: { type: 'level', skill: 'farming', lvl: 10 }, reward: { items: [{ id: 'seed_juqi', qty: 3 }, { id: 'seed_liao', qty: 3 }, { id: 'seed_zhuji', qty: 1 }] } },
+  { id: 't_gaze', phase: '初入仙途', name: '夜观星象', desc: '阵法等级达到 Lv.10', cond: { type: 'level', skill: 'formation', lvl: 10 }, reward: { stardust: 30 } },
+
+  /* ---------------------------------------------------- 二、筑基问道（10） */
+  { id: 't_zhuji', phase: '筑基问道', name: '筑基之资', desc: '修为境界达到 筑基期', cond: { type: 'realm', stage: 14 }, reward: { gold: 500, spirit: 300, items: [{ id: 'pill_zhuji', qty: 2 }] } },
+  { id: 't_kill50', phase: '筑基问道', name: '百战之身', desc: '击败 50 只妖兽', cond: { type: 'kills', n: 50 }, reward: { gold: 600, items: [{ id: 'w_xuan', qty: 1 }] } },
+  { id: 't_skill20', phase: '筑基问道', name: '百艺筑基', desc: '十项生产技能全部达到 Lv.20', cond: { type: 'alllevel', skills: TASK_PROD_SKILLS, lvl: 20 }, reward: { seed: 3, stardust: 30, items: [{ id: 'pill_liao', qty: 5 }] } },
+  { id: 't_craft100', phase: '筑基问道', name: '千锤百炼', desc: '累计炼制成功 100 次', cond: { type: 'crafts', n: 100 }, reward: { seed: 2, stardust: 25, items: [{ id: 'ingot_xuan', qty: 5 }] } },
+  { id: 't_tower10', phase: '筑基问道', name: '初探锁妖塔', desc: '锁妖塔最高通过 10 层', cond: { type: 'tower', n: 10 }, reward: { seed: 2, stardust: 40, items: [{ id: 'pill_zhuji', qty: 2 }] } },
+  { id: 't_cross1', phase: '筑基问道', name: '一渡星河', desc: '穿越星球 1 次', cond: { type: 'cross', n: 1 }, reward: { seed: 3, stardust: 40 } },
+  { id: 't_dyn1', phase: '筑基问道', name: '洞天立朝', desc: '洞天中拥有 1 座朝代', cond: { type: 'dynasty', n: 1 }, reward: { seed: 3, stardust: 40 } },
+  { id: 't_world10', phase: '筑基问道', name: '初具规模', desc: '洞天建设度达到 10', cond: { type: 'world', n: 10 }, reward: { seed: 4, stardust: 40 } },
+  { id: 't_mastery10', phase: '筑基问道', name: '技艺精进', desc: '任一精通等级达到 Lv.10', cond: { type: 'mastery', lvl: 10 }, reward: { stardust: 50, items: [{ id: 'pill_wudao', qty: 1 }] } },
+  { id: 't_dungeon5', phase: '筑基问道', name: '秘境历练', desc: '累计通关秘境 5 次', cond: { type: 'dungeon', n: 5 }, reward: { stardust: 50, items: [{ id: 'a_xuan', qty: 1 }, { id: 'h_xuan', qty: 1 }] } },
+
+  /* ---------------------------------------------------- 三、金丹元婴（13） */
+  { id: 't_jindan', phase: '金丹元婴', name: '金丹大道', desc: '修为境界达到 结丹期', cond: { type: 'realm', stage: 18 }, reward: { gold: 2000, spirit: 800, items: [{ id: 'pill_ning', qty: 2 }] } },
+  { id: 't_yuanying', phase: '金丹元婴', name: '元婴惊世', desc: '修为境界达到 元婴期', cond: { type: 'realm', stage: 22 }, reward: { gold: 8000, spirit: 2000, items: [{ id: 'pill_ying', qty: 2 }] } },
+  { id: 't_skill40', phase: '金丹元婴', name: '诸艺渐成', desc: '十项生产技能全部达到 Lv.40', cond: { type: 'alllevel', skills: TASK_PROD_SKILLS, lvl: 40 }, reward: { seed: 6, stardust: 120, items: [{ id: 'a_bing', qty: 1 }] } },
+  { id: 't_tower30', phase: '金丹元婴', name: '塔中斩妖', desc: '锁妖塔最高通过 30 层', cond: { type: 'tower', n: 30 }, reward: { seed: 4, stardust: 120, items: [{ id: 'pill_ying', qty: 2 }] } },
+  { id: 't_cross3', phase: '金丹元婴', name: '三渡星河', desc: '穿越星球 3 次', cond: { type: 'cross', n: 3 }, reward: { seed: 6, stardust: 150 } },
+  { id: 't_break10', phase: '金丹元婴', name: '破境十重', desc: '累计突破成功 10 次', cond: { type: 'breaks', n: 10 }, reward: { stardust: 100, items: [{ id: 'pill_ning', qty: 3 }] } },
+  { id: 't_posts1', phase: '金丹元婴', name: '朝堂初立', desc: '任一朝代任命 1 个职位', cond: { type: 'post', n: 1 }, reward: { seed: 5, stardust: 100 } },
+  { id: 't_dao1', phase: '金丹元婴', name: '道侣初结', desc: '结成 1 对道侣', cond: { type: 'dao', n: 1 }, reward: { seed: 5, stardust: 100 } },
+  { id: 't_world30', phase: '金丹元婴', name: '洞天小成', desc: '洞天建设度达到 30', cond: { type: 'world', n: 30 }, reward: { seed: 8, stardust: 200 } },
+  { id: 't_hua_shen', phase: '金丹元婴', name: '化神之变', desc: '修为境界达到 化神期', cond: { type: 'realm', stage: 27 }, reward: { seed: 8, stardust: 200, items: [{ id: 'pill_shen', qty: 2 }] } },
+  { id: 't_tower50', phase: '金丹元婴', name: '塔中坚壁', desc: '锁妖塔最高通过 50 层', cond: { type: 'tower', n: 50 }, reward: { seed: 10, stardust: 300, items: [{ id: 'pill_shen', qty: 2 }] } },
+  { id: 't_form20', phase: '金丹元婴', name: '阵纹初布', desc: '阵纹等级合计达到 20 级', cond: { type: 'form', n: 20 }, reward: { seed: 8, stardust: 400 } },
+  { id: 't_mastery20', phase: '金丹元婴', name: '精益求精', desc: '任一精通等级达到 Lv.20', cond: { type: 'mastery', lvl: 20 }, reward: { stardust: 400, items: [{ id: 'pill_wudao', qty: 2 }] } },
+
+  /* ---------------------------------------------------- 四、炼虚问道（15） */
+  { id: 't_lianxu', phase: '炼虚问道', name: '炼虚临世', desc: '修为境界达到 炼虚期', cond: { type: 'realm', stage: 31 }, reward: { seed: 10, stardust: 350, items: [{ id: 'pill_xu', qty: 2 }] } },
+  { id: 't_cross5', phase: '炼虚问道', name: '五渡星河', desc: '穿越星球 5 次', cond: { type: 'cross', n: 5 }, reward: { seed: 12, stardust: 400 } },
+  { id: 't_wuxing100', phase: '炼虚问道', name: '五行圆满', desc: '金木水火土五职全部达到 Lv.100', cond: { type: 'alllevel', skills: TASK_ELEM_SKILLS, lvl: 100 }, reward: { seed: 15, stardust: 600, items: [{ id: 'w_shen', qty: 1 }, { id: 'a_shen', qty: 1 }] } },
+  { id: 't_dyn3', phase: '炼虚问道', name: '三朝并立', desc: '洞天中拥有 3 座朝代', cond: { type: 'dynasty', n: 3 }, reward: { seed: 12, stardust: 400 } },
+  { id: 't_posts4', phase: '炼虚问道', name: '朝堂半壁', desc: '朝代职位在任数达到 4 个', cond: { type: 'post', n: 4 }, reward: { seed: 12, stardust: 500 } },
+  { id: 't_dao3', phase: '炼虚问道', name: '道侣相携', desc: '结成 3 对道侣', cond: { type: 'dao', n: 3 }, reward: { seed: 12, stardust: 500 } },
+  { id: 't_world60', phase: '炼虚问道', name: '洞天鼎盛', desc: '洞天建设度达到 60', cond: { type: 'world', n: 60 }, reward: { seed: 15, stardust: 600 } },
+  { id: 't_tower100', phase: '炼虚问道', name: '百层镇妖', desc: '锁妖塔最高通过 100 层', cond: { type: 'tower', n: 100 }, reward: { seed: 15, stardust: 700, items: [{ id: 'pill_xu', qty: 3 }] } },
+  { id: 't_lianxu_max', phase: '炼虚问道', name: '炼虚圆满', desc: '修为境界达到 炼虚期 大圆满', cond: { type: 'realm', stage: 33 }, reward: { seed: 15, stardust: 700, items: [{ id: 'pill_xu', qty: 3 }] } },
+  { id: 't_disciple3', phase: '炼虚问道', name: '招贤纳士', desc: '信徒仓库达到 3 位', cond: { type: 'disciple', n: 3 }, reward: { seed: 10, stardust: 400, disciple: { tier: 4 } } },
+  { id: 't_tai1', phase: '炼虚问道', name: '太上忘情', desc: '修为境界踏入 太上境', cond: { type: 'realm', stage: 34 }, reward: { seed: 20, stardust: 800, items: [{ id: 'pill_shen_cult', qty: 3 }] } },
+  { id: 't_mastery30', phase: '炼虚问道', name: '技近乎道', desc: '任一精通等级达到 Lv.30', cond: { type: 'mastery', lvl: 30 }, reward: { seed: 12, stardust: 700 } },
+  { id: 't_era5', phase: '炼虚问道', name: '盛唐气象', desc: '洞天最高朝代达到 唐朝（第 5 朝）', cond: { type: 'era', n: 5 }, reward: { seed: 12, stardust: 600 } },
+  { id: 't_skill60', phase: '炼虚问道', name: '百艺俱通', desc: '十项生产技能全部达到 Lv.60', cond: { type: 'alllevel', skills: TASK_PROD_SKILLS, lvl: 60 }, reward: { seed: 18, stardust: 800, items: [{ id: 'pill_tian', qty: 2 }] } },
+  { id: 't_dtier1', phase: '炼虚问道', name: '仙品入阁', desc: '拥有 1 位神品信徒', cond: { type: 'dtier', tier: 4, n: 1 }, reward: { seed: 15, stardust: 700 } },
+
+  /* ---------------------------------------------------- 五、太上初境（8） */
+  { id: 't_tai100', phase: '太上初境', name: '太上百层', desc: '修为境界达到 太上境 一百层', cond: { type: 'realm', stage: 133 }, reward: { seed: 25, stardust: 1000, items: [{ id: 'pill_tai', qty: 2 }] } },
+  { id: 't_cross10', phase: '太上初境', name: '十渡星河', desc: '穿越星球 10 次', cond: { type: 'cross', n: 10 }, reward: { seed: 25, stardust: 1200 } },
+  { id: 't_dyn5', phase: '太上初境', name: '五朝同天', desc: '洞天中拥有 5 座朝代', cond: { type: 'dynasty', n: 5 }, reward: { seed: 25, stardust: 1200 } },
+  { id: 't_posts8', phase: '太上初境', name: '八位归朝', desc: '同一朝代 8 个职位全部在任', cond: { type: 'post', n: 8 }, reward: { seed: 30, stardust: 1500, disciple: { tier: 4 } } },
+  { id: 't_form40', phase: '太上初境', name: '周天星阵', desc: '阵纹等级合计达到 40 级', cond: { type: 'form', n: 40 }, reward: { seed: 20, stardust: 1600 } },
+  { id: 't_tower200', phase: '太上初境', name: '两百层镇妖', desc: '锁妖塔最高通过 200 层', cond: { type: 'tower', n: 200 }, reward: { seed: 30, stardust: 1800, items: [{ id: 'pill_kunlun', qty: 2 }] } },
+  { id: 't_world100', phase: '太上初境', name: '洞天仙境', desc: '洞天建设度达到 100', cond: { type: 'world', n: 100 }, reward: { seed: 30, stardust: 1800 } },
+  { id: 't_skill70', phase: '太上初境', name: '万物皆艺', desc: '十项生产技能全部达到 Lv.70', cond: { type: 'alllevel', skills: TASK_PROD_SKILLS, lvl: 70 }, reward: { seed: 25, stardust: 1500, items: [{ id: 'pill_shu', qty: 2 }] } },
+
+  /* ---------------------------------------------------- 六、太上高階（13） */
+  { id: 't_tai500', phase: '太上高階', name: '太上五百层', desc: '修为境界达到 太上境 五百层', cond: { type: 'realm', stage: 533 }, reward: { seed: 40, stardust: 2500, items: [{ id: 'pill_kunlun', qty: 2 }] } },
+  { id: 't_mastery40', phase: '太上高階', name: '精通造化', desc: '任一精通等级达到 Lv.40', cond: { type: 'mastery', lvl: 40 }, reward: { seed: 25, stardust: 2500 } },
+  { id: 't_tai1000', phase: '太上高階', name: '太上千层', desc: '修为境界达到 太上境 一千层', cond: { type: 'realm', stage: 1033 }, reward: { seed: 50, stardust: 4000, items: [{ id: 'pill_tai', qty: 3 }] } },
+  { id: 't_cross20', phase: '太上高階', name: '二十渡星河', desc: '穿越星球 20 次', cond: { type: 'cross', n: 20 }, reward: { seed: 50, stardust: 4000 } },
+  { id: 't_tower500', phase: '太上高階', name: '五百层镇妖', desc: '锁妖塔最高通过 500 层', cond: { type: 'tower', n: 500 }, reward: { seed: 50, stardust: 5000, items: [{ id: 'pill_hun', qty: 2 }] } },
+  { id: 't_world150', phase: '太上高階', name: '洞天造化', desc: '洞天建设度达到 150', cond: { type: 'world', n: 150 }, reward: { seed: 50, stardust: 5000 } },
+  { id: 't_skill90', phase: '太上高階', name: '百艺通玄', desc: '十项生产技能全部达到 Lv.90', cond: { type: 'alllevel', skills: TASK_PROD_SKILLS, lvl: 90 }, reward: { seed: 40, stardust: 4000, items: [{ id: 'pill_kunlun', qty: 2 }] } },
+  { id: 't_era10', phase: '太上高階', name: '夏朝遗音', desc: '洞天最高朝代达到 夏朝（第 11 朝）', cond: { type: 'era', n: 11 }, reward: { seed: 45, stardust: 4000 } },
+  { id: 't_tai2500', phase: '太上高階', name: '太上两千五百层', desc: '修为境界达到 太上境 二千五百层', cond: { type: 'realm', stage: 2533 }, reward: { seed: 60, stardust: 6000, items: [{ id: 'pill_hun', qty: 2 }] } },
+  { id: 't_tai5000', phase: '太上高階', name: '太上五千层', desc: '修为境界达到 太上境 五千层', cond: { type: 'realm', stage: 5033 }, reward: { seed: 80, stardust: 8000, items: [{ id: 'pill_hun', qty: 3 }] } },
+  { id: 't_tai10000', phase: '太上高階', name: '太上万层', desc: '修为境界达到 太上境 一万层', cond: { type: 'realm', stage: 10033 }, reward: { seed: 100, stardust: 10000, items: [{ id: 'pill_wuxu', qty: 2 }] } },
+  { id: 't_tai25000', phase: '太上高階', name: '太上两万五千层', desc: '修为境界达到 太上境 二万五千层', cond: { type: 'realm', stage: 25033 }, reward: { seed: 150, stardust: 15000, items: [{ id: 'pill_wuxu', qty: 3 }] } },
+  { id: 't_tai50000', phase: '太上高階', name: '太上五万层', desc: '修为境界达到 太上境 五万层', cond: { type: 'realm', stage: 50033 }, reward: { seed: 200, stardust: 25000, items: [{ id: 'pill_wuxu', qty: 5 }] } },
+  { id: 't_tai_max', phase: '太上高階', name: '万法归一', desc: '修为境界达到 太上境 九万六千五百层（满级）', cond: { type: 'realm', stage: 96533 }, reward: { seed: 300, stardust: 50000, items: [{ id: 'r_hundun', qty: 1 }], disciple: { tier: 4 } } }
+];
+
+/* =========================================================================
+ * 问道指引（v2.14.0）
+ * 轻量教学清单：按顺序推进，玩家实际做出对应行为才打勾；完成即自动发奖。
+ * cond 复用任务 condDone 判定；flag 型步骤由 guideFlag(key) 记录「打开过面板 / 买过东西」。
+ * tab 决定「前往」跳转与侧栏高亮目标（与侧栏 data-skill 一致）。
+ * 奖励只用星砂 / 生命之种 / 丹药，不发灵石，避免通胀。
+ * ========================================================================= */
+const GUIDE_STEPS = [
+  {
+    id: 'g_cultivate', tab: 'cultivation', title: '开始打坐修炼',
+    desc: '修为是境界的根基。打开侧栏「修炼」，点击「打坐吐纳」开始积累修为。',
+    hint: '侧栏「修炼」→「打坐吐纳」，修为达到 Lv.2 即完成',
+    cond: { type: 'level', skill: 'cultivation', lvl: 2 },
+    reward: { items: [{ id: 'pill_juqi', qty: 2 }] }
+  },
+  {
+    id: 'g_gather', tab: 'woodcutting', title: '完成 3 次采集',
+    desc: '伐木、钓鱼、采矿都是采集。切到任意采集面板，让动作跑满 3 个周期。',
+    hint: '侧栏「伐木 / 钓鱼 / 采矿」任选其一，累计采集 3 次',
+    cond: { type: 'gathered', n: 3 },
+    reward: { stardust: 5 }
+  },
+  {
+    id: 'g_bag', tab: 'bag', title: '打开背包',
+    desc: '采集到的物品都进了背包。看看格子里有什么，容量满了就需要扩容。',
+    hint: '点击侧栏「背包」查看物品与容量',
+    flag: 'bag',
+    reward: { stardust: 5 }
+  },
+  {
+    id: 'g_shop', tab: 'shop', title: '逛一逛市集',
+    desc: '市集可以买到材料、丹药和装备。不同店铺卖的东西不一样。',
+    hint: '点击侧栏「市集」，切换几个店铺看看',
+    flag: 'shop',
+    reward: { stardust: 5 }
+  },
+  {
+    id: 'g_buy', tab: 'shop', title: '购买第一件物品',
+    desc: '买一组青鱼或灵木试试。灵石不足时，可以先出售背包里的冗余物品。',
+    hint: '在市集任意店铺点「+1」完成一次购买',
+    flag: 'buy',
+    reward: { stardust: 10, items: [{ id: 'pill_juqi', qty: 1 }] }
+  },
+  {
+    id: 'g_combat', tab: 'combat', title: '击败第一只妖兽',
+    desc: '战斗能获得灵石与材料。先确认已装备武器，再选择一只低阶妖兽开战。',
+    hint: '打开「战斗」面板，选中妖兽并开始战斗',
+    cond: { type: 'kills', n: 1 },
+    reward: { stardust: 10, items: [{ id: 'pill_liao', qty: 2 }] }
+  },
+  {
+    id: 'g_world', tab: 'world', title: '建造第一座洞天建筑',
+    desc: '洞天建筑提供被动产出与加成，不占用动作槽。挑一座低价建筑建起来。',
+    hint: '侧栏「世界」→ 选择建筑 → 建造（建设度达到 5）',
+    cond: { type: 'world', n: 5 },
+    reward: { seed: 1, stardust: 20 }
+  },
+  {
+    id: 'g_formation', tab: 'formation', title: '点亮第一道阵纹',
+    desc: '观星获得星砂，消耗星砂点亮阵纹，可获得全局常驻加成。',
+    hint: '侧栏「阵法」→ 选择阵法与阵纹 → 升级（阵纹合计 ≥1 级）',
+    cond: { type: 'form', n: 1 },
+    reward: { seed: 1, stardust: 20 }
+  },
+  {
+    id: 'g_break', tab: 'cultivation', title: '完成第一次突破',
+    desc: '修为攒满后点击突破。低阶突破消耗少量灵石；大境界突破还需要对应丹药。',
+    hint: '「修炼」面板修为满后点「突破」；筑基丹可在市集买到',
+    cond: { type: 'breaks', n: 1 },
+    reward: { stardust: 20, items: [{ id: 'pill_zhuji', qty: 1 }] }
+  },
+  {
+    id: 'g_planet', tab: 'planet', title: '首次穿越星球',
+    desc: '灵气浓度攒够 10000 后即可穿越。穿越会改变朝代，并开启星砂、生命之种等产出。',
+    hint: '侧栏「穿越星球」→ 灵气浓度达标后点「穿越」',
+    cond: { type: 'cross', n: 1 },
+    reward: { seed: 2, stardust: 30 }
+  }
 ];
 
 /* =========================================================================
  * 市集（参考梅尔沃放置的多商店机制）
  * 每个商铺是一个分类，列出可购买的物品。
  * price 字段：若未指定，则 = ITEMS[id].value * 1.8（加价购入）
+ * unlock 字段（v2.13.0）：条件解锁，格式与任务 cond 一致（level / realm / world / tower / cross）
  * ========================================================================= */
 const SHOPS = [
   {
@@ -1211,7 +1377,11 @@ const SHOPS = [
       { id: 'herb_juqi' },
       { id: 'herb_liao' },
       { id: 'log_qing' },
-      { id: 'ore_iron' }
+      { id: 'ore_iron' },
+      { id: 'rice' },
+      { id: 'herb_lan', unlock: { type: 'level', skill: 'herbalism', lvl: 8 } },
+      { id: 'fish_long', unlock: { type: 'level', skill: 'fishing', lvl: 18 } },
+      { id: 'pill_lan', unlock: { type: 'level', skill: 'alchemy', lvl: 8 } }
     ]
   },
   {
@@ -1225,7 +1395,26 @@ const SHOPS = [
       { id: 'log_han' },
       { id: 'log_tie' },
       { id: 'hide' },
-      { id: 'herb_zhuji' }
+      { id: 'herb_zhuji' },
+      { id: 'log_zi', unlock: { type: 'level', skill: 'woodcutting', lvl: 18 } },
+      { id: 'log_bing', unlock: { type: 'level', skill: 'woodcutting', lvl: 22 } },
+      { id: 'log_lan', unlock: { type: 'level', skill: 'woodcutting', lvl: 28 } },
+      { id: 'log_lei', unlock: { type: 'level', skill: 'woodcutting', lvl: 40 } },
+      { id: 'log_you', unlock: { type: 'level', skill: 'woodcutting', lvl: 44 } },
+      { id: 'ore_zi', unlock: { type: 'level', skill: 'mining', lvl: 18 } },
+      { id: 'ore_lan', unlock: { type: 'level', skill: 'mining', lvl: 28 } },
+      { id: 'ore_lei', unlock: { type: 'level', skill: 'mining', lvl: 33 } },
+      { id: 'ore_shen', unlock: { type: 'level', skill: 'mining', lvl: 52 } },
+      { id: 'ore_xu', unlock: { type: 'level', skill: 'mining', lvl: 62 } },
+      { id: 'ingot_zi', unlock: { type: 'level', skill: 'smelting', lvl: 18 } },
+      { id: 'ingot_lan', unlock: { type: 'level', skill: 'smelting', lvl: 28 } },
+      { id: 'ingot_lei', unlock: { type: 'level', skill: 'smelting', lvl: 33 } },
+      { id: 'ingot_shen', unlock: { type: 'level', skill: 'smelting', lvl: 52 } },
+      { id: 'ingot_xu', unlock: { type: 'level', skill: 'smelting', lvl: 62 } },
+      { id: 'herb_lan', unlock: { type: 'level', skill: 'herbalism', lvl: 8 } },
+      { id: 'herb_yao', unlock: { type: 'level', skill: 'herbalism', lvl: 38 } },
+      { id: 'herb_zu', unlock: { type: 'level', skill: 'herbalism', lvl: 45 } },
+      { id: 'herb_mo', unlock: { type: 'level', skill: 'herbalism', lvl: 52 } }
     ]
   },
   {
@@ -1236,7 +1425,20 @@ const SHOPS = [
       { id: 'pill_zhuji' },
       { id: 'pill_ning' },
       { id: 'herb_ning' },
-      { id: 'herb_ying' }
+      { id: 'herb_ying' },
+      { id: 'pill_wudao', unlock: { type: 'level', skill: 'alchemy', lvl: 22 } },
+      { id: 'pill_san', unlock: { type: 'level', skill: 'alchemy', lvl: 35 } },
+      { id: 'pill_yao', unlock: { type: 'level', skill: 'alchemy', lvl: 38 } },
+      { id: 'pill_you', unlock: { type: 'level', skill: 'alchemy', lvl: 43 } },
+      { id: 'pill_zu', unlock: { type: 'level', skill: 'alchemy', lvl: 45 } },
+      { id: 'pill_shen', unlock: { type: 'level', skill: 'alchemy', lvl: 42 } },
+      { id: 'pill_xu', unlock: { type: 'level', skill: 'alchemy', lvl: 52 } },
+      { id: 'pill_xue', unlock: { type: 'level', skill: 'alchemy', lvl: 60 } },
+      { id: 'pill_tian', unlock: { type: 'level', skill: 'alchemy', lvl: 63 } },
+      { id: 'pill_shu', unlock: { type: 'level', skill: 'alchemy', lvl: 73 } },
+      { id: 'pill_hun', unlock: { type: 'level', skill: 'alchemy', lvl: 83 } },
+      { id: 'pill_tai', unlock: { type: 'level', skill: 'alchemy', lvl: 86 } },
+      { id: 'pill_kunlun', unlock: { type: 'level', skill: 'alchemy', lvl: 93 } }
     ]
   },
   {
@@ -1250,19 +1452,48 @@ const SHOPS = [
       { id: 'w_xuan' },
       { id: 'a_xuan' },
       { id: 'b_fly' },
-      { id: 't_ling' }
+      { id: 't_ling' },
+      { id: 't_ju', unlock: { type: 'level', skill: 'crafting', lvl: 18 } },
+      { id: 'w_zi', unlock: { type: 'level', skill: 'crafting', lvl: 18 } },
+      { id: 'w_bing', unlock: { type: 'level', skill: 'crafting', lvl: 28 } },
+      { id: 'a_bing', unlock: { type: 'level', skill: 'crafting', lvl: 30 } },
+      { id: 'h_bing', unlock: { type: 'level', skill: 'crafting', lvl: 32 } },
+      { id: 'b_bing', unlock: { type: 'level', skill: 'crafting', lvl: 30 } },
+      { id: 'r_bing', unlock: { type: 'level', skill: 'crafting', lvl: 28 } },
+      { id: 't_bing', unlock: { type: 'level', skill: 'crafting', lvl: 34 } },
+      { id: 'w_you', unlock: { type: 'level', skill: 'crafting', lvl: 38 } },
+      { id: 'a_gui', unlock: { type: 'level', skill: 'crafting', lvl: 52 } },
+      { id: 'w_tian', unlock: { type: 'level', skill: 'crafting', lvl: 56 } },
+      { id: 'w_shen', unlock: { type: 'level', skill: 'crafting', lvl: 62 } },
+      { id: 'a_shen', unlock: { type: 'level', skill: 'crafting', lvl: 64 } },
+      { id: 'h_shen', unlock: { type: 'level', skill: 'crafting', lvl: 66 } },
+      { id: 'b_shen', unlock: { type: 'level', skill: 'crafting', lvl: 64 } },
+      { id: 'r_shen', unlock: { type: 'level', skill: 'crafting', lvl: 62 } },
+      { id: 't_shen', unlock: { type: 'level', skill: 'crafting', lvl: 68 } },
+      { id: 'h_shu', unlock: { type: 'level', skill: 'crafting', lvl: 73 } },
+      { id: 'w_jian', unlock: { type: 'level', skill: 'crafting', lvl: 78 } },
+      { id: 'a_tian', unlock: { type: 'level', skill: 'crafting', lvl: 80 } },
+      { id: 'r_jian', unlock: { type: 'level', skill: 'crafting', lvl: 83 } },
+      { id: 'h_pan', unlock: { type: 'level', skill: 'crafting', lvl: 88 } },
+      { id: 'h_kunlun', unlock: { type: 'level', skill: 'crafting', lvl: 93 } },
+      { id: 'r_hundun', unlock: { type: 'level', skill: 'crafting', lvl: 98 } }
     ]
   },
   {
     id: 'farm', name: '灵植坊', icon: '🌱',
     items: [
       { id: 'seed_ling' },   { id: 'seed_juqi' },  { id: 'seed_liao' },
-      { id: 'seed_lingdao' },{ id: 'seed_zhuji' }, { id: 'seed_ning' },
-      { id: 'seed_yunmian' },{ id: 'seed_bing' },  { id: 'seed_ying' },
-      { id: 'seed_zifu' },   { id: 'seed_yao' },   { id: 'seed_zu' },
-      { id: 'seed_mo' },     { id: 'seed_tianxiang' }, { id: 'seed_xue' },
-      { id: 'seed_shen' },   { id: 'seed_fusang' },{ id: 'seed_xu' },
-      { id: 'seed_hundou' }, { id: 'seed_tai' },   { id: 'seed_daolian' },
+      { id: 'seed_lingdao', unlock: { type: 'level', skill: 'farming', lvl: 13 } },
+      { id: 'seed_zhuji' },  { id: 'seed_ning' },
+      { id: 'seed_yunmian', unlock: { type: 'level', skill: 'farming', lvl: 23 } },
+      { id: 'seed_bing' },   { id: 'seed_ying' },
+      { id: 'seed_zifu',     unlock: { type: 'level', skill: 'farming', lvl: 33 } },
+      { id: 'seed_yao' },    { id: 'seed_zu' },
+      { id: 'seed_mo' },     { id: 'seed_tianxiang', unlock: { type: 'level', skill: 'farming', lvl: 53 } },
+      { id: 'seed_xue' },    { id: 'seed_shen' },
+      { id: 'seed_fusang',   unlock: { type: 'level', skill: 'farming', lvl: 63 } },
+      { id: 'seed_xu' },     { id: 'seed_hundou', unlock: { type: 'level', skill: 'farming', lvl: 73 } },
+      { id: 'seed_tai' },    { id: 'seed_daolian', unlock: { type: 'level', skill: 'farming', lvl: 83 } },
       { id: 'seed_kunlun' }, { id: 'seed_wuxu' }
     ]
   },
@@ -1273,7 +1504,22 @@ const SHOPS = [
       { id: 'ore_you' },    { id: 'ingot_you' },
       { id: 'herb_zi' },    { id: 'herb_you' },
       { id: 'pill_ying' },  { id: 'pill_bing' },
-      { id: 'log_yun' },    { id: 'fish_zu' }
+      { id: 'log_yun' },    { id: 'fish_zu' },
+      { id: 'log_shen', unlock: { type: 'realm', stage: 27 } },
+      { id: 'fish_tian', unlock: { type: 'realm', stage: 27 } },
+      { id: 'ore_tai', unlock: { type: 'realm', stage: 31 } },
+      { id: 'ingot_tai', unlock: { type: 'realm', stage: 31 } },
+      { id: 'herb_tian', unlock: { type: 'world', n: 60 } },
+      { id: 'lian_zi', unlock: { type: 'realm', stage: 34 } },
+      { id: 'ore_kunlun', unlock: { type: 'realm', stage: 34 } },
+      { id: 'ingot_kunlun', unlock: { type: 'realm', stage: 34 } },
+      { id: 'herb_shu', unlock: { type: 'realm', stage: 34 } },
+      { id: 'ore_wuxu', unlock: { type: 'realm', stage: 533 } },
+      { id: 'ingot_wuxu', unlock: { type: 'realm', stage: 533 } },
+      { id: 'herb_hun', unlock: { type: 'realm', stage: 533 } },
+      { id: 'ore_hundun', unlock: { type: 'tower', n: 200 } },
+      { id: 'herb_wuxu', unlock: { type: 'cross', n: 10 } },
+      { id: 'pill_wuxu', unlock: { type: 'realm', stage: 1033 } }
     ]
   }
 ];
@@ -1288,6 +1534,19 @@ function shopPrice(item) {
 function findShop(id) {
   for (let i = 0; i < SHOPS.length; i++) if (SHOPS[i].id === id) return SHOPS[i];
   return SHOPS[0];
+}
+
+/* 市集解锁条件的文案（判定在 engine.condDone） */
+function unlockText(u) {
+  if (!u) return '';
+  switch (u.type) {
+    case 'level': return (SKILLS[u.skill] ? SKILLS[u.skill].name : u.skill) + ' Lv.' + u.lvl;
+    case 'realm': return '境界 ' + realmInfo(u.stage).full;
+    case 'world': return '洞天建设度 ' + u.n;
+    case 'tower': return '锁妖塔 ' + u.n + ' 层';
+    case 'cross': return '穿越 ' + u.n + ' 次';
+    default: return '条件未达成';
+  }
 }
 
 /* =========================================================================
