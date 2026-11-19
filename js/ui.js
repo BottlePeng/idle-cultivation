@@ -2198,7 +2198,7 @@ function updateWorldState() {
 
 /* ==================================================== 洞天 · 朝代（v2.5.0） */
 /* 朝代职位行（v2.9.5 · 8 个岗位）：已就任只读并标注不可取下；空缺给出下拉候选。
-   候选 = 未驻守任务 + 未担任其它朝代职位的信徒。 */
+   v2.15.0：候选只取「职业与该职位匹配 + 未驻守任务 + 未担任其它朝代职位」的信徒。 */
 function dynPostRowHTML(d, idx, role, cands) {
   const label = dynPostName(role);
   const icon = dynPostIcon(role);
@@ -2214,21 +2214,24 @@ function dynPostRowHTML(d, idx, role, cands) {
         '<span class="dprole">' + icon + ' ' + label + '</span>' +
         '<b class="dpbonus">+' + Math.round(b * 100) + '%</b>' +
         '<span class="dpmain">' + cat.icon + ' ' + cat.name +
-        ' <em>' + t.name + '·主' + (e ? e.name : inst.main) + '</em></span>' +
+        ' <em><b class="dprofn">' + discProfName(inst) + '</b>·' + t.name + '·主' +
+        (e ? e.name : inst.main) + '</em></span>' +
         '<button class="mini" disabled>已就任</button>' +
         '<span class="dplock" title="不可取下、不可更换">🔒</span></div>';
     }
   }
-  if (!cands) cands = discAvailableForPost();
+  if (!cands) cands = discAvailableForPost(role);
   let sel = '<select class="dsel" data-act="dynpost" data-idx="' + idx + '" data-role="' + role + '"' +
     ' title="不可逆：上任后不可取下、不可更换"' + (cands.length ? '' : ' disabled') +
-    '><option value="">— 空缺 · 上阵后不可取下 —</option>';
+    '><option value="">' + (cands.length
+      ? '— 空缺 · 上阵后不可取下 —'
+      : '— 暂无「' + label + '」职业信徒 —') + '</option>';
   cands.forEach(function (inst) {
     const cat = findDisciple(inst.id);
     if (!cat) return;
     const t = DISCIPLE_TIERS[inst.tier];
     const e = elemInfo(inst.main);
-    sel += '<option value="' + inst.uid + '">' + cat.name + '（' + t.name + '·主' +
+    sel += '<option value="' + inst.uid + '">' + cat.name + '（' + discProfName(inst) + '·' + t.name + '·主' +
       (e ? e.name : inst.main) + '）</option>';
   });
   sel += '</select>';
@@ -2281,7 +2284,6 @@ function renderWorldDynasty() {
   }
 
   html += '<div class="dyncards">';
-  const postCands = discAvailableForPost();
   w.dynasties.forEach(function (d, i) {
     const color = findDynastyEraColor(d.dyn);
     const r = dynastyEraRes(d.dyn);
@@ -2319,7 +2321,7 @@ function renderWorldDynasty() {
       '<div class="dc-court-head"><span>🏛️ 朝堂职位</span><span class="dc-court-n">' +
       filledPosts + ' / ' + DYNASTY.POST_ORDER.length + '</span></div>' +
       '<div class="dynposts">' + DYNASTY.POST_ORDER.map(function (role) {
-        return dynPostRowHTML(d, i, role, postCands);
+        return dynPostRowHTML(d, i, role);
       }).join('') + '</div>' +
       '</section>' +
       '<div class="dynact">' +
@@ -2688,7 +2690,7 @@ function discOptionsHTML(taskKey) {
     const tag = (at && at !== taskKey) ? '（现驻' + (SKILLS[at] ? SKILLS[at].name : at) + '）' : '';
     const me = elemInfo(inst.main);
     html += '<option value="' + inst.uid + '"' + (inst.uid === cur ? ' selected' : '') + '>' +
-      cat.name + '（' + t.name + '·主' + (me ? me.name : inst.main) + ' ' +
+      cat.name + '（' + discProfName(inst) + '·' + t.name + '·主' + (me ? me.name : inst.main) + ' ' +
       discPct(discMainPower(inst.tier, inst.power)) + ' / 副 ' + discPct(inst.power) + '）' + tag + '</option>';
   });
   return html;
@@ -2715,6 +2717,7 @@ function discDeleteConfirm(inst) {
   const daoLiveN = daoLivePartnerCount(inst);
   return '确定遣散「' + (cat ? cat.name : inst.id) + '」？\n\n' +
     '品质：' + t.name + '\n' +
+    '职业：' + discProfName(inst) + '（固定不可改）\n' +
     '五行：' + names + '（齐全）\n' +
     '主属性：' + (me ? me.name : inst.main) + ' +' + discPct(discMainPower(inst.tier, inst.power)) + '\n' +
     '副属性：各 +' + discPct(inst.power) + '\n' +
@@ -2758,8 +2761,9 @@ function renderDisciples() {
 
   let html = '<div class="sdbar"><span class="sdico">🙏</span>' +
     '<span class="sdname">信徒</span><b class="sdval" data-dcount>' + discipleTotal() + ' / ' + cap + '</b>' +
-    '<span class="sdnote">每位信徒五行齐全，随机 1 种主属性（强度高于其余四种）；每个主动任务可上阵 1 位，' +
-    '主属性命中吃高加成，副属性命中吃基础加成。上阵位 ' + slots + '（招贤殿每级 +1）</span></div>';
+    '<span class="sdnote">每位信徒五行齐全，并随机获得 8 种职业之一（与朝代职位一一对应，固定不可改）；' +
+    '每个主动任务可上阵 1 位，主属性命中吃高加成，副属性命中吃基础加成。上阵位 ' + slots +
+    '（招贤殿每级 +1）</span></div>';
 
   if (!hall) {
     const req = findBuilding('summonhall').req;
@@ -2776,7 +2780,16 @@ function renderDisciples() {
   html += '<div class="drecruit"><button class="btn" data-act="recruit">' +
     '<span>🙏 招募信徒</span> <b data-dcost>💠' + fmtNum(cost) + '</b></button>' +
     '<span class="qhint">每多一位信徒，下次招募费 ×' + DISCIPLE.RECRUIT_GROW +
-    '（按历史招募峰值计算，遣散不会降价）；仓库总容量 ' + cap + ' 位（含上阵）</span></div>';
+    '（按历史招募峰值计算，遣散不会降价）；仓库总容量 ' + cap + ' 位（含上阵）。' +
+    '职业随机但会优先补足人少的职业。</span></div>';
+
+  /* 职业分布：让玩家直观看到 8 种职业的人数与缺口 */
+  const profCounts = discProfCounts();
+  html += '<div class="dprofbar">' + DYNASTY.POST_ORDER.map(function (role) {
+    const meta = DYNASTY.POST_META[role];
+    return '<span class="dprofchip' + (profCounts[role] ? '' : ' zero') + '">' +
+      meta.icon + ' ' + meta.name + ' <b>' + profCounts[role] + '</b></span>';
+  }).join('') + '</div>';
 
   /* 上阵分配：每个主动任务一个席位（穿越星球除外） */
   html += '<div class="secttl">上阵分配（' + discipleEquippedCount() + ' / ' + slots + '）</div>';
@@ -2830,7 +2843,8 @@ function renderDisciples() {
     html += '<div class="formcard dcard" style="--rc:' + t.color + '">' +
       '<div class="fhead"><span class="fico">' + dd.icon + '</span>' +
       '<span class="fmain"><span class="fname">' + dd.name +
-      '<b class="blvl">' + t.name + '</b></span>' +
+      '<b class="blvl">' + t.name + '</b>' +
+      '<b class="dprof" title="职业固定不可改">' + discProfIcon(inst) + ' ' + discProfName(inst) + '</b></span>' +
       '<span class="fdesc">' + dd.desc + '</span></span></div>' +
       '<div class="dchips">' + discElemsHTML(inst, at) + '</div>' +
       discDaoHTML(inst) +

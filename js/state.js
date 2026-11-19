@@ -39,7 +39,8 @@ function defaultState() {
       dynasties: [], dynAccum: 0, dynScale: DYNASTY.POP_UNIT, dynTick: DYNASTY.TICK_SEC
     },
 
-    /* 信徒（v2.9.0 五行制）：owned 存实例 { uid, id, tier, elems[], power }；
+    /* 信徒（v2.9.0 五行制 / v2.15.0 职业）：owned 存实例 { uid, id, tier, prof, elems[], main, power, dao[] }；
+       prof 为 8 职业之一（与朝代职位一一对应，生成后固定）；
        assign 存「任务 key → uid」，每个主动任务一个位置，一位信徒只挂一个任务；
        peak 为历史招募峰值（只增不减），招募费按它计算，防止反复招募删除刷低价 */
     disciples: { owned: [], assign: {}, peak: 0 },
@@ -389,10 +390,15 @@ function mergeState(def, saved) {
         }
       }
 
+      /* 职业（v2.15.0）：新档校验合法 prof；旧档缺失留空，
+         稍后优先按「已任朝代职位」回填，其余在职位校验完成后随机补齐。 */
+      const prof = (typeof obj.prof === 'string' && DYNASTY.POST_ORDER.indexOf(obj.prof) >= 0)
+        ? obj.prof : '';
+
       /* 五行一律补全为金木水火土齐全；道侣原始记录留到全部实例建好后统一校验 */
       rawDao[uid] = Array.isArray(obj.dao) ? obj.dao : [];
       out.disciples.owned.push({
-        uid: uid, id: cat.id, tier: cat.tier,
+        uid: uid, id: cat.id, tier: cat.tier, prof: prof,
         elems: DISCIPLE.ALL_ELEMS.slice(), main: main, power: power, dao: []
       });
     });
@@ -527,11 +533,15 @@ function mergeState(def, saved) {
   }
 
   /* 朝代职位（v2.9.5）：通用映射 posts{8 个职位}。
-     职位 uid 必须是 owned 中存在、未驻守任务、且全局唯一的信徒。
-     旧档没有 posts → 从 emperor / empress 平滑迁移；非法 / 悬空 / 重复引用一律清空。 */
+     职位 uid 必须是 owned 中存在、未驻守任务、且全局唯一的信徒，且职业必须匹配。
+     旧档没有 posts → 从 emperor / empress 平滑迁移；非法 / 悬空 / 重复引用一律清空。
+     职业迁移（v2.15.0）：
+       - 旧档信徒没有 prof 且已在任某职位 → 直接把该职位回填为职业，保留永久任命；
+       - 有明确 prof 但与职位不符 → 清空该职位，信徒留在仓库（职业固定，不篡改）；
+       - 其余缺失职业的信徒在职位校验后随机补齐，不删除任何信徒。 */
   {
-    const ownedUids = {};
-    out.disciples.owned.forEach(function (x) { ownedUids[x.uid] = true; });
+    const ownedByUid = {};
+    out.disciples.owned.forEach(function (x) { ownedByUid[x.uid] = x; });
     const assignedUids = {};
     Object.keys(out.disciples.assign).forEach(function (k) {
       assignedUids[out.disciples.assign[k]] = true;
@@ -542,11 +552,19 @@ function mergeState(def, saved) {
       const clean = newDynPosts();
       DYNASTY.POST_ORDER.forEach(function (role) {
         const uid = src[role];
-        if (typeof uid !== 'string' || !uid || !ownedUids[uid] || assignedUids[uid] || postUsed[uid]) return;
+        if (typeof uid !== 'string' || !uid || !ownedByUid[uid] || assignedUids[uid] || postUsed[uid]) return;
+        const inst = ownedByUid[uid];
+        if (!discProf(inst)) inst.prof = role;          /* 旧档：职位优先，回填对应职业 */
+        if (discProf(inst) !== role) return;            /* 明确职业不匹配：清空职位，信徒保留 */
         clean[role] = uid;
         postUsed[uid] = true;
       });
       d.posts = clean;
+    });
+
+    /* 未任职位且旧档无职业的信徒：随机补齐，保证每个实例都有合法 prof */
+    out.disciples.owned.forEach(function (x) {
+      if (!discProf(x)) x.prof = rollProfession(out.disciples.owned);
     });
   }
 

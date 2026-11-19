@@ -539,6 +539,8 @@ function newDynPosts() {
 /* 职位加成：基础 + 每品阶加成 × (品阶−1)。缺人返回 0。 */
 function dynPostRoleBonus(role, inst) {
   if (!inst) return 0;
+  /* 职业必须与职位一致；不一致时不给加成，避免异常存档产生隐性收益 */
+  if (discProf(inst) !== role) return 0;
   const base = DYNASTY.POST_BASE[role] || 0;
   const per = DYNASTY.POST_PER_TIER[role] || 0;
   const raw = Number(inst.tier);
@@ -571,9 +573,12 @@ function discDynPost(uid) {
   return null;
 }
 
-/* 可上任的信徒：未驻守任务、未担任任何朝代职位 */
-function discAvailableForPost() {
+/* 可上任的信徒：未驻守任务、未担任任何朝代职位；
+   传入 role 时再过滤为职业匹配者（候选列表与引擎共用同一规则）。 */
+function discAvailableForPost(role) {
+  const want = (typeof role === 'string' && DYNASTY.POST_ORDER.indexOf(role) >= 0) ? role : '';
   return state.disciples.owned.filter(function (inst) {
+    if (want && discProf(inst) !== want) return false;
     return !discAssignedTask(inst.uid) && !discDynPost(inst.uid);
   });
 }
@@ -587,12 +592,17 @@ function assignDynastyPost(idx, role, uid) {
   if (d.posts[role]) { logMsg('该职位已有人就任，不可更换。', 'warn'); return false; }
   const inst = discInstance(uid);
   if (!inst) return false;
+  if (discProf(inst) !== role) {
+    logMsg('「' + (findDisciple(inst.id) ? findDisciple(inst.id).name : inst.id) + '」的职业是「' +
+      discProfName(inst) + '」，不能担任「' + dynPostName(role) + '」。', 'warn');
+    return false;
+  }
   if (discAssignedTask(uid)) { logMsg('该信徒正在驻守任务，需先在信徒面板撤下。', 'warn'); return false; }
   if (discDynPost(uid)) { logMsg('该信徒已担任其它朝代职位。', 'warn'); return false; }
   d.posts[role] = uid;
   const cat = findDisciple(inst.id);
-  logMsg('「' + (cat ? cat.name : inst.id) + '」就任「' + dynastyName(d.dyn) + '」' + dynPostName(role) +
-    '，该朝产出 +' + Math.round(dynPostRoleBonus(role, inst) * 100) + '%（不可取下）。', 'good');
+  logMsg('「' + (cat ? cat.name : inst.id) + '」（' + discProfName(inst) + '）就任「' + dynastyName(d.dyn) + '」' +
+    dynPostName(role) + '，该朝产出 +' + Math.round(dynPostRoleBonus(role, inst) * 100) + '%（不可取下）。', 'good');
   return true;
 }
 
@@ -808,11 +818,67 @@ function discipleRecruitCost() {
   return Math.floor(DISCIPLE.RECRUIT_BASE * Math.pow(DISCIPLE.RECRUIT_GROW, disciplePeak()));
 }
 
-/* 信徒实例（owned 中按 uid 查找）；实例 = { uid, id, tier, elems[], power } */
+/* 信徒实例（owned 中按 uid 查找）；实例 = { uid, id, tier, prof, elems[], main, power, dao[] } */
 function discInstance(uid) {
   const list = state.disciples.owned;
   for (let i = 0; i < list.length; i++) if (list[i].uid === uid) return list[i];
   return null;
+}
+
+/* ============================================ 信徒职业（v2.15.0）
+ * 8 种职业与朝代职位一一对应，生成时随机且永久固定，不可更改。
+ * 只有职业匹配的信徒才能担任对应职位；候选列表与引擎都会双重校验。 */
+function discProf(inst) {
+  const p = inst && inst.prof;
+  return (typeof p === 'string' && DYNASTY.POST_ORDER.indexOf(p) >= 0) ? p : '';
+}
+function discProfName(inst) {
+  const p = discProf(inst);
+  return p ? dynPostName(p) : '未定';
+}
+function discProfIcon(inst) {
+  const p = discProf(inst);
+  return p ? dynPostIcon(p) : '•';
+}
+function discProfCounts() {
+  const counts = {};
+  DYNASTY.POST_ORDER.forEach(function (role) { counts[role] = 0; });
+  const list = (state && state.disciples && Array.isArray(state.disciples.owned)) ? state.disciples.owned : [];
+  list.forEach(function (inst) {
+    const p = discProf(inst);
+    if (p) counts[p] += 1;
+  });
+  return counts;
+}
+
+/* 随机职业：基础权重相等 + 缺员补正。返回 DYNASTY.POST_ORDER 中的角色 id。
+   list 可选：迁移时传入待写入的 owned 数组，避免读到尚未替换的全局 state。 */
+function rollProfession(list) {
+  const roles = DYNASTY.POST_ORDER;
+  const owned = Array.isArray(list) ? list
+    : ((state && state.disciples && Array.isArray(state.disciples.owned)) ? state.disciples.owned : []);
+  const counts = {};
+  roles.forEach(function (role) { counts[role] = 0; });
+  owned.forEach(function (inst) {
+    const p = discProf(inst);
+    if (p) counts[p] += 1;
+  });
+  const total = owned.length;
+  const target = Math.floor(total / roles.length) + 1;
+  const weights = [];
+  let sum = 0;
+  roles.forEach(function (role) {
+    const deficit = Math.max(0, target - (counts[role] || 0));
+    const w = DISCIPLE.PROF_BASE_WEIGHT + DISCIPLE.PROF_DEFICIT_BOOST * deficit;
+    weights.push(w);
+    sum += w;
+  });
+  let r = Math.random() * sum;
+  for (let i = 0; i < roles.length; i++) {
+    r -= weights[i];
+    if (r <= 0) return roles[i];
+  }
+  return roles[roles.length - 1];
 }
 
 /* 信徒当前驻守的任务（没有则 null） */
@@ -832,13 +898,16 @@ function discPowerRoll(tier) {
 }
 
 let _discSeq = 0;
-function newDiscInstance(catId) {
+/* prof 可选：传入合法角色 id 时强制使用（仅迁移/测试），否则走缺员补正的随机职业 */
+function newDiscInstance(catId, prof) {
   const d = findDisciple(catId);
   if (!d) return null;
   _discSeq += 1;
+  const forced = (typeof prof === 'string' && DYNASTY.POST_ORDER.indexOf(prof) >= 0) ? prof : '';
   return {
     uid: 'dc' + _discSeq + 'x' + Math.floor(Math.random() * 1e6),
     id: d.id, tier: d.tier,
+    prof: forced || rollProfession(),
     elems: DISCIPLE.ALL_ELEMS.slice(),
     main: rollDiscMain(),
     power: discPowerRoll(d.tier),
@@ -973,7 +1042,8 @@ function recruitDisciple() {
   /* 峰值只增不减：删除信徒不会让后续招募更便宜 */
   state.disciples.peak = Math.min(999, Math.max(disciplePeak(), state.disciples.owned.length));
   const t = DISCIPLE_TIERS[picked.tier];
-  logMsg('「' + picked.name + '」（' + t.name + ' · ' + discElemText(inst) + '）慕名而来，已入信徒仓库。', 'good');
+  logMsg('「' + picked.name + '」（' + t.name + ' · ' + discProfName(inst) + ' · ' + discElemText(inst) +
+    '）慕名而来，已入信徒仓库。', 'good');
   return true;
 }
 

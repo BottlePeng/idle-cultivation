@@ -404,9 +404,9 @@ function bindEvents() {
         const cat = inst ? findDisciple(inst.id) : null;
         const label = dynPostName(role);
         showConfirm('职位任命确认',
-          '确定任命「' + (cat ? cat.name : uid) + '」为「' +
+          '确定任命「' + (cat ? cat.name : uid) + '」（职业 · ' + discProfName(inst) + '）为「' +
           (d ? dynastyName(d.dyn) : '') + '」' + label + '？\n\n' +
-          '上任后不可取下、不可更换；该信徒将无法再驻守任何任务，也无法被其它朝代任命。',
+          '职业与职位必须对应，且任命后不可取下、不可更换；该信徒将无法再驻守任何任务，也无法被其它朝代任命。',
           function () {
             assignDynastyPost(idx, role, uid);
             renderAll();
