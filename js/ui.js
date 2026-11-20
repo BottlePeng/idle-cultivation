@@ -152,6 +152,15 @@ function currentProgress() {
       pct: t && t.maxHp > 0 ? Math.max(0, Math.min(1, 1 - t.hp / t.maxHp)) : 0
     };
   }
+  if (act.skill === 'dbattle') {
+    const foe = DB.enemy;
+    return {
+      skill: 'dbattle',
+      name: '战阵 · ' + (DB.mode === 'daily' ? '每日妖王' : ('第 ' + DB.stage + ' 关')),
+      icon: '⚔️',
+      pct: foe && foe.maxHp > 0 ? Math.max(0, Math.min(1, 1 - foe.hp / foe.maxHp)) : 0
+    };
+  }
   if (act.skill === 'rift') {
     const c = state.skills.combat;
     const t = c.target;
@@ -225,179 +234,206 @@ function renderTop() {
     '<div class="res"><span class="rico">🛡️</span><span class="rval">' + Math.round(st.dr * 100) + '%</span><span class="rname">减伤</span></div>');
 }
 
-/* =============================================================== 左侧技能栏 */
-function renderSidebar() {
-  let html = '';
+/* =============================================================== 左侧技能栏
+ * v2.17.0：按 SIDEBAR_GROUPS 分组渲染。分组只决定「入口属于哪一组」，
+ * 每个入口的图标 / 名称 / 副标题由 sidebarEntryMeta 统一给出；
+ * 折叠状态存 state.ui.sidebarClosed（落盘），重绘不会覆盖。
+ * ========================================================================= */
 
-  /* 1. 任务（置顶） */
-  let doneN = 0;
-  TASKS.forEach(function (t) { const r = state.tasks[t.id]; if (r && r.done && !r.claimed) doneN += 1; });
-  const onTask = state.ui.active === 'tasks' ? ' on' : '';
-  html +=
-    '<button class="skillbtn taskbtn' + onTask + '" data-act="select" data-skill="tasks">' +
-    '<span class="sico">📜</span>' +
-    '<span class="sinfo"><span class="sname">任务</span><br>' +
-    '<span class="slvl">成就与奖励' + (doneN ? ' <span class="badge">' + doneN + '</span>' : '') + '</span></span>' +
-    '</button>';
-
-  /* 2. 签到（每日一次，可领时挂感叹号） */
-  const ckPlan = checkinPlan();
-  const onCk = state.ui.active === 'checkin' ? ' on' : '';
-  let ckSub = '';
-  if (ckPlan.state === 'clockback') ckSub = '系统时间异常';
-  else if (ckPlan.state === 'done') {
-    const n = state.checkin.day === 1 ? CHECKIN.CYCLE : state.checkin.day - 1;
-    ckSub = '连续 ' + n + '/' + CHECKIN.CYCLE + ' · 明日再来';
-  } else {
-    ckSub = '今日可领 · 第 ' + ckPlan.day + ' 天 <span class="badge">!</span>';
+/* 单个入口的展示元数据：icon / name / sub / 样式类 / 进度条 / 是否有待处理提醒 */
+function sidebarEntryMeta(id) {
+  const act = state.action;
+  if (id === 'tasks') {
+    let doneN = 0;
+    TASKS.forEach(function (t) { const r = state.tasks[t.id]; if (r && r.done && !r.claimed) doneN += 1; });
+    return {
+      name: '任务', icon: '📜', cls: 'taskbtn', alert: doneN > 0, alertTier: 'hot',
+      sub: '成就与奖励' + (doneN ? ' <span class="badge hot">' + doneN + '</span>' : '')
+    };
   }
-  html +=
-    '<button class="skillbtn checkinbtn' + onCk + '" data-act="select" data-skill="checkin">' +
-    '<span class="sico">📅</span>' +
-    '<span class="sinfo"><span class="sname">签到</span><br>' +
-    '<span class="slvl">' + ckSub + '</span></span>' +
-    '</button>';
-
-  /* 2.5 问道指引（轻量教学清单；完成/跳过后仍可查阅） */
-  const gCur = guideCurrent();
-  const gDoneN = guideDoneCount();
-  const gFin = !gCur;
-  const onGuide = state.ui.active === 'guide' ? ' on' : '';
-  const gSub = gFin
-    ? ('已完成 ' + gDoneN + '/' + GUIDE_STEPS.length + ' · 可查阅')
-    : (state.guide.skipped ? ('已跳过 · ' + gDoneN + '/' + GUIDE_STEPS.length) :
-      ('新手引导 ' + gDoneN + '/' + GUIDE_STEPS.length + ' <span class="badge">!</span>'));
-  html +=
-    '<button class="skillbtn guidebtn' + onGuide + '" data-act="select" data-skill="guide">' +
-    '<span class="sico">📖</span>' +
-    '<span class="sinfo"><span class="sname">问道</span><br>' +
-    '<span class="slvl">' + gSub + '</span></span>' +
-    '</button>';
-
-  /* 3. 背包（第三位） */
-  const onBag = state.ui.active === 'bag' ? ' on' : '';
-  html +=
-    '<button class="skillbtn bagbtn' + onBag + '" data-act="select" data-skill="bag">' +
-    '<span class="sico">🎒</span>' +
-    '<span class="sinfo"><span class="sname">背包</span><br>' +
-    '<span class="slvl"><span data-invcount>' + invSlotsUsed() + ' / ' + invCap() + '</span></span></span>' +
-    '</button>';
-
-  /* 3. 市集（第三位） */
-  const onShop = state.ui.active === 'shop' ? ' on' : '';
-  html +=
-    '<button class="skillbtn shopbtn' + onShop + '" data-act="select" data-skill="shop">' +
-    '<span class="sico">🏪</span>' +
-    '<span class="sinfo"><span class="sname">市集</span><br>' +
-    '<span class="slvl">采买 · 出售</span></span>' +
-    '</button>';
-
-  /* 3.5 穿越星球（紧随市集，点击面板可加速） */
-  const onPlanet = state.ui.active === 'planet' ? ' on' : '';
-  const busyPlanet = (state.action && (state.action.skill === 'planet' || state.action.skill === 'rift' || state.action.skill === 'elem' || state.action.skill === 'riftmon')) ? '<span class="dot"></span>' : '';
-  const riftBadge = ((state.rift && state.rift.open) || riftMonAlive()) ? ' <span class="badge">!</span>' : '';
-  html +=
-    '<button class="skillbtn planetbtn' + onPlanet + '" data-act="select" data-skill="planet">' +
-    '<span class="sico">🪐</span>' +
-    '<span class="sinfo"><span class="sname">穿越星球</span><br>' +
-    '<span class="slvl">灵石 · 星砂 · 材料' + busyPlanet + riftBadge + '</span></span>' +
-    '</button>';
-
-  /* 4. 修炼 */
-  const cult = SKILLS.cultivation;
-  const cultS = state.skills.cultivation;
-  const onCult = state.ui.active === 'cultivation' ? ' on' : '';
-  const busyCult = (state.action && state.action.skill === 'cultivation') ? '<span class="dot"></span>' : '';
-  html +=
-    '<button class="skillbtn' + onCult + '" data-act="select" data-skill="cultivation">' +
-    '<span class="sico">' + cult.icon + '</span>' +
-    '<span class="sinfo"><span class="sname">' + cult.name + '</span><br>' +
-    '<span class="slvl">' + realmInfo(cultS.lvl).full + busyCult + '</span></span>' +
-    '<span class="sbar" data-bar="cultivation"></span>' +
-    '</button>';
-
-  /* 5. 战斗 */
-  const comb = SKILLS.combat;
-  const combS = state.skills.combat;
-  const onComb = state.ui.active === 'combat' ? ' on' : '';
-  const busyComb = (state.action && state.action.skill === 'combat') ? '<span class="dot"></span>' : '';
-  html +=
-    '<button class="skillbtn' + onComb + '" data-act="select" data-skill="combat">' +
-    '<span class="sico">' + comb.icon + '</span>' +
-    '<span class="sinfo"><span class="sname">' + comb.name + '</span><br>' +
-    '<span class="slvl">Lv.' + combS.lvl + busyComb + '</span></span>' +
-    '<span class="sbar" data-bar="combat"></span>' +
-    '</button>';
-
-  /* 5.5 锁妖塔（紧随战斗；层数永久累积，待领奖时给出感叹号） */
-  const onTower = state.ui.active === 'tower' ? ' on' : '';
-  const busyTower = towerRunning() ? '<span class="dot"></span>' : '';
-  const towerBadge = state.tower.pending ? ' <span class="badge">!</span>' : '';
-  html +=
-    '<button class="skillbtn towerbtn' + onTower + '" data-act="select" data-skill="tower">' +
-    '<span class="sico">🗼</span>' +
-    '<span class="sinfo"><span class="sname">锁妖塔</span><br>' +
-    '<span class="slvl">第 ' + state.tower.current + ' 层 · 最高 ' + state.tower.best +
-    busyTower + towerBadge + '</span></span>' +
-    '</button>';
-
-  /* 其余技能（跳过 cultivation / combat，已在上面单独渲染） */
-  SKILL_ORDER.forEach(function (id) {
-    if (id === 'cultivation' || id === 'combat') return;
-    const sk = SKILLS[id];
+  if (id === 'checkin') {
+    const p = checkinPlan();
+    let sub = '';
+    let alert = false;
+    if (p.state === 'clockback') sub = '系统时间异常';
+    else if (p.state === 'done') {
+      const n = state.checkin.day === 1 ? CHECKIN.CYCLE : state.checkin.day - 1;
+      sub = '连续 ' + n + '/' + CHECKIN.CYCLE + ' · 明日再来';
+    } else {
+      sub = '今日可领 · 第 ' + p.day + ' 天 <span class="badge hot">!</span>';
+      alert = true;
+    }
+    return { name: '签到', icon: '📅', cls: 'checkinbtn', sub: sub, alert: alert, alertTier: 'hot' };
+  }
+  if (id === 'guide') {
+    const cur = guideCurrent();
+    const doneN = guideDoneCount();
+    const fin = !cur;
+    const sub = fin
+      ? ('已完成 ' + doneN + '/' + GUIDE_STEPS.length + ' · 可查阅')
+      : (state.guide.skipped ? ('已跳过 · ' + doneN + '/' + GUIDE_STEPS.length) :
+        ('新手引导 ' + doneN + '/' + GUIDE_STEPS.length + ' <span class="badge soft">!</span>'));
+    return { name: '问道', icon: '📖', cls: 'guidebtn', sub: sub, alert: !fin && !state.guide.skipped, alertTier: 'soft' };
+  }
+  if (id === 'bag') {
+    return {
+      name: '背包', icon: '🎒', cls: 'bagbtn',
+      sub: '<span data-invcount>' + invSlotsUsed() + ' / ' + invCap() + '</span>'
+    };
+  }
+  if (id === 'shop') return { name: '市集', icon: '🏪', cls: 'shopbtn', sub: '采买 · 出售' };
+  if (id === 'planet') {
+    const busy = (act && (act.skill === 'planet' || act.skill === 'rift' || act.skill === 'elem' || act.skill === 'riftmon')) ? '<span class="dot"></span>' : '';
+    const rift = ((state.rift && state.rift.open) || riftMonAlive()) ? ' <span class="badge block">!</span>' : '';
+    return {
+      name: '穿越星球', icon: '🪐', cls: 'planetbtn', alert: !!rift, alertTier: 'hot',
+      sub: '灵石 · 星砂 · 材料' + busy + rift
+    };
+  }
+  if (id === 'cultivation') {
+    const sk = SKILLS.cultivation;
+    const s = state.skills.cultivation;
+    const busy = (act && act.skill === 'cultivation') ? '<span class="dot"></span>' : '';
+    return { name: sk.name, icon: sk.icon, sub: realmInfo(s.lvl).full + busy, bar: true };
+  }
+  if (id === 'combat') {
+    const sk = SKILLS.combat;
+    const s = state.skills.combat;
+    const busy = (act && act.skill === 'combat') ? '<span class="dot"></span>' : '';
+    return { name: sk.name, icon: sk.icon, sub: 'Lv.' + s.lvl + busy, bar: true };
+  }
+  if (id === 'tower') {
+    const busy = towerRunning() ? '<span class="dot"></span>' : '';
+    const badge = state.tower.pending ? ' <span class="badge hot">!</span>' : '';
+    return {
+      name: '锁妖塔', icon: '🗼', cls: 'towerbtn', alert: !!state.tower.pending, alertTier: 'hot',
+      sub: '第 ' + state.tower.current + ' 层 · 最高 ' + state.tower.best + busy + badge
+    };
+  }
+  if (id === 'dbattle') {
+    const busy = dbattleRunning() ? '<span class="dot"></span>' : '';
+    const pend = (state.dbattle && state.dbattle.pending) ? state.dbattle.pending.length : 0;
+    const badge = pend ? ' <span class="badge hot">' + pend + '</span>' : '';
+    const info = discipleUnlocked()
+      ? ('第 ' + state.dbattle.stage + ' 关 · ' + dbattleLineupCount() + '/' + dbattleSlots() + ' 人')
+      : '需营造招贤殿';
+    return {
+      name: '战阵', icon: '⚔️', cls: 'dbbtn', alert: pend > 0, alertTier: 'hot',
+      sub: info + busy + badge
+    };
+  }
+  if (id === 'world') {
+    return { name: '世界', icon: '🏯', cls: 'worldbtn', sub: '洞天 · 建设度 ' + worldLevel() };
+  }
+  if (id === 'disciples') {
+    const info = discipleUnlocked()
+      ? ('上阵 ' + discipleEquippedCount() + '/' + discipleSlots() +
+        ' · 信徒 ' + discipleTotal() + '/' + discipleStoreCap())
+      : '需营造招贤殿';
+    return { name: '信徒', icon: '🙏', cls: 'discbtn', sub: info };
+  }
+  if (id === 'settings') return { name: '设置', icon: '🔧', cls: 'setbtn', sub: '兑换码 · 通用' };
+  if (id === 'devtools') {
+    if (!DEV.unlocked) return null;
+    return { name: '测试控制台', icon: '🔬', cls: 'devbtn', sub: '仅本次运行有效' };
+  }
+  /* 技能类入口（生产 / 采集 / 修炼等）统一从 SKILLS 取图标与名称 */
+  const sk = SKILLS[id];
+  if (sk) {
     const s = state.skills[id];
-    const on = state.ui.active === id ? ' on' : '';
-    const busy = (state.action && state.action.skill === id) ? '<span class="dot"></span>' : '';
-    html +=
-      '<button class="skillbtn' + on + '" data-act="select" data-skill="' + id + '">' +
-      '<span class="sico">' + sk.icon + '</span>' +
-      '<span class="sinfo"><span class="sname">' + sk.name + '</span><br>' +
-      '<span class="slvl">Lv.' + s.lvl + busy + '</span></span>' +
-      '<span class="sbar" data-bar="' + id + '"></span>' +
-      '</button>';
-  });
-
-  /* 世界 · 洞天（建筑被动收益，不占用动作槽） */
-  const onWorld = state.ui.active === 'world' ? ' on' : '';
-  html +=
-    '<button class="skillbtn worldbtn' + onWorld + '" data-act="select" data-skill="world">' +
-    '<span class="sico">🏯</span>' +
-    '<span class="sinfo"><span class="sname">世界</span><br>' +
-    '<span class="slvl">洞天 · 建设度 ' + worldLevel() + '</span></span>' +
-    '</button>';
-
-  /* 信徒（招募 · 上阵，上阵位数 = 招贤殿等级） */
-  const onDisc = state.ui.active === 'disciples' ? ' on' : '';
-  const dInfo = discipleUnlocked()
-    ? ('上阵 ' + discipleEquippedCount() + '/' + discipleSlots() +
-       ' · 信徒 ' + discipleTotal() + '/' + discipleStoreCap())
-    : '需营造招贤殿';
-  html +=
-    '<button class="skillbtn discbtn' + onDisc + '" data-act="select" data-skill="disciples">' +
-    '<span class="sico">🙏</span>' +
-    '<span class="sinfo"><span class="sname">信徒</span><br>' +
-    '<span class="slvl">' + dInfo + '</span></span>' +
-    '</button>';
-
-  /* 设置（兑换码 + 后续设置落位） */
-  const onSet = state.ui.active === 'settings' ? ' on' : '';
-  html +=
-    '<button class="skillbtn setbtn' + onSet + '" data-act="select" data-skill="settings">' +
-    '<span class="sico">🔧</span>' +
-    '<span class="sinfo"><span class="sname">设置</span><br>' +
-    '<span class="slvl">兑换码 · 通用</span></span>' +
-    '</button>';
-
-  /* 测试控制台：仅本次运行兑换成功后出现（DEV 为会话级，不落存档） */
-  if (DEV.unlocked) {
-    const onDev = state.ui.active === 'devtools' ? ' on' : '';
-    html +=
-      '<button class="skillbtn devbtn' + onDev + '" data-act="select" data-skill="devtools">' +
-      '<span class="sico">🔬</span>' +
-      '<span class="sinfo"><span class="sname">测试控制台</span><br>' +
-      '<span class="slvl">仅本次运行有效</span></span>' +
-      '</button>';
+    if (!s) return null;
+    const busy = (act && act.skill === id) ? '<span class="dot"></span>' : '';
+    return { name: sk.name, icon: sk.icon, sub: 'Lv.' + s.lvl + busy, bar: true };
   }
+  return null;
+}
+
+function sidebarEntryHTML(id) {
+  const m = sidebarEntryMeta(id);
+  if (!m) return '';
+  const on = state.ui.active === id ? ' on' : '';
+  const alertCls = m.alert ? (' has-alert ' + (m.alertTier || 'hot')) : '';
+  return '<button class="skillbtn ' + (m.cls || '') + on + alertCls + '" data-act="select" data-skill="' + id + '">' +
+    '<span class="sico">' + m.icon + '</span>' +
+    '<span class="sinfo"><span class="sname">' + m.name + '</span><br>' +
+    '<span class="slvl">' + m.sub + '</span></span>' +
+    (m.bar ? '<span class="sbar" data-bar="' + id + '"></span>' : '') +
+    '</button>';
+}
+
+/* 程序化跳转到某个面板时，自动展开它所在的分组（只改这一组，不动其它组） */
+function sidebarReveal(tab) {
+  if (!state || !state.ui || !state.ui.sidebarClosed) return false;
+  for (let i = 0; i < SIDEBAR_GROUPS.length; i++) {
+    const g = SIDEBAR_GROUPS[i];
+    if (g.items.indexOf(tab) >= 0 && state.ui.sidebarClosed[g.id]) {
+      state.ui.sidebarClosed[g.id] = false;
+      return true;
+    }
+  }
+  /* 未归组、落在「其他」组的新技能 */
+  if (SKILL_ORDER.indexOf(tab) >= 0) {
+    let grouped = false;
+    SIDEBAR_GROUPS.forEach(function (g) { if (g.items.indexOf(tab) >= 0) grouped = true; });
+    if (!grouped && state.ui.sidebarClosed.more) {
+      state.ui.sidebarClosed.more = false;
+      return true;
+    }
+  }
+  return false;
+}
+
+function renderSidebar() {
+  const nudgeTab = guideNudging() ? ((guideCurrent() || {}).tab || null) : null;
+
+  /* 配置里没归组的新技能自动进「其他」，新增入口不会从侧栏消失 */
+  const grouped = {};
+  SIDEBAR_GROUPS.forEach(function (g) { g.items.forEach(function (id) { grouped[id] = true; }); });
+  const groups = SIDEBAR_GROUPS.slice();
+  const extra = SKILL_ORDER.filter(function (id) { return !grouped[id]; });
+  if (extra.length) groups.push({ id: 'more', name: '其他', icon: '➕', items: extra });
+
+  let html = '';
+  groups.forEach(function (g) {
+    const entries = [];
+    g.items.forEach(function (id) {
+      const m = sidebarEntryMeta(id);
+      if (m) entries.push({ id: id, m: m });
+    });
+    if (!entries.length) return;
+
+    const savedClosed = !!(state.ui.sidebarClosed && state.ui.sidebarClosed[g.id]);
+    /* 问道指引指向被折叠的分组时，临时展示（不写回存档） */
+    const forceOpen = !!(nudgeTab && g.items.indexOf(nudgeTab) >= 0);
+    const closed = savedClosed && !forceOpen;
+    const active = entries.some(function (e) { return e.id === state.ui.active; });
+    const hotAlert = entries.some(function (e) { return e.m.alert && (e.m.alertTier === 'hot' || e.m.alertTier === 'block'); });
+    const anyAlert = entries.some(function (e) { return e.m.alert; });
+
+    let peek = '';
+    if (closed) {
+      const icons = entries.slice(0, 6).map(function (e) {
+        const ac = e.m.alert ? (' hasalert ' + (e.m.alertTier || 'hot')) : '';
+        return '<span class="sbpi' + ac + '" title="' + esc(e.m.name) + '">' + e.m.icon + '</span>';
+      }).join('');
+      const more = entries.length > 6 ? '<span class="sbpi more">+' + (entries.length - 6) + '</span>' : '';
+      peek = '<div class="sbpeek">' + icons + more + '</div>';
+    }
+
+    html += '<div class="sbgroup' + (closed ? ' closed' : '') + (active ? ' hasactive' : '') + (anyAlert ? ' hasalert' : '') + '" data-group="' + g.id + '">' +
+      '<button class="sbhead" data-act="sbgroup" data-id="' + g.id + '" aria-expanded="' + (closed ? 'false' : 'true') + '" aria-controls="sbbody-' + g.id + '">' +
+      '<span class="sbgico">' + g.icon + '</span>' +
+      '<span class="sbgname">' + esc(g.name) + '</span>' +
+      '<span class="sbgcount">' + entries.length + '</span>' +
+      (anyAlert ? '<span class="sbgdot ' + (hotAlert ? 'hot' : 'soft') + '" title="有待处理"></span>' : '') +
+      '<span class="sbgchev">' + (closed ? '▸' : '▾') + '</span>' +
+      '</button>' +
+      peek +
+      '<div class="sbbody" id="sbbody-' + g.id + '">' +
+      entries.map(function (e) { return sidebarEntryHTML(e.id); }).join('') +
+      '</div>' +
+      '</div>';
+  });
 
   setHTML('#sidebar', html);
   applyGuideFocus();
@@ -811,7 +847,7 @@ function renderCheckin() {
   html += '<div class="ckclaimbar">';
   if (plan.state === 'ready') {
     html += '<button class="btn ckclaim" data-act="checkin">签到 · 领取第 ' + plan.day + ' 天</button>' +
-      '<span class="cknote">今日可领「' + CHECKIN.DAYS[plan.day - 1].name + '」</span>';
+      '<span class="cknote ready">今日可领「' + CHECKIN.DAYS[plan.day - 1].name + '」</span>';
   } else if (plan.state === 'done') {
     html += '<button class="btn ckclaim" disabled>今日已签到</button>' +
       '<span class="cknote">明日 00:00 后可继续（下一个是第 ' + c.day + ' 天）</span>';
@@ -1164,6 +1200,341 @@ function updateTower(force) {
     _towerRewardKey = key;
   }
 }
+
+/* ================================================================== 战阵 */
+/* 静态骨架 + data-db 占位；编成下拉在 renderAll 时重建，战斗数值增量刷新 */
+function dbattleCandidateOptions(idx, aura) {
+  const cur = state.dbattle.lineup[idx] || '';
+  let html = '<option value="">— 空缺 —</option>';
+  state.disciples.owned.forEach(function (inst) {
+    if (!dbattleCanUse(inst, idx)) return;
+    const cat = findDisciple(inst.id);
+    if (!cat) return;
+    const t = DISCIPLE_TIERS[inst.tier];
+    const us = dbattleUnitStats(inst, idx, aura);
+    const me = elemInfo(inst.main);
+    html += '<option value="' + inst.uid + '"' + (inst.uid === cur ? ' selected' : '') + '>' +
+      cat.name + '（' + discProfName(inst) + '·' + t.name + '·主' + (me ? me.name : inst.main) +
+      '）HP ' + us.hp + '/' + us.maxHp + ' / 攻 ' + Math.round(us.atk) + '</option>';
+  });
+  return html;
+}
+
+function dbattleSlotHTML(i, aura) {
+  const slots = dbattleSlots();
+  const uid = state.dbattle.lineup[i];
+  const inst = uid ? discInstance(uid) : null;
+  const prof = dbattleSlotProf(i);
+  const roleName = prof ? dynPostName(prof) : '通用';
+  const roleIcon = prof ? dynPostIcon(prof) : '✨';
+  const locked = i >= slots;
+  let body;
+  let wounded = false;
+  if (locked) {
+    const need = Math.ceil((i + 1) / DBATTLE.SLOTS_PER_HALL);
+    body = '<div class="dbslot-empty">未解锁 · 招贤殿 Lv.' + need + '</div>';
+  } else if (inst) {
+    const cat = findDisciple(inst.id);
+    const us = dbattleUnitStats(inst, i, aura);
+    const me = elemInfo(inst.main);
+    const pct = us.maxHp ? us.hp / us.maxHp : 0;
+    wounded = us.hp < us.maxHp;
+    body = '<div class="dbslot-body">' +
+      '<span class="dbslot-ico">' + (cat ? cat.icon : '🙏') + '</span>' +
+      '<div class="dbslot-main"><div class="dbslot-name">' + (cat ? cat.name : inst.id) +
+      ' <b>' + DISCIPLE_TIERS[inst.tier].name + '</b></div>' +
+      '<div class="dbslot-sub">' + discProfIcon(inst) + ' ' + discProfName(inst) +
+      ' · 主' + (me ? me.name : inst.main) + ' · 攻 ' + Math.round(us.atk) + '</div></div>' +
+      '</div>' +
+      '<div class="dbslot-hp"><i data-dbu="' + i + '" style="width:' + (pct * 100).toFixed(1) + '%"></i></div>' +
+      '<div class="dbslot-hptext" data-dbu-hp="' + i + '">' + us.hp + ' / ' + us.maxHp + '</div>' +
+      '<button class="mini" data-act="dbclear" data-idx="' + i + '">撤下</button>';
+  } else {
+    body = '<select class="dsel dbsel" data-act="dbslot" data-idx="' + i + '">' +
+      dbattleCandidateOptions(i, aura) + '</select>' +
+      (prof ? '<div class="dbslot-need">只收职业：' + roleIcon + ' ' + roleName + '</div>' : '');
+  }
+  return '<div class="dbslot' + (locked ? ' locked' : '') + (inst ? ' filled' : '') + (prof ? ' prof' : '') +
+    (wounded ? ' wounded' : '') + '">' +
+    '<div class="dbslot-h"><span class="dbslot-no">' + (i + 1) + '</span>' +
+    '<span class="dbslot-role">' + roleIcon + ' ' + roleName + '</span></div>' +
+    body + '</div>';
+}
+
+function renderDBattle() {
+  dbattleValidateLineup();
+  const d = state.dbattle;
+  const slots = dbattleSlots();
+  const aura = dbattleAura();
+  const stage = d.stage;
+  const needHall = dbattleReqHall(stage);
+  const running = dbattleRunning();
+
+  let html = '<div class="dbwrap">' +
+    '<div class="phead"><h2>⚔️ 战阵</h2>' +
+    '<span class="pdesc">将信徒编成 10 人战阵，自动挑战 60 关妖兽。前排 5 个通用位，后排 5 个职业专位' +
+    '（皇帝 / 皇后 / 丞相 / 将军 / 皇妃，各限 1 人）。战阵独立于任务与朝代职位，一名信徒同一时间只能有一种身份。' +
+    '挑战占用全局动作槽，离线不战斗。</span></div>';
+
+  if (!discipleUnlocked()) {
+    return html + '<div class="empty">尚未营造「招贤殿」，无法开启战阵。<br>' +
+      '前往「世界」→「秘境」地形营造「招贤殿」后，每级解锁 2 个战阵位。</div></div>';
+  }
+
+  html += '<div class="planetdyn">' +
+    '<span class="pbchip">当前关卡 <b data-db="stage">' + stage + '</b></span>' +
+    '<span class="pbchip">最高已通关 <b data-db="best">' + d.best + '</b></span>' +
+    '<span class="pbchip">战修 <b data-db="train">Lv.' + d.trainLvl + '</b></span>' +
+    '<span class="pbchip">状态 <b data-db="state">未开始</b></span>' +
+    '<span class="pbchip">战阵位 <b>' + dbattleLineupCount() + '/' + slots + '</b></span>' +
+    (d.pending && d.pending.length
+      ? '<span class="pbchip">待入库 <b>' + d.pending.length + '</b></span>'
+      : '') +
+    '</div>';
+
+  if (hallLevel() < needHall) {
+    html += '<div class="shopnote warnline">第 ' + stage + ' 关需要招贤殿 Lv.' + needHall +
+      '（当前 Lv.' + hallLevel() + '）。升级招贤殿可解锁更多战阵位并继续推进。</div>';
+  }
+
+  /* 编成 */
+  html += '<div class="secttl">前排 · 通用位（0~4）</div><div class="dbrow">';
+  for (let i = 0; i < DBATTLE.GENERIC_SLOTS; i++) html += dbattleSlotHTML(i, aura);
+  html += '</div><div class="secttl">后排 · 职业专位（5~9）</div><div class="dbrow">';
+  for (let i = DBATTLE.GENERIC_SLOTS; i < DBATTLE.MAX_SLOTS; i++) html += dbattleSlotHTML(i, aura);
+  html += '</div>';
+
+  /* 伤兵与低血：生命跨关延续，只有疗伤能回满；这里列出所有未满血的信徒 */
+  const hurt = state.disciples.owned.filter(function (x) { return discHpPct(x) < 1; });
+  if (hurt.length) {
+    const lackSpirit = hurt.some(function (x) { return !discHealCost(x).spiritOk; });
+    const lackPill = hurt.some(function (x) { return !discHealCost(x).pillOk; });
+    html += '<div class="secttl">伤兵与低血 · 需疗伤 ' + hurt.length + ' 位</div><div class="dbinjury">';
+    hurt.forEach(function (inst) {
+      const cat = findDisciple(inst.id);
+      const t = DISCIPLE_TIERS[inst.tier];
+      const pct = Math.round(discHpPct(inst) * 100);
+      html += '<div class="dbinjrow">' +
+        '<span class="dbinjname">' + (cat ? cat.icon : '🙏') + ' ' + (cat ? cat.name : inst.id) +
+        ' <em>' + t.name + ' · ' + discProfName(inst) + ' · ' +
+        (pct <= 0 ? '<b class="dbinjzero">重伤</b>' : '生命 ' + pct + '%') + '</em></span>' +
+        discHealButtonHTML(inst) + '</div>';
+    });
+    html += '</div>';
+    if (lackSpirit || lackPill) {
+      html += '<div class="shopnote warnline">当前无法疗伤：' +
+        (lackSpirit ? '灵力不足（✨会随时间自然凝聚，聚灵阵 / 洞天可加速）' : '') +
+        (lackSpirit && lackPill ? '；' : '') +
+        (lackPill ? '缺少聚气丹（炼丹 Lv.1：聚气草×2 + 草药×1；或市集·丹药阁购买，锁妖塔每 5 层也会掉落）' : '') +
+        '。资源不够时可先做其它动作积攒，重伤不会自然恢复。</div>';
+    }
+  }
+
+  /* 战斗视图 */
+  html += '<div class="secttl">战斗</div>' +
+    '<div class="dbstage">' +
+    '<div class="dbfow">' +
+    '<span class="dbfico" data-db="eicon">👹</span>' +
+    '<div class="dbfbody">' +
+    '<div class="dbfname"><b data-db="ename">—</b><span data-db="elvl">第 ' + stage + ' 关</span></div>' +
+    '<div class="dbhp big"><i data-db="ehpfill"></i></div>' +
+    '<div class="dbnum" data-db="ehp">—</div>' +
+    '<div class="dbfstats" data-db="estats">—</div>' +
+    '</div></div>' +
+    '<div class="dbunits">';
+  for (let i = 0; i < DBATTLE.MAX_SLOTS; i++) {
+    const inst = d.lineup[i] ? discInstance(d.lineup[i]) : null;
+    if (!inst) {
+      html += '<div class="dbunit empty"><span>—</span><i data-dbu2="' + i + '"></i></div>';
+      continue;
+    }
+    const cat = findDisciple(inst.id);
+    html += '<div class="dbunit" data-dbunit="' + i + '">' +
+      '<span class="dbuico">' + (cat ? cat.icon : '🙏') + '</span>' +
+      '<span class="dbuname">' + (cat ? cat.name : inst.id) + '</span>' +
+      '<i data-dbu2="' + i + '"></i>' +
+      '<span class="dbuhp" data-dbu2-hp="' + i + '"></span></div>';
+  }
+  html += '</div>' +
+    '<div class="dbact">' +
+    '<button class="pbtn" data-act="dbstart" data-db="startbtn">挑战第 ' + stage + ' 关</button>' +
+    '<button class="pbtn cross" data-act="dbdaily" data-db="dailybtn">每日妖王</button>' +
+    '<button class="pbtn ghost" data-act="dbsweep" data-db="sweepbtn">扫荡</button>' +
+    '<button class="pbtn ghost" data-act="dbauto" data-db="autobtn">自动连战</button>' +
+    '<span class="pbstate" data-db="note"></span>' +
+    '</div>' +
+    '</div>';
+
+  /* 战报 */
+  html += '<div class="secttl">战报</div><div class="dblog" data-db="log"></div>';
+
+  /* 奖励预览 */
+  html += '<div class="secttl">奖励预览</div><div class="dbreward" data-db="reward"></div>';
+  html += '<div class="shopnote">首通奖励含星砂 / 生命之种 / 粮食 / 木材 / 石料与章节 Boss 中档装备；' +
+    '重复挑战只给 35% 灵石与战修经验，不产星砂、生命之种、洞天资源、玩家战斗经验与精通。' +
+    '每日妖王每天 1 次，扫荡每天 ' + DBATTLE.SWEEP_PER_DAY + ' 次。</div>';
+
+  /* 规则 */
+  html += '<div class="secttl">规则与公式</div>' +
+    '<div class="shopnote">战阵位 = 招贤殿等级 × ' + DBATTLE.SLOTS_PER_HALL + '（至多 ' + DBATTLE.MAX_SLOTS + '）；' +
+    '每章需要对应招贤殿等级。信徒属性 = 品阶基础 × (1+4×副属性) × (1+2%×(战修−1)) × 职业光环；' +
+    '不读玩家装备 / 阵法 / 洞天加成。敌方生命 45×1.075<sup>s−1</sup>×(1+12%章节)，攻击 (3+0.18(s−1))×(1+8%章节)，' +
+    'Boss 生命 ×1.45、攻击 ×1.25，每第 4 次行动横扫全体。战斗超过 ' + DBATTLE.ENRAGE_AT + ' 秒后伤害每秒 +3%（最多 ×2）。' +
+    '命中 / 闪避 / 减伤沿用现有公式，敌方减伤上限 30%。' +
+    '生命跨关卡延续：通关、失败、连战、重复挑战都不回血，只有疗伤能回满；' +
+    '自动连战在任一在场信徒低于 ' + Math.round(DBATTLE.AUTO_MIN_HP_PCT * 100) + '% 生命时会暂停并提示。' +
+    '重伤：生命归零立即自动下阵，期间不能驻守任务 / 担任职位 / 再上战阵；' +
+    '只能消耗灵力（按缺失生命计算，满血约 ✨60）与 1 枚聚气丹疗伤，不做自然自愈。</div>';
+
+  return html + '</div>';
+}
+
+let _dbRewardKey = '';
+let _dbLogKey = '';
+
+function dbattleRewardHTML(stage) {
+  const d = state.dbattle;
+  const first = !d.cleared[stage];
+  const rw = dbattleReward(stage, true);
+  const parts = [];
+  if (first) {
+    parts.push('💠 灵石 <b>+' + fmtNum(rw.gold) + '</b>');
+    if (rw.star) parts.push('💫 星砂 <b>+' + rw.star + '</b>');
+    if (rw.seed) parts.push('🌱 生命之种 <b>+' + rw.seed + '</b>');
+    if (rw.food) parts.push('🌾 粮食 <b>+' + rw.food + '</b>');
+    if (rw.wood) parts.push('🌲 木材 <b>+' + rw.wood + '</b>');
+    if (rw.stone) parts.push('⛰️ 石料 <b>+' + rw.stone + '</b>');
+    const drop = DBATTLE.BOSS_DROPS[stage];
+    if (drop) {
+      parts.push(itemIcon(drop.pill) + ' ' + itemName(drop.pill) + ' <b>×1</b>');
+      parts.push(itemIcon(drop.equip) + ' ' + itemName(drop.equip) + ' <b>×1</b>');
+    }
+  } else {
+    const rep = dbattleReward(stage, false);
+    parts.push('💠 灵石 <b>+' + fmtNum(rep.gold) + '</b>（重复 35%）');
+    parts.push('<span class="dbmuted">首通奖励已领取</span>');
+  }
+  parts.push('⚔️ 战修经验 <b>+' + rw.trainXp + '</b>');
+  return '<div class="trewline">' + parts.join('<span class="trediv">·</span>') + '</div>' +
+    (first ? '<div class="trewtip">🎖 首通奖励：只发一次；重复挑战仅灵石 35% + 战修经验</div>' : '');
+}
+
+function updateDBattle(force) {
+  if (!state || state.ui.active !== 'dbattle') return;
+  const root = document.querySelector('.dbwrap');
+  if (!root) { _dbRewardKey = ''; _dbLogKey = ''; return; }
+
+  const d = state.dbattle;
+  const running = dbattleRunning();
+  const fighting = (DB.phase === 'fight' || DB.phase === 'result') && !!DB.enemy;
+  const stage = fighting ? DB.stage : d.stage;
+  const foe = fighting ? DB.enemy : dbattleEnemy(stage, false);
+  const aura = dbattleAura();
+
+  function tx(key, txt) {
+    const el = root.querySelector('[data-db="' + key + '"]');
+    if (el && el.textContent !== txt) el.textContent = txt;
+  }
+
+  tx('stage', String(d.stage));
+  tx('best', String(d.best));
+  tx('train', 'Lv.' + d.trainLvl + (d.trainLvl >= DBATTLE.TRAIN_MAX ? '（圆满）'
+    : ' · ' + Math.floor(d.trainXp) + '/' + dbattleTrainNeed(d.trainLvl)));
+  tx('state', running ? (DB.phase === 'result' ? '结算中' : '战斗中') : '未开始');
+  tx('eicon', foe.icon);
+  tx('ename', foe.name);
+  tx('elvl', '第 ' + stage + ' 关' + (foe.boss ? ' · 章节 Boss' : ''));
+  tx('ehp', '生命 ' + Math.max(0, Math.ceil(foe.hp)) + ' / ' + foe.maxHp);
+  tx('estats', '攻击 ' + foe.atkMin + '~' + foe.atkMax + ' · 命中 ' + Math.round(foe.hit) +
+    ' · 闪避 ' + Math.round(foe.ev) + ' · 减伤 ' + Math.round(foe.dr * 100) + '%' +
+    ' · 出手 ' + foe.interval.toFixed(1) + 's');
+
+  const efill = root.querySelector('[data-db="ehpfill"]');
+  if (efill) efill.style.width = (Math.max(0, Math.min(1, foe.hp / foe.maxHp)) * 100).toFixed(1) + '%';
+
+  /* 单位血条：战斗中读 DB.units，否则按编成里保存的剩余生命预览（不再显示满血） */
+  for (let i = 0; i < DBATTLE.MAX_SLOTS; i++) {
+    const fill = root.querySelector('[data-dbu="' + i + '"]');
+    const fill2 = root.querySelector('[data-dbu2="' + i + '"]');
+    const num = root.querySelector('[data-dbu-hp="' + i + '"]');
+    const num2 = root.querySelector('[data-dbu2-hp="' + i + '"]');
+    let hp = 0, maxHp = 0, alive = true;
+    if (fighting) {
+      const u = DB.units.filter(function (x) { return x.slot === i; })[0];
+      if (u) { hp = u.hp; maxHp = u.maxHp; alive = u.alive; }
+    } else if (d.lineup[i]) {
+      const inst = discInstance(d.lineup[i]);
+      if (inst) {
+        const us = dbattleUnitStats(inst, i, aura);
+        hp = us.hp; maxHp = us.maxHp;
+      }
+    }
+    const w = maxHp > 0 ? (Math.max(0, Math.min(1, hp / maxHp)) * 100).toFixed(1) + '%' : '0%';
+    [fill, fill2].forEach(function (el) {
+      if (!el) return;
+      el.style.width = w;
+      el.classList.toggle('dead', !alive);
+    });
+    const txt = maxHp > 0 ? (Math.max(0, Math.ceil(hp)) + ' / ' + maxHp) : '';
+    [num, num2].forEach(function (el) {
+      if (el && el.textContent !== txt) el.textContent = txt;
+    });
+    const box = root.querySelector('[data-dbunit="' + i + '"]');
+    if (box && fighting) box.classList.toggle('dead', !alive);
+  }
+
+  /* 战报 */
+  const logKey = DB.log.join('|');
+  if (force || logKey !== _dbLogKey) {
+    const box = root.querySelector('[data-db="log"]');
+    if (box) box.innerHTML = DB.log.length
+      ? DB.log.map(function (line) { return '<div class="dbline">' + esc(line) + '</div>'; }).join('')
+      : '<div class="dblogempty">尚未开战。编成后点击「挑战」。</div>';
+    _dbLogKey = logKey;
+  }
+
+  /* 按钮 */
+  const startBtn = root.querySelector('[data-db="startbtn"]');
+  if (startBtn) {
+    const label = running ? '停止战阵' : ('挑战第 ' + d.stage + ' 关');
+    if (startBtn.textContent !== label) startBtn.textContent = label;
+    startBtn.disabled = !running && hallLevel() < dbattleReqHall(d.stage);
+  }
+  const dailyBtn = root.querySelector('[data-db="dailybtn"]');
+  if (dailyBtn) {
+    const label = d.dailyBoss ? '今日妖王已胜' : '每日妖王';
+    if (dailyBtn.textContent !== label) dailyBtn.textContent = label;
+    dailyBtn.disabled = d.dailyBoss || d.best < DBATTLE.STAGE_PER_CHAPTER;
+  }
+  const sweepBtn = root.querySelector('[data-db="sweepbtn"]');
+  if (sweepBtn) {
+    const left = Math.max(0, DBATTLE.SWEEP_PER_DAY - d.sweeps);
+    const label = '扫荡（' + left + '/' + DBATTLE.SWEEP_PER_DAY + '）';
+    if (sweepBtn.textContent !== label) sweepBtn.textContent = label;
+    sweepBtn.disabled = d.best <= 0 || left <= 0;
+  }
+  const autoBtn = root.querySelector('[data-db="autobtn"]');
+  if (autoBtn) {
+    const label = '自动连战：' + (d.autoNext ? '开' : '关');
+    if (autoBtn.textContent !== label) autoBtn.textContent = label;
+  }
+
+  /* 奖励预览 */
+  const key = String(stage) + '|' + (d.cleared[stage] ? 1 : 0);
+  if (force || key !== _dbRewardKey) {
+    const box = root.querySelector('[data-db="reward"]');
+    if (box) box.innerHTML = dbattleRewardHTML(stage);
+    _dbRewardKey = key;
+  }
+
+  const note = running
+    ? (DB.phase === 'result'
+      ? (DB.result && DB.result.win ? '胜利！' + (d.autoNext ? '即将进入下一关…' : '即将结束…') : '全灭，即将结束…')
+      : '战斗中：切换到其它动作会中断战阵；离线不战斗。')
+    : '选择关卡后点击挑战。战阵与任务 / 职位共用信徒，编成后会从任务 / 职位候选里移除。';
+  tx('note', note);
+}
+
 
 /* =============================================================== 异界裂缝 */
 /* 独立视图（仍属于穿越星球面板）：静态骨架 + data-rift 占位，增量刷新 */
@@ -2676,6 +3047,17 @@ function daolvConfirm(a, b) {
     '\n确认后立即生效，无法撤销。';
 }
 
+/* 疗伤按钮：统一显示所需灵力 + 丹药；资源不足时按钮仍可点，由引擎提示原因 */
+function discHealButtonHTML(inst) {
+  const cost = discHealCost(inst);
+  const ready = cost.spiritOk && cost.pillOk;
+  let hint = '';
+  if (!cost.spiritOk) hint = '<span class="dneed">灵力不足</span>';
+  else if (!cost.pillOk) hint = '<span class="dneed">缺' + itemName(cost.pill) + '</span>';
+  return '<button class="mini heal' + (ready ? '' : ' off') + '" data-act="disc_heal" data-uid="' + inst.uid + '">' +
+    '疗伤 · ✨' + cost.spirit + ' + ' + itemIcon(cost.pill) + itemName(cost.pill) + ' ×' + cost.pillQty + '</button>' + hint;
+}
+
 /* 任务席位下拉：列出仓库里所有信徒（已被别的任务占用的会标注） */
 function discOptionsHTML(taskKey) {
   const cur = state.disciples.assign[taskKey] || '';
@@ -2685,6 +3067,10 @@ function discOptionsHTML(taskKey) {
     if (!cat) return;
     /* 朝代职位不可更换：该信徒不出现在任务的候选里 */
     if (discDynPost(inst.uid)) return;
+    /* 重伤未愈：不可驻守任务（须先疗伤） */
+    if (discInjured(inst)) return;
+    /* 战阵中的信徒同样不可同时驻守任务 */
+    if (dbattleSlotOf(inst.uid) >= 0) return;
     const t = DISCIPLE_TIERS[inst.tier];
     const at = discAssignedTask(inst.uid);
     const tag = (at && at !== taskKey) ? '（现驻' + (SKILLS[at] ? SKILLS[at].name : at) + '）' : '';
@@ -2707,6 +3093,7 @@ function discDeleteConfirm(inst) {
   }).join('、');
   const me = elemInfo(inst.main);
   const post = discDynPost(inst.uid);
+  const dbSlot = dbattleSlotOf(inst.uid);
   const daoN = discDaoUsed(inst);
   let daoSpentN = 0, daoDeadN = 0;
   (inst.dao || []).forEach(function (rec) {
@@ -2724,6 +3111,7 @@ function discDeleteConfirm(inst) {
     (at ? '当前驻守：' + (SKILLS[at] ? SKILLS[at].name : at) + '（删除后将自动撤下）\n' : '') +
     (post ? '当前职位：' + dynastyName(post.d.dyn) + dynPostName(post.role) +
       '（删除后该职位将空缺，不可恢复）\n' : '') +
+    (dbSlot >= 0 ? '当前战阵：第 ' + (dbSlot + 1) + ' 位（删除后自动撤下）\n' : '') +
     (daoN ? '道侣：' + daoN + ' / ' + DAOLV.MAX + '（已化道 ' + daoSpentN + '、亡故 ' + daoDeadN +
       '、在世 ' + daoLiveN + '）；删除后其道侣记录一并消失' +
       (daoLiveN ? '，在世道侣的对应位永久空缺、加成消失' : '') + '，不可恢复\n' : '') +
@@ -2827,11 +3215,20 @@ function renderDisciples() {
     if (!dd) return;
     const t = DISCIPLE_TIERS[inst.tier];
     const at = discAssignedTask(inst.uid);
+    const inj = discInjured(inst);
+    const pct = discHpPct(inst);
     let stat;
     const post = discDynPost(inst.uid);
-    if (post) {
+    const dbSlot = dbattleSlotOf(inst.uid);
+    if (inj) {
+      stat = '<span class="dstat bad">重伤，需疗伤 · 生命归零，暂不可上阵</span>' +
+        discHealButtonHTML(inst);
+    } else if (post) {
       stat = '<span class="dstat ok">担任「' + dynastyName(post.d.dyn) + '」' +
         dynPostName(post.role) + ' · 不可取下</span>';
+    } else if (dbSlot >= 0) {
+      stat = '<span class="dstat ok">战阵第 ' + (dbSlot + 1) + ' 位 · 不可驻守任务</span>' +
+        '<button class="mini" data-act="select" data-skill="dbattle">战阵面板</button>';
     } else if (!at) {
       stat = '<span class="dstat">待命中</span>';
     } else {
@@ -2840,13 +3237,18 @@ function renderDisciples() {
         (mainHit ? '主属性命中' : '副属性命中') + '</span>' +
         '<button class="mini" data-act="dunassign" data-task="' + at + '">撤下</button>';
     }
-    html += '<div class="formcard dcard" style="--rc:' + t.color + '">' +
+    /* 低血但未重伤：也可以随时疗伤回满（疗伤是唯一回血手段） */
+    if (!inj && pct < 1) stat += discHealButtonHTML(inst);
+    html += '<div class="formcard dcard' + (inj ? ' injured' : '') + '" style="--rc:' + t.color + '">' +
       '<div class="fhead"><span class="fico">' + dd.icon + '</span>' +
       '<span class="fmain"><span class="fname">' + dd.name +
       '<b class="blvl">' + t.name + '</b>' +
-      '<b class="dprof" title="职业固定不可改">' + discProfIcon(inst) + ' ' + discProfName(inst) + '</b></span>' +
+      '<b class="dprof" title="职业固定不可改">' + discProfIcon(inst) + ' ' + discProfName(inst) + '</b>' +
+      (inj ? '<b class="dinjbad">重伤</b>' : '') + '</span>' +
       '<span class="fdesc">' + dd.desc + '</span></span></div>' +
-      '<div class="dchips">' + discElemsHTML(inst, at) + '</div>' +
+      '<div class="dchips">' + discElemsHTML(inst, at) +
+      (!inj && pct < 1 ? '<span class="dhpchip' + (pct < 0.35 ? ' low' : '') + '">生命 ' + Math.round(pct * 100) + '%</span>' : '') +
+      '</div>' +
       discDaoHTML(inst) +
       '<div class="fmod">' + stat +
       '<button class="mini danger" data-act="deldisc" data-uid="' + inst.uid + '">遣散</button>' +
@@ -2897,6 +3299,7 @@ function renderContent() {
     return;
   }
   if (id === 'tower') { setHTML('#content', renderTower() + currentBarHTML()); updateTower(true); return; }
+  if (id === 'dbattle') { setHTML('#content', renderDBattle() + currentBarHTML()); updateDBattle(true); return; }
   if (id === 'bag') { setHTML('#content', renderBag()); updateInvQty(); return; }
   if (id === 'world') { setHTML('#content', renderWorld() + currentBarHTML()); updateWorldState(); updateDynastyState(); return; }
   if (id === 'disciples') { setHTML('#content', renderDisciples()); updateDiscipleState(); return; }
@@ -3521,6 +3924,7 @@ function updateBars() {
   updateDynastyState();
   updateDiscipleState();
   updateTower();
+  updateDBattle();
   updateRift();
   updateElemRift();
   updateElemRiftMini();

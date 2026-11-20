@@ -53,6 +53,21 @@ function defaultState() {
        failed 仅用于界面显示「已阵亡」，读档不恢复；层数永不回退 */
     tower: { current: 1, best: 1, pending: false, failed: false },
 
+    /* 战阵（v2.16.0）：10 位信徒编成，独立于任务 / 职位。
+       lineup 索引 0~4 通用位，5~9 职业专位（皇帝/皇后/丞相/将军/皇妃）；
+       stage 当前关卡 / best 最高已通关；trainLvl 账号级战修；dayKey 每日妖王与扫荡的日期。
+       战斗中的单位 / 敌人 / 日志为瞬态，存在引擎内存里，不落盘。 */
+    dbattle: {
+      stage: 1, best: 0,
+      lineup: [null, null, null, null, null, null, null, null, null, null],
+      cleared: {},
+      trainLvl: 1, trainXp: 0,
+      autoNext: true,
+      dayKey: '', dailyBoss: false, sweeps: 0,
+      pending: [],          // 背包满时寄存的首通/妖王掉落，腾出格位后自动入库
+      stats: { wins: 0, losses: 0 }
+    },
+
     /* 异界裂缝：open 是否存在未修复裂缝 / tier 生成时的穿越次数（层级）
        新档自带第 0 层裂缝；每次穿越成功后生成 tier=穿越次数的新裂缝 */
     rift: { open: true, tier: 0 },
@@ -86,7 +101,7 @@ function defaultState() {
     /* 问道指引（v2.14.0）：done = 已完成步骤 id 集合；inferred = 旧档推断完成（不补发奖励）
        flags = 面板访问 / 购买等行为标记；skipped = 已跳过（不再弹提示）；closed = 已收起（可手动重开） */
     guide: { done: {}, inferred: {}, flags: {}, skipped: false, closed: false },
-    ui: { active: 'woodcutting', planetView: 'main', elemSlot: 0, worldView: 'main', dynMerge: -1, autoEat: true, eatFood: 'auto', eatRatio: 0.35, invFilter: 'all', invSellMode: false, itemQty: 1, shopCat: 'general', farmSeedId: null, worldTerrain: 'all' },
+    ui: { active: 'woodcutting', planetView: 'main', elemSlot: 0, worldView: 'main', dynMerge: -1, autoEat: true, eatFood: 'auto', eatRatio: 0.35, invFilter: 'all', invSellMode: false, itemQty: 1, shopCat: 'general', farmSeedId: null, worldTerrain: 'all', sidebarClosed: {} },
     log: [],
     stats: { gathered: 0, crafts: 0, kills: 0, deaths: 0, breaks: 0, pills: 0, gained: {}, perSkill: {}, startedAt: Date.now() },
     lastSave: Date.now()
@@ -395,12 +410,22 @@ function mergeState(def, saved) {
       const prof = (typeof obj.prof === 'string' && DYNASTY.POST_ORDER.indexOf(obj.prof) >= 0)
         ? obj.prof : '';
 
-      /* 五行一律补全为金木水火土齐全；道侣原始记录留到全部实例建好后统一校验 */
+      /* 五行一律补全为金木水火土齐全；道侣原始记录留到全部实例建好后统一校验。
+         重伤（v2.20.0）跟着实例走：旧档无该字段视为健康，只有明确的 true 才落盘。 */
       rawDao[uid] = Array.isArray(obj.dao) ? obj.dao : [];
-      out.disciples.owned.push({
+      const inst = {
         uid: uid, id: cat.id, tier: cat.tier, prof: prof,
         elems: DISCIPLE.ALL_ELEMS.slice(), main: main, power: power, dao: []
-      });
+      };
+      /* v2.21.0：剩余生命比例跟着实例走；旧档无字段 = 满血。
+         0 或 injured 都视为重伤，避免两份数据打架。 */
+      const hpPct = Number(obj.hpPct);
+      if (obj.injured === true || (isFinite(hpPct) && hpPct <= 0)) {
+        inst.injured = true;
+      } else if (isFinite(hpPct) && hpPct < 1) {
+        inst.hpPct = Math.max(0.01, hpPct);
+      }
+      out.disciples.owned.push(inst);
     });
 
     /* 道侣（v2.12.0）：每个实例新增 dao[]，记录 { uid, id, tier, main, power, state }（≤7）。
@@ -514,9 +539,10 @@ function mergeState(def, saved) {
         if (!TASK_ELEM[taskKey]) return;
         const uid = savedAssign[taskKey];
         if (typeof uid !== 'string' || used[uid]) return;
-        let exists = false;
-        out.disciples.owned.forEach(function (x) { if (x.uid === uid) exists = true; });
-        if (!exists) return;
+        let inst = null;
+        out.disciples.owned.forEach(function (x) { if (x.uid === uid) inst = x; });
+        /* 重伤信徒不能驻守任务；旧档若残留该引用，直接忽略（不报错、不删信徒） */
+        if (!inst || discInjured(inst)) return;
         if (Object.keys(out.disciples.assign).length >= slots) return;
         out.disciples.assign[taskKey] = uid;
         used[uid] = true;
@@ -554,6 +580,7 @@ function mergeState(def, saved) {
         const uid = src[role];
         if (typeof uid !== 'string' || !uid || !ownedByUid[uid] || assignedUids[uid] || postUsed[uid]) return;
         const inst = ownedByUid[uid];
+        if (discInjured(inst)) return;                  /* 重伤不能上任，职位留空 */
         if (!discProf(inst)) inst.prof = role;          /* 旧档：职位优先，回填对应职业 */
         if (discProf(inst) !== role) return;            /* 明确职业不匹配：清空职位，信徒保留 */
         clean[role] = uid;
@@ -590,6 +617,69 @@ function mergeState(def, saved) {
     out.tower.best = Math.min(TOWER.MAX_FLOOR, out.tower.best);
   }
 
+  /* 战阵（v2.16.0）：只做形状与数值兜底；存在性 / 身份互斥 / 专位职业匹配
+     由引擎 dbattleValidateLineup() 在读档后统一校验（需要信徒与职位表）。 */
+  out.dbattle = {
+    stage: 1, best: 0,
+    lineup: [null, null, null, null, null, null, null, null, null, null],
+    cleared: {},
+    trainLvl: 1, trainXp: 0,
+    autoNext: true,
+    dayKey: '', dailyBoss: false, sweeps: 0,
+    pending: [],
+    stats: { wins: 0, losses: 0 }
+  };
+  {
+    const sb = (saved.dbattle && typeof saved.dbattle === 'object') ? saved.dbattle : null;
+    if (sb) {
+      if (isFinite(sb.stage)) {
+        out.dbattle.stage = Math.max(1, Math.min(DBATTLE.MAX_STAGE, Math.floor(Number(sb.stage))));
+      }
+      if (isFinite(sb.best)) {
+        out.dbattle.best = Math.max(0, Math.min(DBATTLE.MAX_STAGE, Math.floor(Number(sb.best))));
+      }
+      out.dbattle.best = Math.max(out.dbattle.best, out.dbattle.stage - 1);
+      if (Array.isArray(sb.lineup)) {
+        for (let i = 0; i < DBATTLE.MAX_SLOTS; i++) {
+          const uid = sb.lineup[i];
+          if (typeof uid === 'string' && uid) out.dbattle.lineup[i] = uid;
+        }
+      }
+      if (sb.cleared && typeof sb.cleared === 'object') {
+        Object.keys(sb.cleared).forEach(function (k) {
+          const n = Math.floor(Number(k));
+          if (n >= 1 && n <= DBATTLE.MAX_STAGE && sb.cleared[k]) out.dbattle.cleared[n] = true;
+        });
+      }
+      if (isFinite(sb.trainLvl)) {
+        out.dbattle.trainLvl = Math.max(1, Math.min(DBATTLE.TRAIN_MAX, Math.floor(Number(sb.trainLvl))));
+      }
+      if (isFinite(sb.trainXp)) out.dbattle.trainXp = Math.max(0, Number(sb.trainXp));
+      if (typeof sb.autoNext === 'boolean') out.dbattle.autoNext = sb.autoNext;
+      if (typeof sb.dayKey === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(sb.dayKey)) out.dbattle.dayKey = sb.dayKey;
+      out.dbattle.dailyBoss = !!sb.dailyBoss;
+      if (isFinite(sb.sweeps)) {
+        out.dbattle.sweeps = Math.max(0, Math.min(DBATTLE.SWEEP_PER_DAY, Math.floor(Number(sb.sweeps))));
+      }
+      if (Array.isArray(sb.pending)) {
+        out.dbattle.pending = sb.pending.filter(function (id) {
+          return typeof id === 'string' && !!ITEMS[id];
+        }).slice(0, 20);
+      }
+      if (sb.stats && typeof sb.stats === 'object') {
+        if (isFinite(sb.stats.wins)) out.dbattle.stats.wins = Math.max(0, Math.floor(Number(sb.stats.wins)));
+        if (isFinite(sb.stats.losses)) out.dbattle.stats.losses = Math.max(0, Math.floor(Number(sb.stats.losses)));
+      }
+    }
+    /* 跨日重置每日次数（惰性：读档时按本地日期比对，不写额外时间字段） */
+    const today = checkinDayKey();
+    if (out.dbattle.dayKey !== today) {
+      out.dbattle.dayKey = today;
+      out.dbattle.dailyBoss = false;
+      out.dbattle.sweeps = 0;
+    }
+  }
+
   /* 动作槽恢复规则（v2.14.3）：
      - 新档 action 为 null，进游戏保持空闲；
      - 玩家主动开启的采集 / 配方动作可恢复，离线结算沿用该动作；
@@ -610,7 +700,7 @@ function mergeState(def, saved) {
 
   /* 星球 / 锁妖塔 / 异界裂缝 / 属性裂缝 / 裂缝怪物均为主动或瞬态动作：读档一律不恢复，
      保持「未开启」，也避免默认值顶替它们偷偷占槽 */
-  if (sa && (sa.skill === 'planet' || sa.skill === 'tower' || sa.skill === 'rift' || sa.skill === 'elem' || sa.skill === 'riftmon')) {
+  if (sa && (sa.skill === 'planet' || sa.skill === 'tower' || sa.skill === 'rift' || sa.skill === 'elem' || sa.skill === 'riftmon' || sa.skill === 'dbattle')) {
     out.action = null;
   }
   /* 没有合法动作时清掉残留计时，避免 UI 显示半截进度 */
@@ -668,7 +758,7 @@ function mergeState(def, saved) {
 
   /* UI 偏好 */
   if (saved.ui && typeof saved.ui === 'object') {
-    if (SKILL_ORDER.indexOf(saved.ui.active) >= 0 || saved.ui.active === 'tasks' || saved.ui.active === 'shop' || saved.ui.active === 'bag' || saved.ui.active === 'world' || saved.ui.active === 'disciples' || saved.ui.active === 'planet' || saved.ui.active === 'tower' || saved.ui.active === 'settings' || saved.ui.active === 'checkin' || saved.ui.active === 'guide') out.ui.active = saved.ui.active;
+    if (SKILL_ORDER.indexOf(saved.ui.active) >= 0 || saved.ui.active === 'tasks' || saved.ui.active === 'shop' || saved.ui.active === 'bag' || saved.ui.active === 'world' || saved.ui.active === 'disciples' || saved.ui.active === 'planet' || saved.ui.active === 'tower' || saved.ui.active === 'dbattle' || saved.ui.active === 'settings' || saved.ui.active === 'checkin' || saved.ui.active === 'guide') out.ui.active = saved.ui.active;
     if (typeof saved.ui.autoEat === 'boolean') out.ui.autoEat = saved.ui.autoEat;
     if (typeof saved.ui.eatFood === 'string') out.ui.eatFood = saved.ui.eatFood;
     if (isFinite(saved.ui.eatRatio)) out.ui.eatRatio = Math.max(0.1, Math.min(0.9, Number(saved.ui.eatRatio)));
@@ -685,6 +775,13 @@ function mergeState(def, saved) {
     /* 洞天子视图：'main' 建筑页 / 'dynasty' 朝代页 */
     out.ui.worldView = saved.ui.worldView === 'dynasty' ? 'dynasty' : 'main';
     out.ui.dynMerge = -1;
+    /* 侧栏分组折叠：只保留当前配置里仍存在的组 id，避免旧档残留无效键 */
+    out.ui.sidebarClosed = {};
+    if (saved.ui.sidebarClosed && typeof saved.ui.sidebarClosed === 'object') {
+      SIDEBAR_GROUPS.forEach(function (g) {
+        if (saved.ui.sidebarClosed[g.id] === true) out.ui.sidebarClosed[g.id] = true;
+      });
+    }
   }
 
   /* 穿越星球：飞行中的物品 / 加速 / 本局收获是瞬态数据，读档一律从空盘开始（防止离线白拿）。

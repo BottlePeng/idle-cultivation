@@ -231,11 +231,16 @@ function invRemove(id, qty) {
   else delete state.inv[id];
 }
 
-/* 出售价 = 物品价值 × 折价比例 ×（聚宝阵加成） */
+/* 当前出售加成倍率：阵法 × 洞天建筑（保持原有乘算口径） */
+function sellBonusMul() {
+  return (1 + formBonus('sell')) * (1 + worldBonus('sell'));
+}
+
+/* 出售价 = 物品价值 × 折价比例 × 出售加成倍率 */
 function sellPrice(id) {
   const it = ITEMS[id];
   if (!it) return 0;
-  return Math.max(1, Math.floor((it.value || 0) * CONFIG.SELL_RATIO * (1 + formBonus('sell')) * (1 + worldBonus('sell'))));
+  return Math.max(1, Math.floor((it.value || 0) * CONFIG.SELL_RATIO * sellBonusMul()));
 }
 
 /* 出售 qty 个物品（qty 为负数表示全部出售） */
@@ -578,8 +583,9 @@ function discDynPost(uid) {
 function discAvailableForPost(role) {
   const want = (typeof role === 'string' && DYNASTY.POST_ORDER.indexOf(role) >= 0) ? role : '';
   return state.disciples.owned.filter(function (inst) {
+    if (discInjured(inst)) return false;
     if (want && discProf(inst) !== want) return false;
-    return !discAssignedTask(inst.uid) && !discDynPost(inst.uid);
+    return !discAssignedTask(inst.uid) && !discDynPost(inst.uid) && dbattleSlotOf(inst.uid) < 0;
   });
 }
 
@@ -599,6 +605,8 @@ function assignDynastyPost(idx, role, uid) {
   }
   if (discAssignedTask(uid)) { logMsg('该信徒正在驻守任务，需先在信徒面板撤下。', 'warn'); return false; }
   if (discDynPost(uid)) { logMsg('该信徒已担任其它朝代职位。', 'warn'); return false; }
+  if (dbattleSlotOf(uid) >= 0) { logMsg('该信徒正在战阵中，需先在战阵面板撤下。', 'warn'); return false; }
+  if (discInjured(inst)) { logMsg('该信徒重伤未愈，需先疗伤后才能上任。', 'warn'); return false; }
   d.posts[role] = uid;
   const cat = findDisciple(inst.id);
   logMsg('「' + (cat ? cat.name : inst.id) + '」（' + discProfName(inst) + '）就任「' + dynastyName(d.dyn) + '」' +
@@ -825,6 +833,68 @@ function discInstance(uid) {
   return null;
 }
 
+/* ============================================ 重伤与疗伤（v2.20.0）
+ * 重伤标记直接存在信徒实例上（inst.injured），跟着信徒走：
+ * 被遣散 / 化道消耗时实例消失，标记自然清干净，不需要单独的状态表。
+ * 缺失该字段 = 健康，旧档无需迁移。
+ * v2.21.0：剩余生命存 inst.hpPct（0~1，缺失 = 满血），跨关卡 / 换动作 / 读档延续；
+ * 只有疗伤能把 hpPct 抬回 1，战阵不再在通关时回满。 */
+function discHpPct(inst) {
+  if (!inst) return 1;
+  if (inst.injured === true) return 0;
+  const v = Number(inst.hpPct);
+  if (!isFinite(v)) return 1;
+  return Math.max(0, Math.min(1, v));
+}
+
+function discInjured(inst) {
+  return !!(inst && (inst.injured === true || discHpPct(inst) <= 0));
+}
+
+/* 疗伤费用预览：按缺失生命比例计费，单次封顶。
+   重伤 = 0 HP（缺失 100% → 60 灵力）；低血按实际缺失比例折算。 */
+function discHealCost(inst) {
+  const lostPct = (1 - discHpPct(inst)) * 100;
+  const spirit = Math.min(DBATTLE.INJURY.SPIRIT_CAP,
+    Math.max(1, Math.ceil(lostPct * DBATTLE.INJURY.SPIRIT_PER_PCT)));
+  const pill = DBATTLE.INJURY.PILL;
+  return {
+    spirit: spirit,
+    pill: pill,
+    pillQty: 1,
+    spiritOk: state.spirit >= spirit,
+    pillOk: invCount(pill) >= 1
+  };
+}
+
+/* 疗伤：灵力 + 1 枚低阶丹药，立即回满；不做定时 / 自然自愈 / 离线恢复。
+   与玩家自身 healWithSpirit()（CONFIG.HEAL_SPIRIT_COST）完全分离，不共用数值与状态。 */
+function healDisciple(uid) {
+  const inst = discInstance(uid);
+  if (!inst) { logMsg('仓库中没有这位信徒。', 'warn'); return false; }
+  if (discHpPct(inst) >= 1) { logMsg('该信徒生命已满，无需疗伤。', 'info'); return false; }
+  const cost = discHealCost(inst);
+  const cat = findDisciple(inst.id);
+  const name = cat ? cat.name : inst.id;
+  if (state.spirit < cost.spirit) {
+    logMsg('灵力不足：为「' + name + '」疗伤需 ✨' + cost.spirit + ' 灵力（当前 ' +
+      Math.floor(state.spirit) + '）。灵力会随时间自然凝聚，可先做其它动作积攒。', 'warn');
+    return false;
+  }
+  if (invCount(cost.pill) < cost.pillQty) {
+    logMsg('丹药不足：为「' + name + '」疗伤需 ' + itemIcon(cost.pill) + itemName(cost.pill) +
+      ' ×1。可炼丹（聚气草×2 + 草药×1）或前往市集·丹药阁购买。', 'warn');
+    return false;
+  }
+  state.spirit -= cost.spirit;
+  invRemove(cost.pill, cost.pillQty);
+  delete inst.injured;
+  delete inst.hpPct;
+  logMsg('以灵力与' + itemIcon(cost.pill) + itemName(cost.pill) + '为「' + name +
+    '」疗伤，生命已回满（灵力 −' + cost.spirit + '）。', 'good');
+  return true;
+}
+
 /* ============================================ 信徒职业（v2.15.0）
  * 8 种职业与朝代职位一一对应，生成时随机且永久固定，不可更改。
  * 只有职业匹配的信徒才能担任对应职位；候选列表与引擎都会双重校验。 */
@@ -949,10 +1019,18 @@ function assignDisciple(taskKey, uid) {
   if (!TASK_ELEM[taskKey]) { logMsg('该任务不支持上阵信徒。', 'warn'); return false; }
   const inst = discInstance(uid);
   if (!inst) { logMsg('仓库中没有这位信徒。', 'warn'); return false; }
+  if (discInjured(inst)) {
+    logMsg('该信徒重伤未愈，需先在信徒 / 战阵面板疗伤后才能驻守任务。', 'warn');
+    return false;
+  }
   const post = discDynPost(uid);
   if (post) {
     logMsg('该信徒正在担任「' + dynastyName(post.d.dyn) + '」' + dynPostName(post.role) +
       '，不可驻守任务。', 'warn');
+    return false;
+  }
+  if (dbattleSlotOf(uid) >= 0) {
+    logMsg('该信徒正在战阵中，需先在战阵面板撤下。', 'warn');
     return false;
   }
   const slots = discipleSlots();
@@ -996,6 +1074,7 @@ function removeDisciple(uid) {
   if (taskKey) delete state.disciples.assign[taskKey];
   const post = discDynPost(uid);
   if (post && post.d.posts) post.d.posts[post.role] = null;
+  dbattleRemoveUid(uid);
   const widowed = daoLivePartnerCount(inst);
   daoWidow(uid);
   const idx = state.disciples.owned.indexOf(inst);
@@ -1561,7 +1640,7 @@ function cycleTick(dt) {
   if (!act) return;
   /* 战斗动作由 combatTick 独立驱动，星球由 planetTick 独立驱动；
    * 二者都不在 ACTIONS/RECIPES 里查表，必须在 cycleTick 显式跳过，否则会被判为无效动作清空 */
-  if (act.skill === 'combat' || act.skill === 'planet' || act.skill === 'tower' || act.skill === 'rift' || act.skill === 'elem' || act.skill === 'riftmon') return;
+  if (act.skill === 'combat' || act.skill === 'planet' || act.skill === 'tower' || act.skill === 'rift' || act.skill === 'elem' || act.skill === 'riftmon' || act.skill === 'dbattle') return;
 
   const def = findActivity(act.skill, act.id);
   if (!def) { state.action = null; state.actionExplicit = false; state.actionTimer = 0; return; }
@@ -2662,9 +2741,10 @@ function startAction(skillId, actionId) {
   }
   if (skillId === 'combat') return;   /* 战斗走 startCombat */
 
-  /* 切换动作前先彻底结束战斗与星球巡航，避免它们在后台继续 */
+  /* 切换动作前先彻底结束战斗、战阵与星球巡航，避免它们在后台继续 */
   planetInterrupt();
   cancelCombat();
+  dbattleReset();
   state.action = { skill: skillId, id: actionId };
   state.actionExplicit = true;   /* 玩家主动开启：读档时才允许恢复 */
   state.actionTimer = 0;
@@ -2689,12 +2769,15 @@ function cancelCombat() {
   c.playerTimer = 0;
   c.monsterTimer = 0;
   c.respawn = 0;
+  /* 战阵是独立战斗系统，切到普通战斗 / 塔 / 裂缝时一并清空其运行时 */
+  dbattleReset();
 }
 
 /* silent=true 时不写日志（材料耗尽中止、切换动作等） */
 function stopAction(silent) {
   planetInterrupt();
   cancelCombat();
+  dbattleReset();
   state.action = null;
   state.actionExplicit = false;
   state.actionTimer = 0;
@@ -2721,7 +2804,7 @@ function startCombat(monsterId) {
 
   const c = state.skills.combat;
   /* 从锁妖塔 / 异界裂缝 / 属性裂缝 / 裂缝怪物切到普通战斗：战况是瞬态，直接清空，不残留目标 */
-  if (c.tower || c.rift >= 0 || c.elem >= 0 || c.riftMon >= 0 || (state.action && (state.action.skill === 'tower' || state.action.skill === 'rift' || state.action.skill === 'elem' || state.action.skill === 'riftmon'))) cancelCombat();
+  if (c.tower || c.rift >= 0 || c.elem >= 0 || c.riftMon >= 0 || (state.action && (state.action.skill === 'tower' || state.action.skill === 'rift' || state.action.skill === 'elem' || state.action.skill === 'riftmon' || state.action.skill === 'dbattle'))) cancelCombat();
   if (state.action && state.action.skill === 'combat' && state.action.id !== monsterId) cancelCombat();
   c.monster = monsterId;
   c.respawn = 0;
@@ -3601,6 +3684,663 @@ function planetTick(dt) {
   }
 }
 
+/* ============================================================ 战阵（v2.16.0）
+ * 10 位信徒编成，自动挑战 60 关妖兽。
+ * - 运行时单位 / 敌人 / 日志只存在 DB 里，不落盘；读档清空进行中的动作。
+ * - 沿用命中 / 闪避 / 减伤公式，但不读玩家 calcStats() 的装备 / 阵法 / 洞天加成。
+ * ========================================================================= */
+const DB = {
+  units: [], enemy: null, log: [],
+  phase: 'idle',            // idle / fight / result
+  timer: 0, mode: 'stage', stage: 1,
+  result: null, resultTimer: 0,
+  aura: { dmg: 0, heal: 0, skill: 0, atk: 0, hp: 0, def: 0, hit: 0, ev: 0 }
+};
+
+function dbattleSlots() {
+  return Math.min(DBATTLE.MAX_SLOTS, hallLevel() * DBATTLE.SLOTS_PER_HALL);
+}
+function dbattleStageClamp(s) {
+  s = Math.floor(Number(s));
+  if (!isFinite(s)) s = 1;
+  return Math.max(1, Math.min(DBATTLE.MAX_STAGE, s));
+}
+function dbattleReqHall(stage) {
+  return Math.min(5, Math.ceil(dbattleStageClamp(stage) / DBATTLE.STAGE_PER_CHAPTER));
+}
+function dbattleSlotProf(idx) {
+  return idx >= DBATTLE.GENERIC_SLOTS ? DBATTLE.PROF_SLOTS[idx - DBATTLE.GENERIC_SLOTS] : '';
+}
+function dbattleRunning() {
+  return !!(state.action && state.action.skill === 'dbattle');
+}
+/* 信徒当前在战阵中的位置；不在阵中返回 -1 */
+function dbattleSlotOf(uid) {
+  const L = state.dbattle && state.dbattle.lineup;
+  if (!L) return -1;
+  for (let i = 0; i < L.length; i++) if (L[i] === uid) return i;
+  return -1;
+}
+function dbattleRemoveUid(uid) {
+  const L = state.dbattle && state.dbattle.lineup;
+  if (!L) return false;
+  let hit = false;
+  for (let i = 0; i < L.length; i++) if (L[i] === uid) { L[i] = null; hit = true; }
+  /* 战斗中撤人会让 HUD 与实时单位错位，直接结束本场，避免幽灵单位 */
+  if (hit && dbattleRunning()) dbattleStop(true);
+  return hit;
+}
+function dbattleLineupCount() {
+  const L = state.dbattle ? state.dbattle.lineup : [];
+  return L.filter(function (uid) { return !!uid; }).length;
+}
+
+/* 读档 / 面板打开时校验：存在、不重复、身份互斥、专位职业匹配、超出解锁位清空 */
+function dbattleValidateLineup() {
+  const d = state.dbattle;
+  if (!d) return;
+  const slots = dbattleSlots();
+  const seen = {};
+  for (let i = 0; i < DBATTLE.MAX_SLOTS; i++) {
+    const uid = d.lineup[i];
+    if (!uid) continue;
+    if (i >= slots) { d.lineup[i] = null; continue; }
+    const inst = discInstance(uid);
+    const prof = dbattleSlotProf(i);
+    const bad = !inst || seen[uid] || discInjured(inst) || !!discAssignedTask(uid) || !!discDynPost(uid) ||
+      (prof && discProf(inst) !== prof);
+    if (bad) { d.lineup[i] = null; continue; }
+    seen[uid] = true;
+  }
+}
+
+/* 编成：只有未驻守任务、未任职位、职业匹配、未在阵中的信徒可入选 */
+function dbattleCanUse(inst, idx) {
+  if (!inst) return false;
+  if (discInjured(inst)) return false;
+  if (discAssignedTask(inst.uid) || discDynPost(inst.uid)) return false;
+  if (dbattleSlotOf(inst.uid) >= 0 && dbattleSlotOf(inst.uid) !== idx) return false;
+  const prof = dbattleSlotProf(idx);
+  return !prof || discProf(inst) === prof;
+}
+function dbattleSetSlot(idx, uid) {
+  idx = Math.floor(Number(idx));
+  if (!(idx >= 0 && idx < dbattleSlots())) { logMsg('该战阵位尚未解锁，升级招贤殿可 +' + DBATTLE.SLOTS_PER_HALL + ' 位。', 'warn'); return false; }
+  const d = state.dbattle;
+  if (!uid) { d.lineup[idx] = null; return true; }
+  const inst = discInstance(uid);
+  if (!inst) { logMsg('仓库中没有这位信徒。', 'warn'); return false; }
+  if (discInjured(inst)) {
+    logMsg('「' + (findDisciple(inst.id) ? findDisciple(inst.id).name : inst.id) +
+      '」重伤未愈，需先在战阵 / 信徒面板疗伤后才能上阵。', 'warn');
+    return false;
+  }
+  if (!dbattleCanUse(inst, idx)) {
+    const prof = dbattleSlotProf(idx);
+    if (prof) logMsg('该位置是「' + dynPostName(prof) + '」专位，只能上阵职业为' + dynPostName(prof) + '的信徒。', 'warn');
+    else logMsg('该信徒正在驻守任务 / 担任职位，或已在其它战阵位。', 'warn');
+    return false;
+  }
+  if (dbattleRunning()) dbattleStop(true);
+  dbattleRemoveUid(uid);
+  d.lineup[idx] = uid;
+  const cat = findDisciple(inst.id);
+  logMsg('「' + (cat ? cat.name : inst.id) + '」进入战阵第 ' + (idx + 1) + ' 位。', 'info');
+  return true;
+}
+function dbattleClearSlot(idx) {
+  idx = Math.floor(Number(idx));
+  if (!(idx >= 0 && idx < DBATTLE.MAX_SLOTS)) return;
+  if (dbattleRunning()) dbattleStop(true);
+  state.dbattle.lineup[idx] = null;
+}
+
+/* 职业光环：同职业最多叠 2 层 */
+function dbattleAura() {
+  const g = { dmg: 0, heal: 0, skill: 0, atk: 0, hp: 0, def: 0, hit: 0, ev: 0 };
+  const counts = {};
+  state.dbattle.lineup.forEach(function (uid) {
+    const inst = discInstance(uid);
+    if (!inst) return;
+    const p = discProf(inst);
+    if (p) counts[p] = (counts[p] || 0) + 1;
+  });
+  Object.keys(counts).forEach(function (p) {
+    const a = DBATTLE.PROF_AURA[p];
+    if (!a) return;
+    g[a.key] += Math.min(DBATTLE.AURA_STACK, counts[p]) * a.per;
+  });
+  return g;
+}
+
+/* 单个信徒的战斗属性 */
+function dbattleUnitStats(inst, slot, aura) {
+  const T = DBATTLE.TIER_BASE[inst.tier] || DBATTLE.TIER_BASE[1];
+  const g = aura || DB.aura;
+  const train = 1 + DBATTLE.TRAIN_PER_LVL * (state.dbattle.trainLvl - 1);
+  const power = 1 + DBATTLE.POWER_MULT * (Number(inst.power) || 0);
+  const mul = power * train;
+  const cat = findDisciple(inst.id);
+  const maxHp = Math.max(1, Math.round(T.hp * mul * (1 + g.hp)));
+  /* 生命延续（v2.21.0）：按实例上存的剩余比例入场，不再每关回满 */
+  const hp = Math.max(0, Math.round(maxHp * discHpPct(inst)));
+  return {
+    uid: inst.uid, slot: slot,
+    name: cat ? cat.name : inst.id, icon: cat ? cat.icon : '🙏',
+    tier: inst.tier, prof: discProf(inst), elem: inst.main || 'earth',
+    maxHp: maxHp, hp: hp,
+    atk: T.atk * mul * (1 + g.atk), def: T.def * mul * (1 + g.def),
+    hit: T.hit * (1 + g.hit), ev: T.ev * (1 + g.ev),
+    interval: T.interval, timer: Math.random() * T.interval * 0.5,
+    cd: 5 + Math.random() * 4, shield: 0, shieldT: 0, defUpT: 0,
+    alive: true
+  };
+}
+
+/* 敌方属性：纯关卡函数，可重复预览 */
+function dbattleEnemy(stage, boss) {
+  const s = dbattleStageClamp(stage);
+  const c = Math.floor((s - 1) / DBATTLE.STAGE_PER_CHAPTER);
+  const E = DBATTLE.ENEMY;
+  const isBoss = (boss == null) ? (s % DBATTLE.BOSS_EVERY === 0) : !!boss;
+  const hp = Math.max(1, Math.round(E.HP_BASE * Math.pow(E.HP_GROW, s - 1) *
+    (1 + E.CHAP_HP * c) * (isBoss ? E.BOSS_HP : 1)));
+  const atk = (E.ATK_BASE + E.ATK_LIN * (s - 1)) * (1 + E.CHAP_ATK * c) * (isBoss ? E.BOSS_ATK : 1);
+  const mob = DBATTLE.MOBS[Math.min(DBATTLE.MOBS.length - 1, c)];
+  return {
+    id: '__db__', name: (isBoss ? '妖将 · ' : '') + mob.name, icon: isBoss ? '👺' : mob.icon,
+    boss: isBoss, stage: s, hp: hp, maxHp: hp,
+    atkMin: Math.max(1, Math.round(atk * 0.85)),
+    atkMax: Math.max(2, Math.round(atk * 1.15)),
+    hit: E.HIT_BASE + E.HIT_LIN * (s - 1),
+    ev: E.EV_BASE + E.EV_LIN * (s - 1),
+    dr: Math.min(E.DR_CAP, E.DR_BASE + E.DR_LIN * (s - 1)),
+    interval: Math.max(E.INT_MIN, E.INT_BASE - E.INT_DECAY * (s - 1)),
+    timer: 0, actions: 0, atkDownT: 0, burnT: 0, burnDps: 0
+  };
+}
+
+/* 奖励：首通给独特资源；重复只给 35% 灵石 + 战修经验 */
+function dbattleReward(stage, first) {
+  const s = dbattleStageClamp(stage);
+  const boss = (s % DBATTLE.BOSS_EVERY === 0);
+  let gold = Math.round(DBATTLE.GOLD_BASE * Math.pow(s, DBATTLE.GOLD_POW) * (boss ? DBATTLE.BOSS_GOLD_MUL : 1));
+  if (!first) gold = Math.round(gold * DBATTLE.REPEAT_GOLD_RATIO);
+  return {
+    stage: s, first: !!first, boss: boss,
+    gold: gold,
+    star: first ? (DBATTLE.STAR_BASE + Math.floor(s / DBATTLE.STAR_PER_STAGES)) * (boss ? 2 : 1) : 0,
+    seed: first ? DBATTLE.SEED_BASE + Math.floor(s / DBATTLE.SEED_PER_STAGES) : 0,
+    food: first ? DBATTLE.WORLD_FOOD_PER_STAGE * s : 0,
+    wood: first ? DBATTLE.WORLD_WOOD_PER_STAGE * s : 0,
+    stone: first ? DBATTLE.WORLD_STONE_PER_STAGE * s : 0,
+    trainXp: DBATTLE.TRAIN_XP_PER_STAGE * s
+  };
+}
+function dbattleDailyReward(stage) {
+  const s = dbattleStageClamp(stage);
+  const c = Math.max(1, Math.ceil(s / DBATTLE.STAGE_PER_CHAPTER));
+  const boss = s % DBATTLE.BOSS_EVERY === 0 ? s : Math.min(DBATTLE.MAX_STAGE, c * DBATTLE.STAGE_PER_CHAPTER);
+  const drop = DBATTLE.BOSS_DROPS[boss];
+  return {
+    stage: s, chapter: c,
+    food: DBATTLE.DAILY.FOOD * c, wood: DBATTLE.DAILY.WOOD * c, stone: DBATTLE.DAILY.STONE * c,
+    seed: DBATTLE.DAILY.SEED, star: DBATTLE.DAILY.STAR,
+    pill: drop ? drop.pill : null
+  };
+}
+function dbattleTrainNeed(lvl) {
+  return Math.round(DBATTLE.TRAIN_XP_BASE * Math.pow(Math.max(1, lvl), DBATTLE.TRAIN_XP_EXP));
+}
+function dbattleAddTrainXp(n) {
+  const d = state.dbattle;
+  if (d.trainLvl >= DBATTLE.TRAIN_MAX) { d.trainXp = 0; return 0; }
+  d.trainXp += Math.max(0, n);
+  let ups = 0;
+  while (d.trainLvl < DBATTLE.TRAIN_MAX && d.trainXp >= dbattleTrainNeed(d.trainLvl)) {
+    d.trainXp -= dbattleTrainNeed(d.trainLvl);
+    d.trainLvl += 1;
+    ups += 1;
+  }
+  if (d.trainLvl >= DBATTLE.TRAIN_MAX) d.trainXp = 0;
+  return ups;
+}
+
+function dbattleLog(text) {
+  DB.log.push(text);
+  while (DB.log.length > DBATTLE.LOG_MAX) DB.log.shift();
+}
+
+function dbattleReset() {
+  /* 任何清理路径（换动作 / 停止 / 连战重置 / 读档）都先把战场剩余生命写回实例，
+     避免用「重开战阵」白嫖回血。 */
+  if (DB.units && DB.units.length) dbattleSyncHp();
+  DB.units = [];
+  DB.enemy = null;
+  DB.log = [];
+  DB.phase = 'idle';
+  DB.timer = 0;
+  DB.result = null;
+  DB.resultTimer = 0;
+  DB.aura = { dmg: 0, heal: 0, skill: 0, atk: 0, hp: 0, def: 0, hit: 0, ev: 0 };
+}
+function dbattleStop(silent) {
+  dbattleReset();
+  if (state.action && state.action.skill === 'dbattle') {
+    state.action = null;
+    state.actionExplicit = false;
+    state.actionTimer = 0;
+    state.actionCur = 0;
+    state.actionWaiting = false;
+  }
+  if (!silent) logMsg('已停止战阵。', 'info');
+}
+
+/* 开始 / 继续 / 停止：占用全局动作槽 */
+function dbattleStart(mode) {
+  mode = (mode === 'daily') ? 'daily' : 'stage';
+  /* 跨日惰性重置：页面长时间开着也要能刷新每日妖王 / 扫荡次数 */
+  const today = checkinDayKey();
+  if (state.dbattle.dayKey !== today) {
+    state.dbattle.dayKey = today;
+    state.dbattle.dailyBoss = false;
+    state.dbattle.sweeps = 0;
+  }
+  if (state.stun > 0) { logMsg('眩晕中，还需 ' + Math.ceil(state.stun) + ' 秒才能行动。', 'warn'); return false; }
+  if (!discipleUnlocked()) { logMsg('尚未营造「招贤殿」，无法开启战阵。', 'warn'); return false; }
+  if (dbattleRunning()) {
+    if (DB.mode === mode) { dbattleStop(false); return false; }
+    dbattleStop(true);
+  }
+  dbattleValidateLineup();
+  if (dbattleLineupCount() <= 0) {
+    const injN = state.disciples.owned.filter(function (x) { return discInjured(x); }).length;
+    logMsg(injN
+      ? '战阵无人可用：' + injN + ' 位信徒重伤未愈，请先在伤兵区疗伤后再战。'
+      : '战阵中还没有信徒，请先编成至少 1 人。', 'warn');
+    return false;
+  }
+
+  const d = state.dbattle;
+  if (mode === 'daily') {
+    if (d.best < DBATTLE.STAGE_PER_CHAPTER) { logMsg('通关第 10 关后才会出现每日妖王。', 'warn'); return false; }
+    if (d.dailyBoss) { logMsg('今日妖王已击败，明日再来。', 'warn'); return false; }
+  } else {
+    if (hallLevel() < dbattleReqHall(d.stage)) {
+      logMsg('第 ' + d.stage + ' 关需要招贤殿 Lv.' + dbattleReqHall(d.stage) + '（当前 Lv.' + hallLevel() + '）。', 'warn');
+      return false;
+    }
+  }
+
+  planetInterrupt();
+  cancelCombat();
+  dbattleReset();
+
+  DB.mode = mode;
+  DB.stage = dbattleStageClamp(d.stage);
+  DB.aura = dbattleAura();
+  DB.units = [];
+  d.lineup.forEach(function (uid, idx) {
+    if (!uid) return;
+    const inst = discInstance(uid);
+    if (!inst) return;
+    const u = dbattleUnitStats(inst, idx);
+    if (u.hp <= 0) return;          /* 重伤防御：绝不带着 0 血入场 */
+    DB.units.push(u);
+  });
+  DB.units.sort(function (a, b) { return a.slot - b.slot; });
+  if (!DB.units.length) {
+    dbattleReset();
+    logMsg('战阵无人可用：编成中的信徒均已重伤，请先疗伤。', 'warn');
+    return false;
+  }
+  DB.enemy = dbattleEnemy(DB.stage, mode === 'daily' ? true : undefined);
+  DB.enemy.timer = DB.enemy.interval * 0.6;
+  DB.phase = 'fight';
+  DB.timer = 0;
+
+  state.action = { skill: 'dbattle', id: mode };
+  state.actionExplicit = true;
+  state.actionTimer = 0;
+  state.actionCur = 0;
+  state.actionWaiting = false;
+
+  dbattleLog('战阵出战：' + DB.units.length + ' 人 vs ' + DB.enemy.name + '（' + (mode === 'daily' ? '每日妖王' : '第 ' + DB.stage + ' 关') + '）');
+  logMsg((mode === 'daily' ? '挑战每日妖王「' : '开始战阵第 ' + DB.stage + ' 关「') + DB.enemy.name + '」。', 'info');
+  return true;
+}
+function dbattleToggle() { dbattleStart('stage'); }
+function dbattleDaily() { dbattleStart('daily'); }
+
+/* 把场上剩余生命写回信徒实例（比例）。跨关卡、切动作、读档都靠它延续。 */
+function dbattleSyncHp() {
+  DB.units.forEach(function (u) {
+    const inst = discInstance(u.uid);
+    if (!inst || !u.maxHp) return;
+    const pct = u.alive ? Math.max(0, Math.min(1, u.hp / u.maxHp)) : 0;
+    if (pct >= 1) delete inst.hpPct;
+    else inst.hpPct = pct;
+  });
+}
+
+/* 场上最低生命：给自动连战血线判断用 */
+function dbattleLowHp() {
+  let low = null;
+  state.dbattle.lineup.forEach(function (uid) {
+    const inst = discInstance(uid);
+    if (!inst) return;
+    const pct = discHpPct(inst);
+    if (!low || pct < low.pct) {
+      const cat = findDisciple(inst.id);
+      low = { uid: uid, name: cat ? cat.name : inst.id, pct: pct };
+    }
+  });
+  return low;
+}
+
+/* 扫荡：立即结算已通关的最高关卡，不占动作槽，每天 3 次 */
+function dbattleSweep() {
+  const d = state.dbattle;
+  const today = checkinDayKey();
+  if (d.dayKey !== today) { d.dayKey = today; d.dailyBoss = false; d.sweeps = 0; }
+  if (d.best <= 0) { logMsg('尚未通关任何关卡，无法扫荡。', 'warn'); return false; }
+  if (d.sweeps >= DBATTLE.SWEEP_PER_DAY) { logMsg('今日扫荡次数已用完（' + DBATTLE.SWEEP_PER_DAY + ' 次）。', 'warn'); return false; }
+  const s = d.best;
+  const rw = dbattleReward(s, true);
+  /* 扫荡只发 35% 灵石 + 战修经验，不发首通物品 */
+  const gold = Math.round(rw.gold * DBATTLE.REPEAT_GOLD_RATIO);
+  state.gold += gold;
+  const ups = dbattleAddTrainXp(rw.trainXp);
+  d.sweeps += 1;
+  logMsg('扫荡第 ' + s + ' 关：灵石 +' + gold + '、战修经验 +' + rw.trainXp +
+    (ups ? '（战修升至 Lv.' + d.trainLvl + '）' : '') + '。今日剩余 ' + (DBATTLE.SWEEP_PER_DAY - d.sweeps) + ' 次。', 'good');
+  return true;
+}
+
+/* 目标选择：前排 70% / 后排 30%，土主属性权重 ×2.5 */
+function dbattlePickTarget() {
+  const alive = DB.units.filter(function (u) { return u.alive; });
+  if (!alive.length) return null;
+  const front = alive.filter(function (u) { return u.slot < DBATTLE.GENERIC_SLOTS; });
+  const back = alive.filter(function (u) { return u.slot >= DBATTLE.GENERIC_SLOTS; });
+  const pool = front.length ? front.concat(back) : back;
+  let total = 0;
+  const ws = pool.map(function (u) {
+    let w = (u.slot < DBATTLE.GENERIC_SLOTS)
+      ? DBATTLE.WATER_SIZE.front / Math.max(1, front.length)
+      : DBATTLE.WATER_SIZE.back / Math.max(1, back.length);
+    if (u.elem === 'earth') w *= DBATTLE.WATER_SIZE.earthTaunt;
+    total += w;
+    return w;
+  });
+  let r = Math.random() * total;
+  for (let i = 0; i < pool.length; i++) { r -= ws[i]; if (r <= 0) return pool[i]; }
+  return pool[pool.length - 1];
+}
+
+function dbattleUnitDamage(u, e, mult, pierce) {
+  if (Math.random() > hitChance(u.hit, e.ev)) return 0;
+  const dr = Math.max(0, e.dr - (pierce || 0));
+  let dmg = u.atk * (mult == null ? 1 : mult) * (0.85 + Math.random() * 0.3) * (1 - dr);
+  dmg *= (1 + DB.aura.dmg);
+  if (mult != null && mult !== 1) dmg *= (1 + DB.aura.skill);
+  return Math.max(1, Math.round(dmg));
+}
+
+/* 五行技能：冷却 9 秒 */
+function dbattleCastSkill(u) {
+  const e = DB.enemy;
+  if (!e || e.hp <= 0) return;
+  const sk = DBATTLE.ELEM_SKILL[u.elem] || DBATTLE.ELEM_SKILL.earth;
+  u.cd = DBATTLE.SKILL_CD;
+  if (u.elem === 'wood') {
+    let lowest = null;
+    DB.units.forEach(function (x) {
+      if (!x.alive) return;
+      if (!lowest || x.hp / x.maxHp < lowest.hp / lowest.maxHp) lowest = x;
+    });
+    if (!lowest) return;
+    const heal = Math.round((u.atk * sk.dmg + lowest.maxHp * sk.healPct) * (1 + DB.aura.heal));
+    const before = lowest.hp;
+    lowest.hp = Math.min(lowest.maxHp, lowest.hp + heal);
+    dbattleLog('🌿 ' + u.name + ' 回春，' + lowest.name + ' 回复 ' + Math.round(lowest.hp - before));
+    return;
+  }
+  if (u.elem === 'earth') {
+    u.shield = Math.round(u.maxHp * sk.shield);
+    u.shieldT = sk.dur;
+    u.defUpT = sk.dur;
+    dbattleLog('🛡️ ' + u.name + ' 厚土，获得 ' + u.shield + ' 护盾');
+    return;
+  }
+  const dmg = dbattleUnitDamage(u, e, sk.dmg, sk.pierce || 0);
+  if (dmg > 0) e.hp -= dmg;
+  if (u.elem === 'metal') dbattleLog('⚔️ ' + u.name + ' 破锋，造成 ' + dmg);
+  else if (u.elem === 'water') {
+    e.atkDownT = Math.max(e.atkDownT, sk.dur);
+    dbattleLog('💧 ' + u.name + ' 寒潮，造成 ' + dmg + '，敌方攻击下降');
+  } else if (u.elem === 'fire') {
+    e.burnT = Math.max(e.burnT, sk.dur);
+    e.burnDps = Math.max(e.burnDps, u.atk * sk.burn * (1 + DB.aura.skill));
+    dbattleLog('🔥 ' + u.name + ' 焚身，造成 ' + dmg + '，附加灼烧');
+  }
+  if (e.hp <= 0) dbattleWin();
+}
+
+/* 单位倒下：实例标重伤 + 立刻清空战阵位（不是幽灵队员）。
+   清位后自动连战 / 再次挑战都不会带上伤兵；场上无人时由 dbattleTick 判负。 */
+function dbattleInjureUnit(u) {
+  if (!u) return;
+  const inst = discInstance(u.uid);
+  if (inst) { inst.injured = true; inst.hpPct = 0; }
+  const L = state.dbattle && state.dbattle.lineup;
+  if (L && u.slot >= 0 && u.slot < L.length && L[u.slot] === u.uid) L[u.slot] = null;
+}
+
+/* 敌方行动：普通单体；Boss 每第 4 次行动追加全体 0.8× */
+function dbattleEnemyStrike(mult, all) {
+  const e = DB.enemy;
+  if (!e) return;
+  const enrage = 1 + Math.min(DBATTLE.ENRAGE_CAP - 1,
+    Math.max(0, DB.timer - DBATTLE.ENRAGE_AT) * DBATTLE.ENRAGE_PER_SEC);
+  const atkDown = e.atkDownT > 0 ? (1 - DBATTLE.ELEM_SKILL.water.atkDown) : 1;
+  const targets = all ? DB.units.filter(function (u) { return u.alive; }) : [dbattlePickTarget()];
+  targets.forEach(function (u) {
+    if (!u || !u.alive) return;
+    if (Math.random() > hitChance(e.hit, u.ev)) return;
+    let dmg = rollRange(e.atkMin, e.atkMax) * mult * enrage * atkDown;
+    const def = u.def * (u.defUpT > 0 ? (1 + DBATTLE.ELEM_SKILL.earth.defUp) : 1);
+    dmg *= (1 - Math.min(0.75, def / (def + 140)));
+    dmg = Math.max(1, Math.round(dmg));
+    if (u.shieldT > 0 && u.shield > 0) {
+      const absorb = Math.min(u.shield, dmg);
+      u.shield -= absorb;
+      dmg -= absorb;
+    }
+    if (dmg > 0) u.hp -= dmg;
+    if (u.hp <= 0) {
+      u.hp = 0;
+      u.alive = false;
+      dbattleInjureUnit(u);
+      dbattleLog('💀 ' + u.name + ' 重伤倒下，自动下阵');
+    }
+  });
+  if (all) dbattleLog('👺 ' + e.name + ' 横扫全体');
+}
+
+/* 首通 / 妖王掉落：背包满时寄存到 pending，腾位后自动入库，避免一次性奖励丢失 */
+function dbattleGiveItem(id) {
+  if (!id || !ITEMS[id]) return false;
+  if (invAdd(id, 1)) return true;
+  state.dbattle.pending = state.dbattle.pending || [];
+  state.dbattle.pending.push(id);
+  return false;
+}
+function dbattleFlushPending() {
+  const d = state.dbattle;
+  if (!d || !d.pending || !d.pending.length) return;
+  const left = [];
+  d.pending.forEach(function (id) {
+    if (invAdd(id, 1)) logMsg('背包腾出空间，战阵掉落「' + itemName(id) + '」已入库。', 'good');
+    else left.push(id);
+  });
+  d.pending = left;
+}
+
+function dbattleWin() {
+  if (DB.phase !== 'fight') return;
+  dbattleSyncHp();                    /* 胜利不回血：把剩余生命写回实例 */
+  const e = DB.enemy;
+  if (e) e.hp = Math.max(0, e.hp);
+  DB.phase = 'result';
+  DB.result = { win: true, stage: DB.stage, mode: DB.mode };
+  DB.resultTimer = 1.2;
+  const d = state.dbattle;
+  d.stats.wins += 1;
+
+  if (DB.mode === 'daily') {
+    const rw = dbattleDailyReward(DB.stage);
+    const cap = worldCap(worldLevel());
+    state.world.res.food = clamp(state.world.res.food + rw.food, 0, cap.food);
+    state.world.res.wood = clamp(state.world.res.wood + rw.wood, 0, cap.wood);
+    state.world.res.stone = clamp(state.world.res.stone + rw.stone, 0, cap.stone);
+    state.seed = (state.seed || 0) + rw.seed;
+    state.stardust = (state.stardust || 0) + rw.star;
+    d.dayKey = checkinDayKey();
+    d.dailyBoss = true;
+    let extra = '';
+    if (rw.pill && ITEMS[rw.pill]) {
+      if (dbattleGiveItem(rw.pill)) extra = '、' + itemIcon(rw.pill) + itemName(rw.pill);
+      else extra = '（背包已满，丹药已寄存，腾位后自动入库）';
+    }
+    logMsg('击败每日妖王！粮食 +' + rw.food + '、木材 +' + rw.wood + '、石料 +' + rw.stone +
+      '、生命之种 +' + rw.seed + '、星砂 +' + rw.star + extra + '。', 'good');
+    return;
+  }
+
+  const s = DB.stage;
+  const first = !d.cleared[s];
+  const rw = dbattleReward(s, first);
+  state.gold += rw.gold;
+  if (rw.star) state.stardust = (state.stardust || 0) + rw.star;
+  if (rw.seed) state.seed = (state.seed || 0) + rw.seed;
+  if (rw.food || rw.wood || rw.stone) {
+    const cap = worldCap(worldLevel());
+    state.world.res.food = clamp(state.world.res.food + rw.food, 0, cap.food);
+    state.world.res.wood = clamp(state.world.res.wood + rw.wood, 0, cap.wood);
+    state.world.res.stone = clamp(state.world.res.stone + rw.stone, 0, cap.stone);
+  }
+  const ups = dbattleAddTrainXp(rw.trainXp);
+  const drops = [];
+  if (first) {
+    d.cleared[s] = true;
+    const drop = rw.boss ? DBATTLE.BOSS_DROPS[s] : null;
+    if (drop) {
+      if (drop.pill && ITEMS[drop.pill]) {
+        if (dbattleGiveItem(drop.pill)) drops.push(itemIcon(drop.pill) + itemName(drop.pill));
+      }
+      if (drop.equip && ITEMS[drop.equip]) {
+        if (dbattleGiveItem(drop.equip)) drops.push(itemIcon(drop.equip) + itemName(drop.equip));
+      }
+    }
+  }
+  d.best = Math.max(d.best, s);
+  if (s === d.stage && s < DBATTLE.MAX_STAGE) d.stage = s + 1;
+  logMsg('战阵第 ' + s + ' 关胜利：灵石 +' + rw.gold +
+    (rw.star ? '、星砂 +' + rw.star : '') + (rw.seed ? '、生命之种 +' + rw.seed : '') +
+    (rw.food ? '、粮食 +' + rw.food : '') + (rw.wood ? '、木材 +' + rw.wood : '') +
+    (rw.stone ? '、石料 +' + rw.stone : '') +
+    '、战修经验 +' + rw.trainXp + (ups ? '（战修升至 Lv.' + d.trainLvl + '）' : '') +
+    (drops.length ? '、首通掉落 ' + drops.join('、') : '') + '。', first ? 'good' : 'info');
+}
+
+function dbattleLose() {
+  if (DB.phase !== 'fight') return;
+  dbattleSyncHp();
+  DB.phase = 'result';
+  DB.result = { win: false, stage: DB.stage, mode: DB.mode };
+  DB.resultTimer = 1.5;
+  state.dbattle.stats.losses += 1;
+  dbattleLog('战阵全灭');
+  logMsg('战阵在第 ' + DB.stage + ' 关全灭。不扣资源、不掉关；倒下的信徒已重伤，需疗伤后才能再战。', 'warn');
+}
+
+function dbattleTick(dt) {
+  if (!state || OFFLINE_MODE) return;
+  dbattleFlushPending();
+  if (!dbattleRunning()) {
+    if (DB.phase !== 'idle') dbattleReset();
+    return;
+  }
+  if (DB.phase === 'result') {
+    DB.resultTimer -= dt;
+    if (DB.resultTimer <= 0) {
+      const win = DB.result && DB.result.win;
+      if (win && DB.mode === 'stage' && state.dbattle.autoNext) {
+        /* 血线保护：任一在场信徒低于阈值就暂停连战，避免低血自动送进下一关 */
+        const low = dbattleLowHp();
+        if (low && low.pct < DBATTLE.AUTO_MIN_HP_PCT) {
+          dbattleStop(true);
+          logMsg('自动连战已暂停：「' + low.name + '」仅剩 ' + Math.round(low.pct * 100) +
+            '% 生命，继续可能重伤。可先疗伤或调整编成后再手动挑战。', 'warn');
+        } else {
+          /* 连战：先释放旧动作，再以剩余生命进入下一关（不能走 dbattleStart 的「再点停止」分支） */
+          state.action = null;
+          state.actionExplicit = false;
+          dbattleReset();
+          dbattleStart('stage');
+        }
+      } else {
+        dbattleStop(true);
+      }
+    }
+    return;
+  }
+  if (DB.phase !== 'fight') return;
+  const e = DB.enemy;
+  if (!e) { dbattleStop(true); return; }
+
+  DB.timer += dt;
+  if (e.atkDownT > 0) e.atkDownT = Math.max(0, e.atkDownT - dt);
+  if (e.burnT > 0) {
+    e.burnT = Math.max(0, e.burnT - dt);
+    e.hp -= e.burnDps * dt;
+    if (e.hp <= 0) { dbattleWin(); return; }
+  }
+
+  /* 信徒：技能优先，然后普攻 */
+  for (let i = 0; i < DB.units.length; i++) {
+    const u = DB.units[i];
+    if (!u.alive) continue;
+    if (u.shieldT > 0) u.shieldT = Math.max(0, u.shieldT - dt);
+    if (u.defUpT > 0) u.defUpT = Math.max(0, u.defUpT - dt);
+    u.cd -= dt;
+    if (u.cd <= 0) dbattleCastSkill(u);
+    if (DB.phase !== 'fight') return;
+    u.timer += dt;
+    let guard = 0;
+    while (u.timer >= u.interval && guard++ < 20) {
+      u.timer -= u.interval;
+      const dmg = dbattleUnitDamage(u, e, 1, 0);
+      if (dmg > 0) e.hp -= dmg;
+      if (e.hp <= 0) { dbattleWin(); return; }
+    }
+  }
+
+  /* 敌方 */
+  e.timer += dt;
+  let guard = 0;
+  while (e.timer >= e.interval && guard++ < 20) {
+    e.timer -= e.interval;
+    e.actions += 1;
+    if (e.boss && e.actions % 4 === 0) dbattleEnemyStrike(0.8, true);
+    else dbattleEnemyStrike(1, false);
+    if (!DB.units.some(function (u) { return u.alive; })) { dbattleLose(); return; }
+  }
+  /* 每帧把剩余生命写回实例：切动作 / 掉线 / 关闭页面都不会丢掉当前血量 */
+  dbattleSyncHp();
+}
+
 /* ------------------------------------------------------------------ 主循环 */
 function tick(dt) {
   if (!state) return;
@@ -3611,6 +4351,7 @@ function tick(dt) {
   riftMonTick();
   cycleTick(dt);
   combatTick(dt);
+  dbattleTick(dt);
   planetTick(dt);
   autoEatTick();
   clampHp();

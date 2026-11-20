@@ -33,11 +33,24 @@ function handleClick(e) {
       /* 星球已改为动作槽行为：仅切面板不启停，由面板按钮控制 */
       break;
 
+    /* 侧栏分组：折叠 / 展开（状态落盘，重绘不会覆盖） */
+    case 'sbgroup': {
+      const gid = el.dataset.id;
+      if (!state.ui.sidebarClosed) state.ui.sidebarClosed = {};
+      if (!SIDEBAR_GROUPS.some(function (g) { return g.id === gid; })) break;
+      state.ui.sidebarClosed[gid] = !state.ui.sidebarClosed[gid];
+      saveState();
+      renderSidebar();
+      updateBars();
+      return;
+    }
+
     /* 问道指引：前往当前步骤 / 打开清单 / 跳过 / 收起 / 重新开启 */
     case 'guidego': {
       const step = guideCurrent();
       if (step) {
         state.ui.active = step.tab;
+        sidebarReveal(step.tab);
         if (step.tab === 'planet') state.ui.planetView = 'main';
         if (step.tab === 'bag' || step.tab === 'shop') guideFlag(step.tab);
       }
@@ -46,6 +59,7 @@ function handleClick(e) {
     }
     case 'guidelist':
       state.ui.active = 'guide';
+      sidebarReveal('guide');
       hideInvPopover();
       break;
     case 'guideskip':
@@ -77,6 +91,7 @@ function handleClick(e) {
     case 'devopen':
       if (!DEV.unlocked) { renderAll(); return; }
       state.ui.active = 'devtools';
+      sidebarReveal('devtools');
       _devDirty = true;
       hideInvPopover();
       break;
@@ -161,6 +176,7 @@ function handleClick(e) {
     /* 面板跳转（星球面板 → 洞天秘境营造引力塔） */
     case 'goto':
       state.ui.active = el.dataset.skill;
+      sidebarReveal(el.dataset.skill);
       if (id && findTerrain(id)) state.ui.worldTerrain = id;
       hideInvPopover();
       break;
@@ -177,6 +193,17 @@ function handleClick(e) {
     /* 锁妖塔：开始/停止挑战、领取当前层奖励（同属单一动作槽） */
     case 'towerstart': towerToggle(); renderAll(); updateTower(true); return;
     case 'towerclaim': towerClaim(); renderAll(); updateTower(true); return;
+
+    /* 战阵：挑战 / 每日妖王 / 扫荡 / 自动连战 / 撤下 */
+    case 'dbstart': dbattleToggle(); renderAll(); updateDBattle(true); return;
+    case 'dbdaily': dbattleDaily(); renderAll(); updateDBattle(true); return;
+    case 'dbsweep': dbattleSweep(); renderAll(); updateDBattle(true); return;
+    case 'dbauto':
+      state.dbattle.autoNext = !state.dbattle.autoNext;
+      renderAll(); updateDBattle(true); return;
+    case 'dbclear':
+      dbattleClearSlot(Number(el.dataset.idx));
+      renderAll(); updateDBattle(true); return;
 
     case 'stop': stopAction(); break;
 
@@ -308,6 +335,14 @@ function handleClick(e) {
     /* 信徒：招募 / 上阵（下拉选择）/ 撤下 / 遣散（二次确认） */
     case 'recruit': recruitDisciple(); break;
     case 'dunassign': unassignDisciple(el.dataset.task || ''); break;
+    /* 信徒重伤：消耗灵力 + 1 枚低阶丹药，立即恢复；不走玩家自身疗伤 */
+    case 'disc_heal':
+      healDisciple(el.dataset.uid || '');
+      saveState();
+      renderAll();
+      updateDiscipleState();
+      updateDBattle(true);
+      return;
     case 'deldisc': {
       const inst = discInstance(el.dataset.uid || '');
       if (inst) {
@@ -444,6 +479,12 @@ function bindEvents() {
       }
       return;
     }
+    if (t.dataset && t.dataset.act === 'dbslot') {
+      dbattleSetSlot(Number(t.dataset.idx), t.value || '');
+      renderAll();
+      updateDBattle(true);
+      return;
+    }
     if (t.dataset && t.dataset.act === 'dassign') {
       if (t.value) assignDisciple(t.dataset.task || '', t.value);
       else unassignDisciple(t.dataset.task || '');
@@ -501,6 +542,37 @@ function startLoop() {
   setInterval(saveState, CONFIG.AUTOSAVE_MS);
 }
 
+/* ------------------------------------------------------- 全局滚动条淡出
+ * 只做一件事：滚动时给容器加 .is-scrolling，停手 900ms 后移除。
+ * 用 document 捕获阶段统一接管（scroll 不冒泡但会经过捕获），
+ * 因此 #content / #sidebar / #right / 弹窗 / 背包 / 后续新增容器都生效，
+ * 不需要逐个绑定，也不参与 setHTML / updateBars 的渲染流程。 */
+const _scrollFade = { active: new WeakSet(), timers: new WeakMap() };
+
+function markScrolling(el) {
+  if (!el || el.nodeType !== 1) return;
+  if (!_scrollFade.active.has(el)) {
+    _scrollFade.active.add(el);
+    el.classList.add('is-scrolling');
+  }
+  const old = _scrollFade.timers.get(el);
+  if (old) clearTimeout(old);
+  _scrollFade.timers.set(el, setTimeout(function () {
+    _scrollFade.active.delete(el);
+    _scrollFade.timers.delete(el);
+    el.classList.remove('is-scrolling');
+  }, 900));
+}
+
+function initScrollFade() {
+  document.addEventListener('scroll', function (e) {
+    const t = e.target;
+    if (t === document) markScrolling(document.documentElement);
+    else if (t && t.nodeType === 1) markScrolling(t);
+    else if (document.scrollingElement) markScrolling(document.scrollingElement);
+  }, { capture: true, passive: true });
+}
+
 function boot() {
   /* 版本号：唯一来源是 data.js 的 VERSION，界面角标与窗口标题同步 */
   const ver = (typeof VERSION === 'string' && VERSION) ? VERSION : '0.0.0';
@@ -514,6 +586,9 @@ function boot() {
   const offlineSeconds = loadState();
   clampHp();
   checkTasks();
+  /* 战阵：读档不恢复进行中的战斗；编成做一次身份 / 职业 / 解锁位校验 */
+  dbattleReset();
+  dbattleValidateLineup();
 
   let report = null;
   if (offlineSeconds > 3) {
@@ -530,6 +605,7 @@ function boot() {
   if (report) renderOfflineReport(report);
 
   bindEvents();
+  initScrollFade();
   startLoop();
 }
 

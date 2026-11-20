@@ -12,7 +12,7 @@
      minor++  机制更新（新增/改动机制，影响存档），patch 归零
      major++  大型更新（DLC、全新机制，需重开游戏），minor/patch 归零
    改这里用 `node tools/version.js patch|minor|major`，打包前会自动同步。 */
-const VERSION = '2.15.0';
+const VERSION = '2.21.0';
 
 /* =========================================================================
  * 兑换码（集中配置）
@@ -410,6 +410,20 @@ const SKILLS = {
 };
 
 const SKILL_ORDER = ['woodcutting', 'fishing', 'mining', 'smelting', 'crafting', 'herbalism', 'alchemy', 'combat', 'cultivation', 'formation', 'farming', 'thieving'];
+
+/* =========================================================================
+ * 侧栏分组（v2.17.0）：只描述「哪个入口属于哪一组」，不参与具体按钮渲染。
+ * 新增入口时把 tab id 加进对应组的 items 即可；未归组的新技能会自动落进
+ * 「其他」组，不会从侧栏消失。组的折叠状态存 state.ui.sidebarClosed。
+ * ========================================================================= */
+const SIDEBAR_GROUPS = [
+  { id: 'main', name: '主要', icon: '📌', items: ['tasks', 'checkin', 'guide', 'bag', 'shop', 'planet'] },
+  { id: 'cultivate', name: '修炼', icon: '🧘', items: ['cultivation', 'formation'] },
+  { id: 'combat', name: '战斗', icon: '⚔️', items: ['combat', 'tower', 'dbattle'] },
+  { id: 'produce', name: '生产', icon: '🪓', items: ['woodcutting', 'fishing', 'mining', 'smelting', 'crafting', 'herbalism', 'alchemy', 'farming', 'thieving'] },
+  { id: 'world', name: '洞天与朝代', icon: '🏯', items: ['world', 'disciples'] },
+  { id: 'system', name: '系统', icon: '🔧', items: ['settings', 'devtools'] }
+];
 
 /* =========================================================================
  * 采集 / 修炼动作（无消耗）
@@ -1524,11 +1538,38 @@ const SHOPS = [
   }
 ];
 
-/* 市集售价：未指定 price 时按物品价值加价 1.8 倍 */
+/* 市集基准进价覆盖：这四种是炼虚丹的全部原料。
+   仅按 1.8×价值定价时，材料总价约 4,440 < 成品出售价 8,800，
+   形成「买料 → 炼丹 → 卖丹」的无风险套利；这里把基准价抬到材料总价约 8,980。 */
+const SHOP_PRICE_BASE = {
+  ore_ling: 100,
+  ingot_xuan: 120,
+  herb_ying: 1100,
+  herb_ning: 450
+};
+
+/* 市集行情倍率：进货价与出售价使用同一套阵法 / 洞天出售加成，
+   避免高加成时「低价买料、高价卖成品」重新出现套利。 */
+function shopMarketMul() {
+  return (typeof sellBonusMul === 'function') ? sellBonusMul() : 1;
+}
+
+/* 市集售价：未指定 price 时按物品价值加价 1.8 倍；
+   种子按成熟后直接出售的收益定价，再上浮 10%，买种→收获→卖果不再为正收益；
+   所有进货价再乘以当前市集行情倍率。 */
 function shopPrice(item) {
-  if (item.price) return Math.floor(item.price);
+  if (item.price) return Math.max(1, Math.ceil(item.price * shopMarketMul()));
   const it = ITEMS[item.id];
-  return Math.max(1, Math.floor((it ? it.value : 1) * 1.8));
+  let base = Math.max(1, Math.floor((it ? it.value : 1) * 1.8));
+  if (SHOP_PRICE_BASE[item.id]) base = SHOP_PRICE_BASE[item.id];
+  if (it && it.type === 'seed') {
+    const seed = findSeed(item.id);
+    if (seed && ITEMS[seed.outId]) {
+      const harvest = Math.max(1, Math.floor((ITEMS[seed.outId].value || 0) * CONFIG.SELL_RATIO)) * seed.yield;
+      base = Math.max(base, Math.ceil(harvest * 1.1));
+    }
+  }
+  return Math.max(1, Math.ceil(base * shopMarketMul()));
 }
 
 function findShop(id) {
@@ -2071,7 +2112,7 @@ const BUILDINGS = [
     costLv1: { gold: 9000, wood: 400, stone: 400 }, out: null },
   { id: 'summonhall', name: '招贤殿', icon: '🏛️', color: '#b98ce0', terrain: 'mystic', req: 1,
     special: 'disciple',
-    desc: '广纳信徒，信徒可入驻上阵；每级信徒仓库 +3，并解锁更高品阶的招募。',
+    desc: '广纳信徒，信徒可入驻任务 / 职位 / 战阵；每级信徒仓库 +6、战阵位 +2（至多 10），并解锁更高品阶的招募。',
     cost: { gold: 700, wood: 80, stone: 80 }, out: null }
 ];
 
@@ -2081,9 +2122,11 @@ const BUILDINGS = [
  * 总数（仓库 + 上阵）受招贤殿等级限制；品阶上限同样由招贤殿等级决定。
  * ========================================================================= */
 const DISCIPLE = {
-  SLOTS_PER_LVL: 1,      // 上阵位数 = 招贤殿等级 × 该值（未建造时为 0，即无法上阵）
-  BASE_STORE: 2,         // 招贤殿 Lv.1 时的信徒总容量（含上阵）
-  STORE_PER_LVL: 3,      // 每提升一级 +3 容量
+  SLOTS_PER_LVL: 1,      // 任务上阵位数 = 招贤殿等级 × 该值（未建造时为 0，即无法上阵）
+  /* v2.16.0 容量曲线：10 战阵 + 5 任务 + 8 职位 = 23 位。
+     Lv.5 = 8 + 6×4 = 32，单朝代满编仍余 9 格；两朝满编 31 位需继续升级殿堂。 */
+  BASE_STORE: 8,         // 招贤殿 Lv.1 时的信徒总容量（含上阵）
+  STORE_PER_LVL: 6,      // 每提升一级 +6 容量
   RECRUIT_BASE: 600,     // 首次招募的灵石花费
   RECRUIT_GROW: 1.12,    // 每多一位信徒，招募费 ×1.12
   /* 索引 = 招贤殿等级 − 1，值 = 可招募的最高品阶（超出表长则取末项） */
@@ -2105,6 +2148,128 @@ const DISCIPLE_TIERS = {
   3: { name: '仙品', color: '#c58ae0', weight: 12 },
   4: { name: '神品', color: '#e0b060', weight: 3 }
 };
+
+/* =========================================================================
+ * 战阵（v2.16.0）：10 位信徒编成，自动挑战 60 关妖兽。
+ * - 0~4 为通用位（前排），5~9 为职业专位，依次对应 PROF_SLOTS；
+ * - 战阵独立于任务席位 / 朝代职位，一名信徒只能有一种身份；
+ * - 沿用现有命中 / 闪避 / 减伤公式，但不读玩家 calcStats()。
+ * ========================================================================= */
+const DBATTLE = {
+  MAX_STAGE: 60,
+  MAX_SLOTS: 10,
+  GENERIC_SLOTS: 5,
+  PROF_SLOTS: ['emperor', 'empress', 'chancellor', 'general', 'consort'],
+  SLOTS_PER_HALL: 2,          // 招贤殿每级解锁 2 位（Lv.5 满 10）
+  STAGE_PER_CHAPTER: 10,
+  BOSS_EVERY: 10,
+
+  /* 信徒品阶基础值（战斗口径，与任务加成完全分离） */
+  TIER_BASE: {
+    1: { hp: 70, atk: 7, def: 2, hit: 10, ev: 6, interval: 2.8 },
+    2: { hp: 105, atk: 10, def: 3, hit: 13, ev: 8, interval: 2.7 },
+    3: { hp: 150, atk: 14, def: 5, hit: 17, ev: 11, interval: 2.6 },
+    4: { hp: 210, atk: 19, def: 7, hit: 21, ev: 14, interval: 2.5 }
+  },
+  POWER_MULT: 4,              // (1 + 4 × power)
+  TRAIN_PER_LVL: 0.02,        // 战修每级 +2% 生命 / 攻击 / 防御
+  TRAIN_MAX: 30,
+  TRAIN_XP_BASE: 50,
+  TRAIN_XP_EXP: 1.4,
+  SKILL_CD: 9,                // 五行技能冷却
+  ENRAGE_AT: 60,              // 战斗超过 60 秒进入狂暴
+  ENRAGE_PER_SEC: 0.03,
+  ENRAGE_CAP: 2.0,
+
+  /* 职业团队光环：每层加成，同职业最多 2 层 */
+  PROF_AURA: {
+    emperor: { key: 'dmg', per: 0.05 },
+    empress: { key: 'heal', per: 0.12 },
+    chancellor: { key: 'skill', per: 0.08 },
+    general: { key: 'atk', per: 0.10 },
+    consort: { key: 'hp', per: 0.08 },
+    grandMarshal: { key: 'def', per: 0.08 },
+    rightMarshal: { key: 'hit', per: 0.08 },
+    leftMarshal: { key: 'ev', per: 0.08 }
+  },
+  AURA_STACK: 2,
+
+  /* 敌方成长：纯关卡函数，便于预览 */
+  ENEMY: {
+    HP_BASE: 45, HP_GROW: 1.075, CHAP_HP: 0.12, BOSS_HP: 1.45,
+    ATK_BASE: 3, ATK_LIN: 0.18, CHAP_ATK: 0.08, BOSS_ATK: 1.25,
+    HIT_BASE: 8, HIT_LIN: 0.5, EV_BASE: 4, EV_LIN: 0.4,
+    DR_BASE: 0.02, DR_LIN: 0.003, DR_CAP: 0.30,
+    INT_BASE: 3.0, INT_DECAY: 0.008, INT_MIN: 2.0
+  },
+
+  /* 敌人名称：按章节取，Boss 加「妖将」前缀 */
+  MOBS: [
+    { name: '山魈', icon: '🐒' },
+    { name: '赤炼蛇', icon: '🐍' },
+    { name: '铁背熊', icon: '🐻' },
+    { name: '幽影狼', icon: '🐺' },
+    { name: '蚀骨蛛', icon: '🕷️' },
+    { name: '天罡魔', icon: '👹' }
+  ],
+
+  /* 五行技能：dmg = 攻击倍率；其余字段由引擎解释 */
+  ELEM_SKILL: {
+    metal: { name: '破锋', icon: '⚔️', dmg: 1.6, pierce: 0.2 },
+    wood: { name: '回春', icon: '🌿', dmg: 1.0, healPct: 0.08 },
+    water: { name: '寒潮', icon: '💧', dmg: 0.7, atkDown: 0.15, dur: 4 },
+    fire: { name: '焚身', icon: '🔥', dmg: 1.0, burn: 0.25, dur: 4 },
+    earth: { name: '厚土', icon: '🛡️', shield: 0.18, defUp: 0.25, dur: 6 }
+  },
+  WATER_SIZE: { front: 0.7, back: 0.3, earthTaunt: 2.5 },
+
+  /* 奖励：首通给独特资源，重复只给 35% 灵石 + 战修经验 */
+  GOLD_BASE: 15,
+  GOLD_POW: 1.15,
+  BOSS_GOLD_MUL: 2,
+  REPEAT_GOLD_RATIO: 0.35,
+  TRAIN_XP_PER_STAGE: 10,
+  STAR_BASE: 1,
+  STAR_PER_STAGES: 5,
+  SEED_BASE: 1,
+  SEED_PER_STAGES: 20,
+  WORLD_FOOD_PER_STAGE: 10,
+  WORLD_WOOD_PER_STAGE: 12,
+  WORLD_STONE_PER_STAGE: 12,
+
+  /* 章节 Boss 首通：只掉中档丹药 + 中档装备，绝不出终局装备 */
+  BOSS_DROPS: {
+    10: { pill: 'pill_zhuji', equip: 'w_xuan' },
+    20: { pill: 'pill_ning', equip: 'a_xuan' },
+    30: { pill: 'pill_ying', equip: 'h_xuan' },
+    40: { pill: 'pill_yao', equip: 'b_fly' },
+    50: { pill: 'pill_zu', equip: 'r_xuan' },
+    60: { pill: 'pill_xue', equip: 'w_zi' }
+  },
+
+  /* 每日妖王：每天 1 次，按当前章节给世界资源 + 星砂 + 种子 + 丹药 */
+  DAILY: {
+    FOOD: 250, WOOD: 300, STONE: 300,
+    SEED: 2, STAR: 5
+  },
+
+  SWEEP_PER_DAY: 3,
+  LOG_MAX: 6,
+  /* 自动连战血线（v2.21.0）：通关后若任一场上信徒低于该生命比例，暂停连战并提示，
+     避免低血自动送进下一关导致重伤。手动挑战不受此限制。 */
+  AUTO_MIN_HP_PCT: 0.25,
+
+  /* 战阵重伤与疗伤（v2.20.0）
+   * 信徒生命归零即自动下阵并进入重伤：不能驻守任务 / 担任职位 / 再上战阵。
+   * 恢复只消耗灵力 + 1 枚低阶丹药，不做任何定时或自然自愈。
+   * 收费按缺失生命比例：每 1% 最大生命 0.6 灵力（0 → 满约 60），单次封顶 200。 */
+  INJURY: {
+    SPIRIT_PER_PCT: 0.6,
+    SPIRIT_CAP: 200,
+    PILL: 'pill_juqi'      // 聚气丹：既有低阶丹药，不新增道具
+  }
+};
+
 
 /* ---------------------------------------------------------------- 任务五行归属
  * 主动任务（占动作槽）→ 五行。planet（穿越星球）不参与。
