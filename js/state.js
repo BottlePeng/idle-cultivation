@@ -12,6 +12,7 @@ let state = null;
 function defaultState() {
   const s = {
     version: 2,
+    lang: 'zh',         // 界面语言（v2.23.0）：'zh' | 'en'，随存档持久化
     gold: 0,            // 低阶灵石
     spirit: 0,          // 灵力
     stardust: 0,        // 星砂（观星所得，用于点亮阵纹）
@@ -166,6 +167,8 @@ function mergeState(def, saved) {
   if (isFinite(saved.lastSave)) out.lastSave = Number(saved.lastSave);
   /* 悟性（旧存档的 root 资质字段已废弃，直接忽略） */
   if (isFinite(saved.insight)) out.insight = Math.max(0, Math.floor(Number(saved.insight)));
+  /* 界面语言（v2.23.0）：旧档缺省中文；只接受 zh / en，异常值回落 zh */
+  out.lang = saved.lang === 'en' ? 'en' : 'zh';
 
   if (saved.inv && typeof saved.inv === 'object') {
     out.inv = {};

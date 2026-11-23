@@ -87,6 +87,11 @@ function handleClick(e) {
       return;
     }
 
+    /* 设置 → 切换界面语言（立即重绘并写入存档） */
+    case 'setlang':
+      setLang(el.dataset.lang);
+      return;
+
     /* 设置 → 测试控制台 */
     case 'devopen':
       if (!DEV.unlocked) { renderAll(); return; }
@@ -587,6 +592,8 @@ function boot() {
   document.title = '穿越星球 v' + ver + ' · Planet Crossing';
 
   const offlineSeconds = loadState();
+  /* 语言在读档后才确定：旧档缺省中文，'en' 保持英文；同步静态 DOM 与窗口标题 */
+  applyStaticI18n();
   clampHp();
   checkTasks();
   /* 战阵：读档不恢复进行中的战斗；编成做一次身份 / 职业 / 解锁位校验 */

@@ -282,7 +282,8 @@ function affixDef(k) {
 }
 function affixText(k, v) {
   const def = affixDef(k);
-  return (def ? def.name : k) + ' +' + v + (def && def.fmt === 'pct' ? '%' : '');
+  const name = def ? (typeof t === 'function' ? t(def.name) : def.name) : k;
+  return name + ' +' + v + (def && def.fmt === 'pct' ? '%' : '');
 }
 
 function gearSig(g) {

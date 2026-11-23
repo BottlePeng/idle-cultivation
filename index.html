@@ -15,7 +15,7 @@
       <div class="brand">
         <span class="logo">☯</span>
         <div class="brandtext">
-          <h1>穿越星球</h1>
+          <h1 data-i18n="穿越星球">穿越星球</h1>
           <small>Planet Crossing</small>
         </div>
       </div>
@@ -24,11 +24,11 @@
 
       <div class="hpwrap">
         <div class="bar hpbar"><i id="hpFill"></i><span id="hpText">--</span></div>
-        <button class="btn ghost small" data-act="heal">灵气疗伤 (25 灵力)</button>
+        <button class="btn ghost small" data-act="heal" data-i18n="灵气疗伤 (25 灵力)">灵气疗伤 (25 灵力)</button>
       </div>
 
       <div class="topright">
-        <button class="btn ghost small" data-act="save">保存</button>
+        <button class="btn ghost small" data-act="save" data-i18n="保存">保存</button>
       </div>
     </header>
 
@@ -42,33 +42,33 @@
         <!-- 问道指引：常驻轻量教学卡，完成/跳过后不再提示；内容由 updateGuide 增量刷新 -->
         <div class="card guidecard hidden" id="guideCard">
           <div class="ghead">
-            <span class="gname">📖 问道指引</span>
+            <span class="gname" data-i18n="📖 问道指引">📖 问道指引</span>
             <span class="gprog" data-gprog>0 / 0</span>
-            <button class="mini gx" data-act="guideclose" title="收起提示">×</button>
+            <button class="mini gx" data-act="guideclose" data-i18n-title="收起提示" title="收起提示">×</button>
           </div>
           <div class="gtitle" data-gtitle></div>
           <div class="gdesc" data-gdesc></div>
           <div class="ghint" data-ghint></div>
           <div class="gacts">
-            <button class="mini gold" data-act="guidego">前往</button>
-            <button class="mini" data-act="guidelist">清单</button>
-            <button class="mini ghost" data-act="guideskip">跳过</button>
+            <button class="mini gold" data-act="guidego" data-i18n="前往">前往</button>
+            <button class="mini" data-act="guidelist" data-i18n="清单">清单</button>
+            <button class="mini ghost" data-act="guideskip" data-i18n="跳过">跳过</button>
           </div>
         </div>
         <div class="card" id="charCard"></div>
         <div class="card">
-          <h3>装备</h3>
+          <h3 data-i18n="装备">装备</h3>
           <div id="equipList"></div>
         </div>
         <div class="card logcard">
-          <h3>见闻 <button class="mini" data-act="clearlog">清空</button></h3>
+          <h3><span data-i18n="见闻">见闻</span> <button class="mini" data-act="clearlog" data-i18n="清空">清空</button></h3>
           <div id="logList" class="scroll"></div>
         </div>
       </aside>
     </main>
 
     <!-- 版本号：左下角常驻角标，内容由 boot() 从 VERSION 填充 -->
-    <span class="vertag" id="verTag" title="游戏版本"></span>
+    <span class="vertag" id="verTag" data-i18n-title="游戏版本" title="游戏版本"></span>
   </div>
 
   <div id="toast" class="hidden"></div>
@@ -79,19 +79,20 @@
     <div class="confirmbox" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
       <div class="confirmwarn hidden" id="confirmWarn">
         <span class="cwicon">⚠</span>
-        <span><b>危险操作</b><i>此操作不可恢复</i></span>
+        <span><b data-i18n="危险操作">危险操作</b><i data-i18n="此操作不可恢复">此操作不可恢复</i></span>
       </div>
-      <h3 id="confirmTitle">确认</h3>
+      <h3 id="confirmTitle" data-i18n="确认">确认</h3>
       <div id="confirmBody" class="confirmbody"></div>
       <div class="confirmbtns">
-        <button class="btn ghost small" id="confirmCancel">取消</button>
-        <button class="btn small" id="confirmOk">确认</button>
+        <button class="btn ghost small" id="confirmCancel" data-i18n="取消">取消</button>
+        <button class="btn small" id="confirmOk" data-i18n="确认">确认</button>
       </div>
     </div>
   </div>
 
   <script src="js/data.js"></script>
   <script src="js/state.js"></script>
+  <script src="js/i18n.js"></script>
   <script src="js/engine.js"></script>
   <script src="js/ui.js"></script>
   <script src="js/main.js"></script>

@@ -41,7 +41,7 @@ function showConfirm(title, body, onOk, onCancel, tone) {
   if (box) box.classList.toggle('danger', danger);
   if (warn) warn.classList.toggle('hidden', !danger);
   if (ok) ok.classList.toggle('danger', danger);
-  document.getElementById('confirmTitle').textContent = title || '确认';
+  document.getElementById('confirmTitle').textContent = t(title || '确认');
   /* 危险弹窗把「不可恢复 / 清空」这类关键行单独高亮；普通弹窗保持纯文本 */
   const bodyEl = document.getElementById('confirmBody');
   if (danger) {
@@ -75,10 +75,10 @@ function esc(s) {
 }
 
 function fmtDur(sec) {
-  if (sec < 60) return sec.toFixed(sec < 10 ? 1 : 0) + ' 秒';
+  if (sec < 60) return isEn() ? (sec.toFixed(sec < 10 ? 1 : 0) + 's') : (sec.toFixed(sec < 10 ? 1 : 0) + ' 秒');
   const m = Math.floor(sec / 60);
   const s = Math.round(sec % 60);
-  return m + ' 分 ' + s + ' 秒';
+  return isEn() ? (m + 'm ' + s + 's') : (m + ' 分 ' + s + ' 秒');
 }
 
 function fmtNum(n) {
@@ -108,9 +108,9 @@ function fmtStones(n) {
   n = Number(n) || 0;
   if (n >= 10000) {
     const zhong = Math.floor(n / 100);
-    return fmtNum(zhong) + ' 中阶';
+    return fmtNum(zhong) + (isEn() ? ' mid-grade' : ' 中阶');
   }
-  return fmtNum(n) + ' 低阶';
+  return fmtNum(n) + (isEn() ? '' : ' 低阶');
 }
 
 function fmtClock(t) {
@@ -218,20 +218,20 @@ function renderTop() {
   const r = realmInfo(state.skills.cultivation.lvl);
 
   setHTML('#resBar',
-    '<div class="res"><span class="rico">💠</span><span class="rval">' + fmtStones(state.gold) + '</span><span class="rname">灵石</span></div>' +
-    '<div class="res"><span class="rico">✨</span><span class="rval">' + fmtNum(state.spirit) + '</span><span class="rname">灵力</span></div>' +
+    '<div class="res"><span class="rico">💠</span><span class="rval">' + fmtStones(state.gold) + '</span><span class="rname">' + t('灵石') + '</span></div>' +
+    '<div class="res"><span class="rico">✨</span><span class="rval">' + fmtNum(state.spirit) + '</span><span class="rname">' + t('灵力') + '</span></div>' +
     /* 星砂：观星后才显示，避免开局顶栏冗余 */
     (state.stardust > 0 || state.skills.formation.lvl > 1
-      ? '<div class="res"><span class="rico">💫</span><span class="rval">' + fmtNum(state.stardust) + '</span><span class="rname">星砂</span></div>'
+      ? '<div class="res"><span class="rico">💫</span><span class="rval">' + fmtNum(state.stardust) + '</span><span class="rname">' + t('星砂') + '</span></div>'
       : '') +
     /* 生命之种：仅在已获得或已开辟小世界后显示，避免开局顶栏冗余 */
     (state.seed > 0 || smallWorldLevel() > 0
-      ? '<div class="res"><span class="rico">🌱</span><span class="rval">' + fmtNum(state.seed) + '</span><span class="rname">生命之种</span></div>'
+      ? '<div class="res"><span class="rico">🌱</span><span class="rval">' + fmtNum(state.seed) + '</span><span class="rname">' + t('生命之种') + '</span></div>'
       : '') +
-    '<div class="res"><span class="rico">' + r.realmIcon + '</span><span class="rval">' + r.full + '</span><span class="rname">境界</span></div>' +
-    '<div class="res"><span class="rico">⚔️</span><span class="rval">' + st.atkMin + '~' + st.atkMax + '</span><span class="rname">伤害</span></div>' +
-    '<div class="res"><span class="rico">🎯</span><span class="rval">' + st.hit + '</span><span class="rname">命中</span></div>' +
-    '<div class="res"><span class="rico">🛡️</span><span class="rval">' + Math.round(st.dr * 100) + '%</span><span class="rname">减伤</span></div>');
+    '<div class="res"><span class="rico">' + r.realmIcon + '</span><span class="rval">' + r.full + '</span><span class="rname">' + t('境界') + '</span></div>' +
+    '<div class="res"><span class="rico">⚔️</span><span class="rval">' + st.atkMin + '~' + st.atkMax + '</span><span class="rname">' + t('伤害') + '</span></div>' +
+    '<div class="res"><span class="rico">🎯</span><span class="rval">' + st.hit + '</span><span class="rname">' + t('命中') + '</span></div>' +
+    '<div class="res"><span class="rico">🛡️</span><span class="rval">' + Math.round(st.dr * 100) + '%</span><span class="rname">' + t('减伤') + '</span></div>');
 }
 
 /* =============================================================== 左侧技能栏
@@ -247,67 +247,75 @@ function sidebarEntryMeta(id) {
     let doneN = 0;
     TASKS.forEach(function (t) { const r = state.tasks[t.id]; if (r && r.done && !r.claimed) doneN += 1; });
     return {
-      name: '任务', icon: '📜', cls: 'taskbtn', alert: doneN > 0, alertTier: 'hot',
-      sub: '成就与奖励' + (doneN ? ' <span class="badge hot">' + doneN + '</span>' : '')
+      name: t('任务'), icon: '📜', cls: 'taskbtn', alert: doneN > 0, alertTier: 'hot',
+      sub: t('成就与奖励') + (doneN ? ' <span class="badge hot">' + doneN + '</span>' : '')
     };
   }
   if (id === 'checkin') {
     const p = checkinPlan();
     let sub = '';
     let alert = false;
-    if (p.state === 'clockback') sub = '系统时间异常';
+    if (p.state === 'clockback') sub = t('系统时间异常');
     else if (p.state === 'done') {
       const n = state.checkin.day === 1 ? CHECKIN.CYCLE : state.checkin.day - 1;
-      sub = '连续 ' + n + '/' + CHECKIN.CYCLE + ' · 明日再来';
+      sub = isEn() ? (n + '/' + CHECKIN.CYCLE + ' · Come back tomorrow')
+        : ('连续 ' + n + '/' + CHECKIN.CYCLE + ' · 明日再来');
     } else {
-      sub = '今日可领 · 第 ' + p.day + ' 天 <span class="badge hot">!</span>';
+      sub = isEn() ? ('Available today · Day ' + p.day + ' <span class="badge hot">!</span>')
+        : ('今日可领 · 第 ' + p.day + ' 天 <span class="badge hot">!</span>');
       alert = true;
     }
-    return { name: '签到', icon: '📅', cls: 'checkinbtn', sub: sub, alert: alert, alertTier: 'hot' };
+    return { name: t('签到'), icon: '📅', cls: 'checkinbtn', sub: sub, alert: alert, alertTier: 'hot' };
   }
   if (id === 'guide') {
     const cur = guideCurrent();
     const doneN = guideDoneCount();
     const fin = !cur;
     const sub = fin
-      ? ('已完成 ' + doneN + '/' + GUIDE_STEPS.length + ' · 可查阅')
-      : (state.guide.skipped ? ('已跳过 · ' + doneN + '/' + GUIDE_STEPS.length) :
-        ('新手引导 ' + doneN + '/' + GUIDE_STEPS.length + ' <span class="badge soft">!</span>'));
-    return { name: '问道', icon: '📖', cls: 'guidebtn', sub: sub, alert: !fin && !state.guide.skipped, alertTier: 'soft' };
+      ? (isEn() ? ('Completed ' + doneN + '/' + GUIDE_STEPS.length + ' · Viewable')
+        : ('已完成 ' + doneN + '/' + GUIDE_STEPS.length + ' · 可查阅'))
+      : (state.guide.skipped
+        ? (isEn() ? ('Skipped · ' + doneN + '/' + GUIDE_STEPS.length)
+          : ('已跳过 · ' + doneN + '/' + GUIDE_STEPS.length))
+        : (isEn() ? ('Tutorial ' + doneN + '/' + GUIDE_STEPS.length + ' <span class="badge soft">!</span>')
+          : ('新手引导 ' + doneN + '/' + GUIDE_STEPS.length + ' <span class="badge soft">!</span>')));
+    return { name: t('问道'), icon: '📖', cls: 'guidebtn', sub: sub, alert: !fin && !state.guide.skipped, alertTier: 'soft' };
   }
   if (id === 'bag') {
     return {
-      name: '背包', icon: '🎒', cls: 'bagbtn',
+      name: t('背包'), icon: '🎒', cls: 'bagbtn',
       sub: '<span data-invcount>' + invSlotsUsed() + ' / ' + invCap() + '</span>'
     };
   }
-  if (id === 'shop') return { name: '市集', icon: '🏪', cls: 'shopbtn', sub: '采买 · 出售' };
+  if (id === 'shop') return { name: t('市集'), icon: '🏪', cls: 'shopbtn', sub: t('采买 · 出售') };
   if (id === 'planet') {
     const busy = (act && (act.skill === 'planet' || act.skill === 'rift' || act.skill === 'elem' || act.skill === 'riftmon')) ? '<span class="dot"></span>' : '';
     const rift = ((state.rift && state.rift.open) || riftMonAlive()) ? ' <span class="badge block">!</span>' : '';
     return {
-      name: '穿越星球', icon: '🪐', cls: 'planetbtn', alert: !!rift, alertTier: 'hot',
-      sub: '灵石 · 星砂 · 材料' + busy + rift
+      name: t('穿越星球'), icon: '🪐', cls: 'planetbtn', alert: !!rift, alertTier: 'hot',
+      sub: t('灵石 · 星砂 · 材料') + busy + rift
     };
   }
   if (id === 'cultivation') {
     const sk = SKILLS.cultivation;
     const s = state.skills.cultivation;
     const busy = (act && act.skill === 'cultivation') ? '<span class="dot"></span>' : '';
-    return { name: sk.name, icon: sk.icon, sub: realmInfo(s.lvl).full + busy, bar: true };
+    return { name: t(sk.name), icon: sk.icon, sub: realmInfo(s.lvl).full + busy, bar: true };
   }
   if (id === 'combat') {
     const sk = SKILLS.combat;
     const s = state.skills.combat;
     const busy = (act && act.skill === 'combat') ? '<span class="dot"></span>' : '';
-    return { name: sk.name, icon: sk.icon, sub: 'Lv.' + s.lvl + busy, bar: true };
+    return { name: t(sk.name), icon: sk.icon, sub: 'Lv.' + s.lvl + busy, bar: true };
   }
   if (id === 'tower') {
     const busy = towerRunning() ? '<span class="dot"></span>' : '';
     const badge = state.tower.pending ? ' <span class="badge hot">!</span>' : '';
     return {
-      name: '锁妖塔', icon: '🗼', cls: 'towerbtn', alert: !!state.tower.pending, alertTier: 'hot',
-      sub: '第 ' + state.tower.current + ' 层 · 最高 ' + state.tower.best + busy + badge
+      name: t('锁妖塔'), icon: '🗼', cls: 'towerbtn', alert: !!state.tower.pending, alertTier: 'hot',
+      sub: isEn()
+        ? ('Floor ' + state.tower.current + ' · Best ' + state.tower.best + busy + badge)
+        : ('第 ' + state.tower.current + ' 层 · 最高 ' + state.tower.best + busy + badge)
     };
   }
   if (id === 'dbattle') {
@@ -315,27 +323,35 @@ function sidebarEntryMeta(id) {
     const pend = (state.dbattle && state.dbattle.pending) ? state.dbattle.pending.length : 0;
     const badge = pend ? ' <span class="badge hot">' + pend + '</span>' : '';
     const info = discipleUnlocked()
-      ? ('第 ' + state.dbattle.stage + ' 关 · ' + dbattleLineupCount() + '/' + dbattleSlots() + ' 人')
-      : '需营造招贤殿';
+      ? (isEn()
+        ? ('Stage ' + state.dbattle.stage + ' · ' + dbattleLineupCount() + '/' + dbattleSlots() + ' deployed')
+        : ('第 ' + state.dbattle.stage + ' 关 · ' + dbattleLineupCount() + '/' + dbattleSlots() + ' 人'))
+      : t('需营造招贤殿');
     return {
-      name: '战阵', icon: '⚔️', cls: 'dbbtn', alert: pend > 0, alertTier: 'hot',
+      name: t('战阵'), icon: '⚔️', cls: 'dbbtn', alert: pend > 0, alertTier: 'hot',
       sub: info + busy + badge
     };
   }
   if (id === 'world') {
-    return { name: '世界', icon: '🏯', cls: 'worldbtn', sub: '洞天 · 建设度 ' + worldLevel() };
+    return {
+      name: t('世界'), icon: '🏯', cls: 'worldbtn',
+      sub: isEn() ? ('Grotto · Development ' + worldLevel()) : ('洞天 · 建设度 ' + worldLevel())
+    };
   }
   if (id === 'disciples') {
     const info = discipleUnlocked()
-      ? ('上阵 ' + discipleEquippedCount() + '/' + discipleSlots() +
-        ' · 信徒 ' + discipleTotal() + '/' + discipleStoreCap())
-      : '需营造招贤殿';
-    return { name: '信徒', icon: '🙏', cls: 'discbtn', sub: info };
+      ? (isEn()
+        ? ('Deployed ' + discipleEquippedCount() + '/' + discipleSlots() +
+          ' · Disciples ' + discipleTotal() + '/' + discipleStoreCap())
+        : ('上阵 ' + discipleEquippedCount() + '/' + discipleSlots() +
+          ' · 信徒 ' + discipleTotal() + '/' + discipleStoreCap()))
+      : t('需营造招贤殿');
+    return { name: t('信徒'), icon: '🙏', cls: 'discbtn', sub: info };
   }
-  if (id === 'settings') return { name: '设置', icon: '🔧', cls: 'setbtn', sub: '兑换码 · 通用' };
+  if (id === 'settings') return { name: t('设置'), icon: '🔧', cls: 'setbtn', sub: t('兑换码 · 通用') };
   if (id === 'devtools') {
     if (!DEV.unlocked) return null;
-    return { name: '测试控制台', icon: '🔬', cls: 'devbtn', sub: '仅本次运行有效' };
+    return { name: t('测试控制台'), icon: '🔬', cls: 'devbtn', sub: t('仅本次运行有效') };
   }
   /* 技能类入口（生产 / 采集 / 修炼等）统一从 SKILLS 取图标与名称 */
   const sk = SKILLS[id];
@@ -343,7 +359,7 @@ function sidebarEntryMeta(id) {
     const s = state.skills[id];
     if (!s) return null;
     const busy = (act && act.skill === id) ? '<span class="dot"></span>' : '';
-    return { name: sk.name, icon: sk.icon, sub: 'Lv.' + s.lvl + busy, bar: true };
+    return { name: t(sk.name), icon: sk.icon, sub: 'Lv.' + s.lvl + busy, bar: true };
   }
   return null;
 }
@@ -392,7 +408,6 @@ function renderSidebar() {
   const groups = SIDEBAR_GROUPS.slice();
   const extra = SKILL_ORDER.filter(function (id) { return !grouped[id]; });
   if (extra.length) groups.push({ id: 'more', name: '其他', icon: '➕', items: extra });
-
   let html = '';
   groups.forEach(function (g) {
     const entries = [];
@@ -423,7 +438,7 @@ function renderSidebar() {
     html += '<div class="sbgroup' + (closed ? ' closed' : '') + (active ? ' hasactive' : '') + (anyAlert ? ' hasalert' : '') + '" data-group="' + g.id + '">' +
       '<button class="sbhead" data-act="sbgroup" data-id="' + g.id + '" aria-expanded="' + (closed ? 'false' : 'true') + '" aria-controls="sbbody-' + g.id + '">' +
       '<span class="sbgico">' + g.icon + '</span>' +
-      '<span class="sbgname">' + esc(g.name) + '</span>' +
+      '<span class="sbgname">' + esc(t(g.name)) + '</span>' +
       '<span class="sbgcount">' + entries.length + '</span>' +
       (anyAlert ? '<span class="sbgdot ' + (hotAlert ? 'hot' : 'soft') + '" title="有待处理"></span>' : '') +
       '<span class="sbgchev">' + (closed ? '▸' : '▾') + '</span>' +
@@ -460,12 +475,12 @@ function skillHeader(id) {
   /* 经验/修为数值放进占位节点，由 updateXpText 增量刷新。
      若把数值直接写进 HTML，每次 tick 数值变化都会让整个面板重绘，
      鼠标悬停状态被反复清空 —— 这就是按钮"闪烁"的根因。 */
-  return '<div class="phead"><h2>' + sk.icon + ' ' + sk.name + '</h2>' +
-    '<span class="pdesc">' + sk.desc + '</span></div>' +
+  return '<div class="phead"><h2>' + sk.icon + ' ' + t(sk.name) + '</h2>' +
+    '<span class="pdesc">' + t(sk.desc) + '</span></div>' +
     (TASK_ELEM[id] ? taskElemBar(id) : '') +
     '<div class="pxp"><div class="bar"><i class="xpfill" data-xpbar="' + id + '" style="width:' + (li.pct * 100).toFixed(1) + '%"></i></div>' +
     '<div class="xptext">' + lvlLabel + ' · ' +
-    (li.max ? '已臻圆满' : '<span data-xp="' + id + '"></span>') + '</div></div>';
+    (li.max ? t('已臻圆满') : '<span data-xp="' + id + '"></span>') + '</div></div>';
 }
 
 /* 精通小条（等级与效果文本由 updateXpBars 增量刷新） */
@@ -473,7 +488,7 @@ function masteryFxText(id) {
   const m = masteryOf(id);
   const d = Math.min(0.99, m.lvl * CONFIG.MASTERY_DOUBLE_PER_LVL);
   const t = Math.min(0.20, m.lvl * CONFIG.MASTERY_TIME_PER_LVL);
-  return '双倍 ' + pctText(d) + ' · 耗时 -' + (t * 100).toFixed(1) + '%';
+  return (isEn() ? 'Double ' : '双倍 ') + pctText(d) + ' · ' + (isEn() ? 'Time -' : '耗时 -') + (t * 100).toFixed(1) + '%';
 }
 
 function masteryHTML(id) {
@@ -768,7 +783,7 @@ function renderTasks() {
 
       let btn = '<span class="etag">进行中</span>';
       if (rec.claimed) btn = '<span class="etag">已领取</span>';
-      else if (rec.done) btn = '<button class="mini gold" data-act="claim" data-id="' + t.id + '">领取</button>';
+      else if (rec.done) btn = '<button class="mini gold" data-act="claim" data-id="' + t.id + '">' + (isEn() ? 'Claim' : '领取') + '</button>';
 
       html += '<div class="entry taskentry' + cls + '">' +
         '<span class="eico">' + (rec.claimed ? '✅' : (rec.done ? '🎁' : '🔲')) + '</span>' +
@@ -2233,17 +2248,17 @@ function updatePlanet(force) {
 /* 市集面板：分类标签 + 商品网格 + 购买按钮（梅尔沃式多店铺） */
 function renderShop() {
   const cur = findShop(state.ui.shopCat);
-  let html = '<div class="phead"><h2>🏪 市集</h2>' +
-    '<span class="pdesc">以灵石采买物资，亦可在背包中出售物品</span></div>';
+  let html = '<div class="phead"><h2>' + t('🏪 市集') + '</h2>' +
+    '<span class="pdesc">' + t('以灵石采买物资，亦可在背包中出售物品') + '</span></div>';
 
   html += '<div class="shopcats">';
   SHOPS.forEach(function (s) {
     const on = s.id === cur.id ? ' on' : '';
-    html += '<button class="chip' + on + '" data-act="shopcat" data-id="' + s.id + '">' + s.icon + ' ' + s.name + '</button>';
+    html += '<button class="chip' + on + '" data-act="shopcat" data-id="' + s.id + '">' + s.icon + ' ' + t(s.name) + '</button>';
   });
   html += '</div>';
 
-  html += '<div class="secttl">' + cur.icon + ' ' + cur.name + ' · 持有 💠 ' + fmtNum(state.gold) + ' 灵石</div>';
+  html += '<div class="secttl">' + cur.icon + ' ' + t(cur.name) + ' · ' + t('持有') + ' 💠 ' + fmtNum(state.gold) + ' ' + t('灵石') + '</div>';
   html += '<div class="shopgrid">';
   cur.items.forEach(function (si) {
     const it = ITEMS[si.id];
@@ -2253,24 +2268,26 @@ function renderShop() {
     const canBuy = !locked && state.gold >= price;
     const full = !locked && !invCanAdd(si.id, 1);
     const disabled = (locked || !canBuy || full) ? ' disabled' : '';
-    const note = locked ? '<span class="etag warn">🔒 需 ' + unlockText(si.unlock) + '</span>'
-      : (full ? '<span class="etag warn">背包已满</span>' : (canBuy ? '' : '<span class="etag warn">灵石不足</span>'));
+    const note = locked ? '<span class="etag warn">🔒 ' + t('需 ') + unlockText(si.unlock) + '</span>'
+      : (full ? '<span class="etag warn">' + t('背包已满') + '</span>' : (canBuy ? '' : '<span class="etag warn">' + t('灵石不足') + '</span>'));
     html +=
       '<div class="shopitem' + (locked ? ' locked' : '') + '">' +
       '<span class="sico">' + (locked ? '🔒' : it.icon) + '</span>' +
-      '<span class="smain"><span class="sname">' + it.name + note + '</span>' +
+      '<span class="smain"><span class="sname">' + t(it.name) + note + '</span>' +
       '<span class="smeta">' + esc(it.desc) + '</span>' +
-      '<span class="sprice">💠 ' + price + ' / 个</span></span>' +
+      '<span class="sprice">💠 ' + price + ' / ' + (isEn() ? 'each' : '个') + '</span></span>' +
       '<span class="sbuys">' +
       '<button class="mini" data-act="buy" data-id="' + si.id + '" data-price="' + price + '" data-qty="1"' + disabled + '>+1</button>' +
       '<button class="mini" data-act="buy" data-id="' + si.id + '" data-price="' + price + '" data-qty="10"' + disabled + '>+10</button>' +
-      '<button class="mini" data-act="buymax" data-id="' + si.id + '" data-price="' + price + '"' + disabled + '>最大</button>' +
+      '<button class="mini" data-act="buymax" data-id="' + si.id + '" data-price="' + price + '"' + disabled + '>' + t('最大') + '</button>' +
       '</span></div>';
   });
   html += '</div>';
 
-  html += '<div class="secttl">出售说明</div>';
-  html += '<div class="shopnote">在背包页先用「出售数量」（×1 / ×5 / ×10 / ×25 / ×100 / 全部）指定批量，开启「出售模式」后点击物品即按该数量出售；或点击物品查看详情后直接出售。出售价为物品价值的 ' + Math.round(CONFIG.SELL_RATIO * 100) + '%。</div>';
+  html += '<div class="secttl">' + t('出售说明') + '</div>';
+  html += '<div class="shopnote">' + (isEn()
+    ? 'In the Bag, choose a sell quantity (×1 / ×5 / ×10 / ×25 / ×100 / All), enable Sell Mode, then click an item to sell that quantity. You can also click an item and sell from its detail. Sell price is ' + Math.round(CONFIG.SELL_RATIO * 100) + '% of value.'
+    : '在背包页先用「出售数量」（×1 / ×5 / ×10 / ×25 / ×100 / 全部）指定批量，开启「出售模式」后点击物品即按该数量出售；或点击物品查看详情后直接出售。出售价为物品价值的 ' + Math.round(CONFIG.SELL_RATIO * 100) + '%。') + '</div>';
   return html;
 }
 
@@ -2786,7 +2803,7 @@ function updateDynastyState() {
 /* 底部当前动作条 */
 function currentBarHTML() {
   const p = currentProgress();
-  const stopBtn = '<button class="btn ghost small off" data-act="stop">停止</button>';
+  const stopBtn = '<button class="btn ghost small off" data-act="stop">' + t('停止') + '</button>';
 
   if (!p) {
     const idleTxt = state.stun > 0
@@ -3337,41 +3354,45 @@ function renderContent() {
 let _devDirty = false;
 
 function renderSettings() {
-  let html = '<div class="phead"><h2>🔧 设置</h2>' +
-    '<span class="pdesc">兑换码、测试控制台与存档管理</span></div>';
+  let html = '<div class="phead"><h2>' + t('🔧 设置') + '</h2>' +
+    '<span class="pdesc">' + t('兑换码、测试控制台与存档管理') + '</span></div>';
 
-  html += '<div class="secttl">兑换码</div>' +
+  html += '<div class="secttl">' + t('兑换码') + '</div>' +
     '<div class="setcard">' +
-    '<div class="setrow"><span class="setlab">兑换码</span>' +
-    '<input class="setin" type="text" data-set-in="code" maxlength="64" placeholder="输入兑换码" autocomplete="off" spellcheck="false">' +
-    '<button class="btn small" data-act="redeem">兑换</button></div>' +
+    '<div class="setrow"><span class="setlab">' + t('兑换码') + '</span>' +
+    '<input class="setin" type="text" data-set-in="code" maxlength="64" placeholder="' + t('输入兑换码') + '" autocomplete="off" spellcheck="false">' +
+    '<button class="btn small" data-act="redeem">' + t('兑换') + '</button></div>' +
     '<div class="setmsg" data-set="msg">' +
-    esc(DEV.msg || '输入兑换码以解锁对应内容。') + '</div>' +
+    esc(DEV.msg || t('输入兑换码以解锁对应内容。')) + '</div>' +
     '</div>';
 
   if (DEV.unlocked) {
-    html += '<div class="secttl">已解锁</div>' +
+    html += '<div class="secttl">' + t('已解锁') + '</div>' +
       '<div class="setcard">' +
-      '<div class="setrow"><span class="setlab">🔬 测试控制台</span>' +
-      '<span class="setph">当前运行已激活</span>' +
-      '<button class="btn small" data-act="devopen">打开控制台</button></div>' +
-      '<div class="setmsg">刷新页面或重开游戏后失效，需要重新兑换。</div>' +
+      '<div class="setrow"><span class="setlab">' + t('🔬 测试控制台') + '</span>' +
+      '<span class="setph">' + t('当前运行已激活') + '</span>' +
+      '<button class="btn small" data-act="devopen">' + t('打开控制台') + '</button></div>' +
+      '<div class="setmsg">' + t('刷新页面或重开游戏后失效，需要重新兑换。') + '</div>' +
       '</div>';
   }
 
-  html += '<div class="secttl primary">通用</div>' +
+  html += '<div class="secttl primary">' + t('通用') + '</div>' +
     '<div class="setcard primary">' +
-    '<div class="setrow"><span class="setlab">更多设置</span><span class="setph">（预留分组）</span></div>' +
-    '<div class="setmsg">音效、画面、自动化等设置将在后续版本逐步加入；此处只保留分组容器与占位条目。</div>' +
+    '<div class="setrow"><span class="setlab">' + t('界面语言') + '</span>' +
+    '<span class="langseg">' +
+    '<button class="chip' + (isEn() ? '' : ' on') + '" data-act="setlang" data-lang="zh">中文</button>' +
+    '<button class="chip' + (isEn() ? ' on' : '') + '" data-act="setlang" data-lang="en">English</button>' +
+    '</span></div>' +
+    '<div class="setmsg">' + t('切换后立即生效，并保存到存档。') + '</div>' +
     '</div>';
 
   /* 危险操作（v2.14.1）：原先在顶栏的「重开」移到这里，保留二次确认逻辑 */
-  html += '<div class="secttl danger">存档 · 危险操作</div>' +
+  html += '<div class="secttl danger">' + t('存档 · 危险操作') + '</div>' +
     '<div class="setcard dangerzone">' +
-    '<div class="setrow"><span class="setlab">重开游戏</span>' +
-    '<span class="setph">清空当前存档与全部进度，且无法恢复</span>' +
-    '<button class="btn small danger" data-act="reset">重开游戏</button></div>' +
-    '<div class="setmsg danger">⚠ 此操作会删除当前存档并从头开始；点击后仍需二次确认，建议先「保存」或备份存档。</div>' +
+    '<div class="setrow"><span class="setlab">' + t('重开游戏') + '</span>' +
+    '<span class="setph">' + t('清空当前存档与全部进度，且无法恢复') + '</span>' +
+    '<button class="btn small danger" data-act="reset">' + t('重开游戏') + '</button></div>' +
+    '<div class="setmsg danger">' + t('⚠ 此操作会删除当前存档并从头开始；点击后仍需二次确认，建议先「保存」或备份存档。') + '</div>' +
     '</div>';
 
   return html;
@@ -3525,7 +3546,7 @@ function renderCharacter() {
   const st = calcStats();
   const r = realmInfo(state.skills.cultivation.lvl);
 
-  const foodOpts = ['<option value="auto"' + (state.ui.eatFood === 'auto' ? ' selected' : '') + '>自动（回复最高）</option>'];
+  const foodOpts = ['<option value="auto"' + (state.ui.eatFood === 'auto' ? ' selected' : '') + '>' + t('自动（回复最高）') + '</option>'];
   Object.keys(state.inv).forEach(function (id) {
     const it = ITEMS[id];
     if (!it || it.type !== 'food' || state.inv[id] <= 0) return;
@@ -3538,18 +3559,18 @@ function renderCharacter() {
   }).join('');
 
   setHTML('#charCard',
-    '<h3>角色</h3>' +
-    '<div class="statline">境界 <b>' + r.full + '</b> · 悟性 <b>' + state.insight + '</b>（修炼 +' + state.insight + '% / 突破 +' + state.insight + '%）</div>' +
-    '<div class="statline muted">灵根五行：' +
-    WUXING.map(function (w) { return w.icon + w.name + '·' + SKILLS[w.skill].name + ' Lv.' + state.skills[w.skill].lvl; }).join('　') + '</div>' +
-    '<div class="statline">生命上限 ' + st.hp + ' · 伤害 ' + st.atkMin + '~' + st.atkMax +
-    ' · 命中 ' + st.hit + ' · 闪避 ' + st.ev + ' · 减伤 ' + Math.round(st.dr * 100) + '%</div>' +
+    '<h3>' + t('角色') + '</h3>' +
+    '<div class="statline">' + t('境界') + ' <b>' + r.full + '</b> · ' + t('悟性') + ' <b>' + state.insight + '</b>（' + t('修炼') + ' +' + state.insight + '% / ' + t('突破') + ' +' + state.insight + '%）</div>' +
+    '<div class="statline muted">' + t('灵根五行：') +
+    WUXING.map(function (w) { return w.icon + w.name + '·' + t(SKILLS[w.skill].name) + ' Lv.' + state.skills[w.skill].lvl; }).join('　') + '</div>' +
+    '<div class="statline">' + t('生命上限') + ' ' + st.hp + ' · ' + t('伤害') + ' ' + st.atkMin + '~' + st.atkMax +
+    ' · ' + t('命中') + ' ' + st.hit + ' · ' + t('闪避') + ' ' + st.ev + ' · ' + t('减伤') + ' ' + Math.round(st.dr * 100) + '%</div>' +
     '<div class="aeconfig">' +
-    '<label class="toggle"><input type="checkbox" id="autoEat"' + (state.ui.autoEat ? ' checked' : '') + '><span>自动进食</span></label>' +
+    '<label class="toggle"><input type="checkbox" id="autoEat"' + (state.ui.autoEat ? ' checked' : '') + '><span>' + t('自动进食') + '</span></label>' +
     '<select id="eatFood" class="sel">' + foodOpts.join('') + '</select>' +
     '<select id="eatRatio" class="sel">' + ratioOpts + '</select>' +
     '</div>' +
-    '<div class="statline muted">低于阈值且战斗中自动食用所选食物，不占用动作槽。</div>');
+    '<div class="statline muted">' + t('低于阈值且战斗中自动食用所选食物，不占用动作槽。') + '</div>');
 }
 
 function renderEquip() {
@@ -3560,24 +3581,24 @@ function renderEquip() {
       const it = ITEMS[g.id];
       const q = equipQuality(g.id);
       const stats = [];
-      if (it.atk) stats.push('攻+' + it.atk);
-      if (it.def) stats.push('防+' + it.def);
-      if (it.hp) stats.push('命+' + it.hp);
-      if (it.hit) stats.push('中+' + it.hit);
-      if (it.ev) stats.push('闪+' + it.ev);
+      if (it.atk) stats.push(t('攻') + '+' + it.atk);
+      if (it.def) stats.push(t('防') + '+' + it.def);
+      if (it.hp) stats.push(t('命') + '+' + it.hp);
+      if (it.hit) stats.push(t('中') + '+' + it.hit);
+      if (it.ev) stats.push(t('闪') + '+' + it.ev);
       const aff = (g.affixes || []).map(function (a) {
         return '<span class="afchip">' + affixText(a.k, a.v) + '</span>';
       }).join('');
       html += '<div class="slot filled eq" style="--qc:' + q.color + '"><span class="sicon">' + it.icon + '</span>' +
-        '<span class="slabel">' + sl.name + '</span>' +
-        '<span class="sitem">' + it.name + '<i class="eqq">' + q.name + '</i></span>' +
+        '<span class="slabel">' + t(sl.name) + '</span>' +
+        '<span class="sitem">' + t(it.name) + '<i class="eqq">' + t(q.name) + '</i></span>' +
         '<span class="sstat">' + stats.join(' ') + '</span>' +
         (aff ? '<span class="saffix">' + aff + '</span>' : '') +
-        '<button class="mini" data-act="unequip" data-id="' + sl.id + '">卸下</button></div>';
+        '<button class="mini" data-act="unequip" data-id="' + sl.id + '">' + t('卸下') + '</button></div>';
     } else {
       html += '<div class="slot"><span class="sicon">➖</span>' +
-        '<span class="slabel">' + sl.name + '</span>' +
-        '<span class="sitem" style="color:var(--muted)">空</span></div>';
+        '<span class="slabel">' + t(sl.name) + '</span>' +
+        '<span class="sitem" style="color:var(--muted)">' + t('空') + '</span></div>';
     }
   });
   setHTML('#equipList', html);
@@ -3601,7 +3622,7 @@ function qtyBar(label, compact) {
 }
 /* 数量文案：-1 显示“全部”，否则按实际持有量取小 */
 function qtyText(have) {
-  return state.ui.itemQty === -1 ? '全部' : '×' + Math.min(state.ui.itemQty, have);
+  return state.ui.itemQty === -1 ? t('全部') : '×' + Math.min(state.ui.itemQty, have);
 }
 /* 设置数量（供按钮与输入框共用）：1–9999，或 -1 表示全部 */
 function setItemQty(v) {
@@ -3626,36 +3647,36 @@ function bagGearHTML() {
     return (ITEMS[b.id].value || 0) - (ITEMS[a.id].value || 0);
   });
   const keys = [['atk', '攻'], ['def', '防'], ['hp', '命'], ['hit', '中'], ['ev', '闪']];
-  let html = '<div class="secttl">⚔️ 装备 · 每件词条独立（' + list.length + '）</div><div class="gearlist">';
+  let html = '<div class="secttl">' + t('⚔️ 装备 · 每件词条独立') + '（' + list.length + '）</div><div class="gearlist">';
   list.forEach(function (g) {
     const it = ITEMS[g.id];
     const q = equipQuality(g.id);
-    let slotName = '装备';
-    EQUIP_SLOTS.forEach(function (s) { if (s.id === it.slot) slotName = s.name; });
+    let slotName = t('装备');
+    EQUIP_SLOTS.forEach(function (s) { if (s.id === it.slot) slotName = t(s.name); });
     const base = keys.map(function (kv) {
-      return it[kv[0]] ? kv[1] + '+' + it[kv[0]] : '';
+      return it[kv[0]] ? t(kv[1]) + '+' + it[kv[0]] : '';
     }).filter(Boolean).join(' ');
     const aff = (g.affixes || []).map(function (a) {
       return '<span class="afchip">' + affixText(a.k, a.v) + '</span>';
-    }).join('') || '<span class="afchip none">无词条</span>';
-    let cmp = '<span class="gcmp muted">该部位未装备</span>';
+    }).join('') || '<span class="afchip none">' + t('无词条') + '</span>';
+    let cmp = '<span class="gcmp muted">' + t('该部位未装备') + '</span>';
     const cur = gearByUid(state.equip[it.slot]);
     if (cur) {
       const diffs = [];
       keys.forEach(function (kv) {
         const d = gearStat(g, kv[0]) - gearStat(cur, kv[0]);
-        if (d) diffs.push(kv[1] + (d > 0 ? '+' : '') + d);
+        if (d) diffs.push(t(kv[1]) + (d > 0 ? '+' : '') + d);
       });
-      cmp = '<span class="gcmp">对比当前：' + (diffs.length ? diffs.join(' ') : '无变化') + '</span>';
+      cmp = '<span class="gcmp">' + t('对比当前：') + (diffs.length ? diffs.join(' ') : t('无变化')) + '</span>';
     }
     html += '<div class="gcard" style="--qc:' + q.color + '">' +
       '<div class="ghead"><span class="gico">' + it.icon + '</span>' +
-      '<span class="gname">' + it.name + '<i class="eqq">' + q.name + '</i></span>' +
+      '<span class="gname">' + t(it.name) + '<i class="eqq">' + t(q.name) + '</i></span>' +
       '<span class="gslot">' + slotName + '</span></div>' +
-      '<div class="gbase">' + (base || '无基础属性') + '</div>' +
+      '<div class="gbase">' + (base || t('无基础属性')) + '</div>' +
       '<div class="gaffix">' + aff + '</div>' + cmp +
-      '<div class="gacts"><button class="mini gold" data-act="gearequip" data-uid="' + g.uid + '">装备</button>' +
-      '<button class="mini" data-act="gearsell" data-uid="' + g.uid + '">出售 💠 ' + sellPrice(g.id) + '</button></div>' +
+      '<div class="gacts"><button class="mini gold" data-act="gearequip" data-uid="' + g.uid + '">' + t('装备') + '</button>' +
+      '<button class="mini" data-act="gearsell" data-uid="' + g.uid + '">' + t('出售') + ' 💠 ' + sellPrice(g.id) + '</button></div>' +
       '</div>';
   });
   return html + '</div>';
@@ -3668,39 +3689,40 @@ function renderBag() {
   if (filt !== 'all') ids = ids.filter(function (id) { return ITEMS[id].type === filt; });
   ids.sort(function (a, b) { return (ITEMS[a].value || 0) - (ITEMS[b].value || 0); });
 
-  let html = '<div class="phead"><h2>🎒 背包</h2>' +
-    '<span class="pdesc">容量 <span data-invcount>' + invSlotsUsed() + ' / ' + invCap() + '</span>' +
-    ' · 点击物品查看操作，背包满时产出会原地等待</span></div>';
+  let html = '<div class="phead"><h2>' + t('🎒 背包') + '</h2>' +
+    '<span class="pdesc">' + t('容量') + ' <span data-invcount>' + invSlotsUsed() + ' / ' + invCap() + '</span>' +
+    t(' · 点击物品查看操作，背包满时产出会原地等待') + '</span></div>';
 
   /* 背包扩容（v2.13.0）：每次 +固定格数，价格指数递增到上限为止 */
   const capFull = invCap() >= CONFIG.INV_SLOT_MAX;
   const upPrice = invSlotPrice();
-  html += '<div class="bagup"><span class="bupinfo">📦 当前容量 <b data-bagcap>' + invCap() + '</b> 格 · 每次扩容 +' +
-    CONFIG.INV_SLOT_STEP + ' 格' +
-    (capFull ? ' · 已达上限' : ' · 下次 💠 <b data-bagprice>' + fmtNum(upPrice) + '</b>') +
+  html += '<div class="bagup"><span class="bupinfo">' + t('📦 当前容量') + ' <b data-bagcap>' + invCap() + '</b> ' +
+    (isEn() ? 'slots · +' + CONFIG.INV_SLOT_STEP + ' per expansion' : '格 · 每次扩容 +' + CONFIG.INV_SLOT_STEP + ' 格') +
+    (capFull ? t(' · 已达上限') : (isEn() ? (' · Next 💠 ') : ' · 下次 💠 ') + '<b data-bagprice>' + fmtNum(upPrice) + '</b>') +
     '</span>' +
     (capFull
-      ? '<span class="etag">容量已满</span>'
-      : '<button class="mini gold" data-act="invup" data-bagup' + (state.gold < upPrice ? ' disabled' : '') + '>扩容 +' + CONFIG.INV_SLOT_STEP + '</button>') +
+      ? '<span class="etag">' + t('容量已满') + '</span>'
+      : '<button class="mini gold" data-act="invup" data-bagup' + (state.gold < upPrice ? ' disabled' : '') + '>' + t('扩容 +') + CONFIG.INV_SLOT_STEP + '</button>') +
     '</div>';
 
   /* 筛选 chips + 出售模式开关 */
   const sellTip = state.ui.invSellMode
-    ? '出售模式：点击物品后在面板中按所选数量出售（' + qtyText(9999) + '）'
-    : '普通模式：点击物品查看 / 使用';
+    ? (isEn() ? ('Sell mode: click items to sell the selected quantity (' + qtyText(9999) + ')')
+      : ('出售模式：点击物品后在面板中按所选数量出售（' + qtyText(9999) + '）'))
+    : (isEn() ? 'Normal mode: click items to view / use' : '普通模式：点击物品查看 / 使用');
   html += '<div class="bagbar"><span class="filterbar">' +
     INV_FILTERS.map(function (f) {
       const on = state.ui.invFilter === f[0] ? ' on' : '';
-      return '<button class="chip' + on + '" data-act="filter" data-id="' + f[0] + '">' + f[1] + '</button>';
+      return '<button class="chip' + on + '" data-act="filter" data-id="' + f[0] + '">' + t(f[1]) + '</button>';
     }).join('') + '</span>' +
-    '<button class="chip sell' + (state.ui.invSellMode ? ' on' : '') + '" data-act="togglesell" title="' + sellTip + '">💠 出售模式</button></div>';
+    '<button class="chip sell' + (state.ui.invSellMode ? ' on' : '') + '" data-act="togglesell" title="' + sellTip + '">💠 ' + t('出售模式') + '</button></div>';
 
   /* 数量选择（梅尔沃式）：出售模式按此数量出售，普通模式按此数量使用 */
-  html += qtyBar(state.ui.invSellMode ? '出售数量' : '使用数量');
+  html += qtyBar(state.ui.invSellMode ? t('出售数量') : t('使用数量'));
 
   const gearHtml = (filt === 'all' || filt === 'equip') ? bagGearHTML() : '';
   if (!ids.length && !gearHtml) {
-    html += '<div class="empty">此处空无一物。</div>';
+    html += '<div class="empty">' + t('此处空无一物。') + '</div>';
     hideInvPopover();
     return html;
   }
@@ -3843,15 +3865,15 @@ function updateXpText() {
   for (let i = 0; i < xps.length; i++) {
     const id = xps[i].dataset.xp;
     const li = levelInfo(id);
-    const label = (id === 'cultivation') ? '修为' : '经验';
-    setText(xps[i], li.max ? '已臻圆满' : (label + ' ' + fmtNum(li.xp) + ' / ' + fmtNum(li.need)));
+    const label = (id === 'cultivation') ? t('修为') : t('经验');
+    setText(xps[i], li.max ? t('已臻圆满') : (label + ' ' + fmtNum(li.xp) + ' / ' + fmtNum(li.need)));
   }
 
   /* 境界卡内的修为 */
   const cr = c.querySelector('[data-cultxp]');
   if (cr) {
     const li = levelInfo('cultivation');
-    setText(cr, '修为 ' + fmtNum(li.xp) + ' / ' + (li.max ? '—' : fmtNum(li.need)));
+    setText(cr, t('修为') + ' ' + fmtNum(li.xp) + ' / ' + (li.max ? '—' : fmtNum(li.need)));
   }
 
   /* 突破条件：修为 / 丹药 / 灵石 */
@@ -3859,7 +3881,7 @@ function updateXpText() {
   if (bx) {
     const bp = breakPreview();
     const need = Number(bx.dataset.need) || 0;
-    setText(bx, '修为 ' + fmtNum(bp.xp) + ' / ' + fmtNum(need));
+    setText(bx, t('修为') + ' ' + fmtNum(bp.xp) + ' / ' + fmtNum(need));
     setOk(bx, bp.xpOk);
   }
   const bpill = c.querySelector('[data-breakpill]');
@@ -3872,7 +3894,7 @@ function updateXpText() {
   const bgold = c.querySelector('[data-breakgold]');
   if (bgold) {
     const need = Number(bgold.dataset.need) || 0;
-    setText(bgold, '💠 灵石 ' + fmtNum(state.gold) + ' / ' + fmtNum(need));
+    setText(bgold, '💠 ' + t('灵石') + ' ' + fmtNum(state.gold) + ' / ' + fmtNum(need));
     setOk(bgold, state.gold >= need);
   }
 }
@@ -3906,7 +3928,7 @@ function updateXpBars() {
 }
 
 function renderLog() {
-  if (!state.log.length) { setHTML('#logList', '<div class="empty">尚无见闻。</div>'); return; }
+  if (!state.log.length) { setHTML('#logList', '<div class="empty">' + t('尚无见闻。') + '</div>'); return; }
   let html = '';
   state.log.forEach(function (l) {
     html += '<div class="logline ' + l.cls + '"><span class="lgt">' + fmtClock(l.t) + '</span>' + esc(l.text) + '</div>';

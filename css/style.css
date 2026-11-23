@@ -1569,6 +1569,9 @@ body.compact .planetstage { height: min(50vh, 420px); }
 .setrow + .setrow { margin-top: 8px; }
 .setlab { font-size: 13px; color: var(--text); min-width: 96px; }
 .setph { font-size: 12px; color: var(--muted); }
+/* 语言切换（v2.23.0）：通用设置内的双选分段按钮 */
+.langseg { display: inline-flex; gap: 6px; }
+.langseg .chip { min-width: 72px; justify-content: center; }
 .setin {
   font-family: inherit; font-size: 13px; color: var(--text);
   padding: 8px 11px; min-height: 38px;
