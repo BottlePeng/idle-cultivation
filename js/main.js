@@ -228,6 +228,9 @@ function handleClick(e) {
     case 'use': usePill(id, Number(el.dataset.qty) || 1); hideInvPopover(); break;
     case 'equip': equipItem(id); hideInvPopover(); break;
     case 'unequip': unequipSlot(id); break;
+    /* 装备实例（v2.22.0）：按 uid 穿戴 / 出售，词条随实例走 */
+    case 'gearequip': equipGear(el.dataset.uid || ''); break;
+    case 'gearsell': sellGear(el.dataset.uid || ''); break;
 
     /* 背包格子：始终弹出操作菜单（出售模式下主按钮为「出售」） */
     case 'invslot':

@@ -3555,19 +3555,24 @@ function renderCharacter() {
 function renderEquip() {
   let html = '';
   EQUIP_SLOTS.forEach(function (sl) {
-    const id = state.equip[sl.id];
-    if (id) {
-      const it = ITEMS[id];
+    const g = gearByUid(state.equip[sl.id]);
+    if (g) {
+      const it = ITEMS[g.id];
+      const q = equipQuality(g.id);
       const stats = [];
       if (it.atk) stats.push('攻+' + it.atk);
       if (it.def) stats.push('防+' + it.def);
       if (it.hp) stats.push('命+' + it.hp);
       if (it.hit) stats.push('中+' + it.hit);
       if (it.ev) stats.push('闪+' + it.ev);
-      html += '<div class="slot filled"><span class="sicon">' + it.icon + '</span>' +
+      const aff = (g.affixes || []).map(function (a) {
+        return '<span class="afchip">' + affixText(a.k, a.v) + '</span>';
+      }).join('');
+      html += '<div class="slot filled eq" style="--qc:' + q.color + '"><span class="sicon">' + it.icon + '</span>' +
         '<span class="slabel">' + sl.name + '</span>' +
-        '<span class="sitem">' + it.name + '</span>' +
+        '<span class="sitem">' + it.name + '<i class="eqq">' + q.name + '</i></span>' +
         '<span class="sstat">' + stats.join(' ') + '</span>' +
+        (aff ? '<span class="saffix">' + aff + '</span>' : '') +
         '<button class="mini" data-act="unequip" data-id="' + sl.id + '">卸下</button></div>';
     } else {
       html += '<div class="slot"><span class="sicon">➖</span>' +
@@ -3613,6 +3618,49 @@ function refreshInvPopover() {
   showInvPopover(popItem, { getBoundingClientRect: function () { return r; } });
 }
 
+/* 装备实例卡片（v2.22.0）：基础属性 + 词条 + 与当前同部位对比 */
+function bagGearHTML() {
+  let list = (state.gear || []).filter(function (g) { return !isGearEquipped(g.uid); });
+  if (!list.length) return '';
+  list = list.slice().sort(function (a, b) {
+    return (ITEMS[b.id].value || 0) - (ITEMS[a.id].value || 0);
+  });
+  const keys = [['atk', '攻'], ['def', '防'], ['hp', '命'], ['hit', '中'], ['ev', '闪']];
+  let html = '<div class="secttl">⚔️ 装备 · 每件词条独立（' + list.length + '）</div><div class="gearlist">';
+  list.forEach(function (g) {
+    const it = ITEMS[g.id];
+    const q = equipQuality(g.id);
+    let slotName = '装备';
+    EQUIP_SLOTS.forEach(function (s) { if (s.id === it.slot) slotName = s.name; });
+    const base = keys.map(function (kv) {
+      return it[kv[0]] ? kv[1] + '+' + it[kv[0]] : '';
+    }).filter(Boolean).join(' ');
+    const aff = (g.affixes || []).map(function (a) {
+      return '<span class="afchip">' + affixText(a.k, a.v) + '</span>';
+    }).join('') || '<span class="afchip none">无词条</span>';
+    let cmp = '<span class="gcmp muted">该部位未装备</span>';
+    const cur = gearByUid(state.equip[it.slot]);
+    if (cur) {
+      const diffs = [];
+      keys.forEach(function (kv) {
+        const d = gearStat(g, kv[0]) - gearStat(cur, kv[0]);
+        if (d) diffs.push(kv[1] + (d > 0 ? '+' : '') + d);
+      });
+      cmp = '<span class="gcmp">对比当前：' + (diffs.length ? diffs.join(' ') : '无变化') + '</span>';
+    }
+    html += '<div class="gcard" style="--qc:' + q.color + '">' +
+      '<div class="ghead"><span class="gico">' + it.icon + '</span>' +
+      '<span class="gname">' + it.name + '<i class="eqq">' + q.name + '</i></span>' +
+      '<span class="gslot">' + slotName + '</span></div>' +
+      '<div class="gbase">' + (base || '无基础属性') + '</div>' +
+      '<div class="gaffix">' + aff + '</div>' + cmp +
+      '<div class="gacts"><button class="mini gold" data-act="gearequip" data-uid="' + g.uid + '">装备</button>' +
+      '<button class="mini" data-act="gearsell" data-uid="' + g.uid + '">出售 💠 ' + sellPrice(g.id) + '</button></div>' +
+      '</div>';
+  });
+  return html + '</div>';
+}
+
 /* 背包面板：梅尔沃式图标网格 + 筛选 + 出售模式（标签页形式，与技能面板一致） */
 function renderBag() {
   const filt = state.ui.invFilter || 'all';
@@ -3650,27 +3698,33 @@ function renderBag() {
   /* 数量选择（梅尔沃式）：出售模式按此数量出售，普通模式按此数量使用 */
   html += qtyBar(state.ui.invSellMode ? '出售数量' : '使用数量');
 
-  if (!ids.length) {
+  const gearHtml = (filt === 'all' || filt === 'equip') ? bagGearHTML() : '';
+  if (!ids.length && !gearHtml) {
     html += '<div class="empty">此处空无一物。</div>';
     hideInvPopover();
     return html;
   }
 
+  /* 装备实例独立成卡（不堆叠），先于普通物品展示 */
+  if (gearHtml) html += gearHtml;
+
   /* 数量用 data-qty 占位节点，由 updateInvQty 增量刷新 */
   const sell = state.ui.invSellMode;
   const tip = sell ? '点击查看 / 出售 ' + qtyText(9999) : '点击查看 / 使用';
-  html += '<div class="invgrid" id="invList">';
-  ids.forEach(function (id) {
-    const it = ITEMS[id];
-    html +=
-      '<div class="islot' + (sell ? ' sellmode' : '') + '"' +
-      ' data-act="invslot" data-id="' + id + '"' +
-      ' title="' + esc(it.name + ' · ' + tip + ' · ' + it.desc) + '">' +
-      '<span class="iico">' + it.icon + '</span>' +
-      '<span class="iqty" data-qty="' + id + '">' + invCount(id) + '</span>' +
-      '</div>';
-  });
-  html += '</div>';
+  if (ids.length) {
+    html += '<div class="invgrid" id="invList">';
+    ids.forEach(function (id) {
+      const it = ITEMS[id];
+      html +=
+        '<div class="islot' + (sell ? ' sellmode' : '') + '"' +
+        ' data-act="invslot" data-id="' + id + '"' +
+        ' title="' + esc(it.name + ' · ' + tip + ' · ' + it.desc) + '">' +
+        '<span class="iico">' + it.icon + '</span>' +
+        '<span class="iqty" data-qty="' + id + '">' + invCount(id) + '</span>' +
+        '</div>';
+    });
+    html += '</div>';
+  }
   return html;
 }
 

@@ -169,7 +169,182 @@ function devRun(action, vals) {
   }
 }
 
-function invCount(id) { return state.inv[id] || 0; }
+/* ================================================ 装备实例（v2.22.0）
+ * 词条存实例，不写模板；所有产出路径统一经 invAdd → grantEquip → makeGear → rollGearAffixes。
+ * 品质按基础 value 分档；百分比只进现有全局通道，固定值在 calcStats 里叠加。 */
+let _gearUid = 0;
+function nextGearUid() {
+  _gearUid += 1;
+  return 'g' + Date.now().toString(36) + '_' + _gearUid.toString(36);
+}
+
+function equipQuality(id) {
+  const v = (ITEMS[id] && ITEMS[id].value) || 0;
+  for (let i = 0; i < EQUIP_QUALITY.length; i++) {
+    if (v >= EQUIP_QUALITY[i].min && v < EQUIP_QUALITY[i].max) return EQUIP_QUALITY[i];
+  }
+  return EQUIP_QUALITY[EQUIP_QUALITY.length - 1];
+}
+
+function _affixRand(a, b) { return a + Math.random() * (b - a); }
+
+/* 单次 roll：品质决定条数；固定值锚定该装备自身主属性，百分比按品质区间 */
+function rollGearAffixes(id) {
+  const it = ITEMS[id];
+  const q = equipQuality(id);
+  const n = q.count[0] + Math.floor(Math.random() * (q.count[1] - q.count[0] + 1));
+  const primary = Math.max(it.atk || 0, it.def || 0, it.hit || 0, it.ev || 0, 1);
+  const pool = AFFIX_POOL.slice();
+  const res = [];
+  for (let i = 0; i < n && pool.length; i++) {
+    let total = 0;
+    pool.forEach(function (p) { total += p.weight; });
+    let r = Math.random() * total;
+    let pick = pool.length - 1;
+    for (let j = 0; j < pool.length; j++) { r -= pool[j].weight; if (r <= 0) { pick = j; break; } }
+    const def = pool.splice(pick, 1)[0];
+    let v;
+    if (def.fmt === 'pct') {
+      v = Math.round(_affixRand(q.pct[0], q.pct[1]) * 10) / 10;
+    } else if (def.k === 'hp') {
+      v = Math.max(3, Math.round((it.hp || primary * 4) * _affixRand(0.06, 0.12)));
+    } else {
+      v = Math.max(1, Math.round(primary * _affixRand(q.flat[0], q.flat[1])));
+    }
+    res.push({ k: def.k, v: v });
+  }
+  return res;
+}
+
+/* 由模板生成实例：savedAffixes 存在时按合法词条恢复（旧档/读档），否则按规则 roll */
+function makeGear(id, savedAffixes, uid) {
+  const affixes = [];
+  if (Array.isArray(savedAffixes)) {
+    const used = {};
+    savedAffixes.forEach(function (a) {
+      if (!a) return;
+      let def = null;
+      for (let i = 0; i < AFFIX_POOL.length; i++) if (AFFIX_POOL[i].k === a.k) { def = AFFIX_POOL[i]; break; }
+      if (!def || used[def.k]) return;
+      const v = Math.round(Number(a.v) * 10) / 10;
+      if (!isFinite(v) || v <= 0) return;
+      used[def.k] = true;
+      affixes.push({ k: def.k, v: v });
+    });
+  } else {
+    affixes.push.apply(affixes, rollGearAffixes(id));
+  }
+  return { uid: uid || nextGearUid(), id: id, affixes: affixes };
+}
+
+function gearByUid(uid) {
+  const list = state.gear || [];
+  for (let i = 0; i < list.length; i++) if (list[i].uid === uid) return list[i];
+  return null;
+}
+function isGearEquipped(uid) {
+  for (let i = 0; i < EQUIP_SLOTS.length; i++) if (state.equip[EQUIP_SLOTS[i].id] === uid) return true;
+  return false;
+}
+function equippedGear() {
+  const out = [];
+  EQUIP_SLOTS.forEach(function (sl) {
+    const g = gearByUid(state.equip[sl.id]);
+    if (g) out.push(g);
+  });
+  return out;
+}
+function gearStat(g, key) {
+  const it = ITEMS[g.id] || {};
+  let v = it[key] || 0;
+  (g.affixes || []).forEach(function (a) { if (a.k === key) v += a.v; });
+  return v;
+}
+/* 固定值词条合计（仅已穿戴） */
+function affixFlat(k) {
+  let s = 0;
+  equippedGear().forEach(function (g) {
+    (g.affixes || []).forEach(function (a) { if (a.k === k) s += a.v; });
+  });
+  return s;
+}
+/* 百分比词条合计（仅已穿戴）：返回 0.0x，同名全身封顶 AFFIX_PCT_CAP */
+function affixPct(k) {
+  let s = 0;
+  equippedGear().forEach(function (g) {
+    (g.affixes || []).forEach(function (a) { if (a.k === k) s += a.v; });
+  });
+  return Math.min(AFFIX_PCT_CAP, s / 100);
+}
+function affixDef(k) {
+  for (let i = 0; i < AFFIX_POOL.length; i++) if (AFFIX_POOL[i].k === k) return AFFIX_POOL[i];
+  return null;
+}
+function affixText(k, v) {
+  const def = affixDef(k);
+  return (def ? def.name : k) + ' +' + v + (def && def.fmt === 'pct' ? '%' : '');
+}
+
+function gearSig(g) {
+  return (g.affixes || []).map(function (a) { return a.k + ':' + a.v; }).join('|');
+}
+
+/* 装备产出：容量按“每件占 1 格、不堆叠”计算；
+   同名模板尽量避开与已有实例完全相同的词条组合，避免两件装备看起来一模一样。 */
+function grantEquip(id, qty) {
+  if (!qty || qty <= 0) return false;
+  if (invSlotsUsed() + qty > invCap()) return false;
+  const list = state.gear || (state.gear = []);
+  for (let i = 0; i < qty; i++) {
+    const inst = makeGear(id);
+    for (let t = 0; t < 5; t++) {
+      const sig = gearSig(inst);
+      let dup = false;
+      for (let j = 0; j < list.length; j++) {
+        if (list[j].id === id && gearSig(list[j]) === sig) { dup = true; break; }
+      }
+      if (!dup) break;
+      inst.affixes = rollGearAffixes(id);
+    }
+    list.push(inst);
+  }
+  state.stats.gained[id] = (state.stats.gained[id] || 0) + Math.floor(qty);
+  return true;
+}
+
+function sellGear(uid) {
+  const g = gearByUid(uid);
+  if (!g) return false;
+  if (isGearEquipped(uid)) { logMsg('请先卸下装备再出售。', 'warn'); return false; }
+  const gain = sellPrice(g.id);
+  state.gear = (state.gear || []).filter(function (x) { return x !== g; });
+  state.gold += gain;
+  if (!OFFLINE_MODE) logMsg('出售 ' + itemIcon(g.id) + itemName(g.id) + '，获得 💠 ' + gain + ' 灵石', 'gold');
+  return true;
+}
+
+function equipGear(uid) {
+  const g = gearByUid(uid);
+  if (!g) return false;
+  const it = ITEMS[g.id];
+  if (!it || it.type !== 'equip') return false;
+  if (isGearEquipped(uid)) { logMsg('该装备已经穿戴。', 'info'); return false; }
+  state.equip[it.slot] = uid;
+  clampHp();
+  logMsg('装备「' + it.name + '」（' + equipQuality(g.id).name + '）。', 'good');
+  return true;
+}
+
+function invCount(id) {
+  /* 装备是实例，同模板多件也分别计数（含已穿戴，便于任务/成就判定） */
+  if (ITEMS[id] && ITEMS[id].type === 'equip') {
+    const list = state.gear || [];
+    let n = 0;
+    for (let i = 0; i < list.length; i++) if (list[i].id === id) n += 1;
+    return n;
+  }
+  return state.inv[id] || 0;
+}
 function invHas(id, qty) { return invCount(id) >= qty; }
 
 /* 背包当前容量（v2.13.0）：基础 100 + 已购扩容；所有读取点统一走这里 */
@@ -203,22 +378,27 @@ function buyInvSlot() {
   return true;
 }
 
-/* 已占用的槽位数（不同物品种类数） */
+/* 已占用的槽位数（非装备按种类；装备每件独立占 1 格，已穿戴不占） */
 function invSlotsUsed() {
   let n = 0;
   Object.keys(state.inv).forEach(function (id) { if (state.inv[id] > 0) n += 1; });
+  const list = state.gear || [];
+  for (let i = 0; i < list.length; i++) if (!isGearEquipped(list[i].uid)) n += 1;
   return n;
 }
 function invFull() { return invSlotsUsed() >= invCap(); }
 
-/* 能否再放入 qty 个 id：已有该物品则不占新槽；否则需有空槽 */
+/* 能否再放入 qty 个 id：普通物品已有则不占新槽；装备每件都要占一格 */
 function invCanAdd(id, qty) {
+  if (ITEMS[id] && ITEMS[id].type === 'equip') return invSlotsUsed() + qty <= invCap();
   if (invCount(id) > 0) return true;
   return invSlotsUsed() < invCap();
 }
 
 function invAdd(id, qty) {
   if (!qty || qty <= 0) return false;
+  /* 所有装备产出统一在这里进入实例生成，避免漏掉任何一条产出路径 */
+  if (ITEMS[id] && ITEMS[id].type === 'equip') return grantEquip(id, qty);
   if (invCount(id) <= 0 && invSlotsUsed() >= invCap()) return false;
   state.inv[id] = Math.floor(invCount(id) + qty);
   state.stats.gained[id] = (state.stats.gained[id] || 0) + Math.floor(qty);
@@ -226,6 +406,14 @@ function invAdd(id, qty) {
 }
 
 function invRemove(id, qty) {
+  if (ITEMS[id] && ITEMS[id].type === 'equip') {
+    let left = qty;
+    const list = state.gear || [];
+    for (let i = list.length - 1; i >= 0 && left > 0; i--) {
+      if (list[i].id === id && !isGearEquipped(list[i].uid)) { list.splice(i, 1); left -= 1; }
+    }
+    return;
+  }
   const left = invCount(id) - qty;
   if (left > 0) state.inv[id] = left;
   else delete state.inv[id];
@@ -245,7 +433,14 @@ function sellPrice(id) {
 
 /* 出售 qty 个物品（qty 为负数表示全部出售） */
 function sellItem(id, qty) {
-  const have = invCount(id);
+  const equip = !!(ITEMS[id] && ITEMS[id].type === 'equip');
+  let have = invCount(id);
+  if (equip) {
+    have = 0;
+    (state.gear || []).forEach(function (g) {
+      if (g.id === id && !isGearEquipped(g.uid)) have += 1;
+    });
+  }
   if (have <= 0) return false;
   const n = (qty < 0) ? have : Math.min(qty, have);
   const gain = sellPrice(id) * n;
@@ -1306,15 +1501,12 @@ function calcStats() {
   let ev = CONFIG.BASE_EV + (cl - 1) * CONFIG.EV_PER_LEVEL;
   let hp = CONFIG.BASE_HP + (cl - 1) * CONFIG.HP_PER_COMBAT + ri * CONFIG.HP_PER_REALM;
 
-  EQUIP_SLOTS.forEach(function (sl) {
-    const id = state.equip[sl.id];
-    if (!id || !ITEMS[id]) return;
-    const it = ITEMS[id];
-    atk += it.atk || 0;
-    def += it.def || 0;
-    hp += it.hp || 0;
-    hit += it.hit || 0;
-    ev += it.ev || 0;
+  equippedGear().forEach(function (g) {
+    atk += gearStat(g, 'atk');
+    def += gearStat(g, 'def');
+    hp += gearStat(g, 'hp');
+    hit += gearStat(g, 'hit');
+    ev += gearStat(g, 'ev');
   });
 
   /* 每个大境界，攻防命闪 +12% */
@@ -1366,7 +1558,8 @@ function clampHp() {
 /* 动作速度：受大境界、疾风阵与风阵坊加成（任务五行加成在 actionSpeed 叠加） */
 function speedMul() {
   return (1 + realmIndex() * CONFIG.SPEED_REALM_BONUS) *
-    (1 + formBonus('speed') + worldBonus('speed'));
+    (1 + formBonus('speed') + worldBonus('speed')) *
+    (1 + affixPct('speed'));
 }
 
 /* 单技能动作速度：全局速度 × 该任务上阵信徒的五行加成 */
@@ -1387,9 +1580,9 @@ function xpMul(skillId) {
   if (skillId === 'cultivation') {
     /* 悟性每点 +1% 修为收益，叠加境界、阵法、书院、静心堂与上阵信徒加成 */
     return (1 + ri * CONFIG.CULT_XP_PER_REALM) * (1 + state.insight * 0.01) * fb * wb *
-      (1 + worldBonus('cultxp')) * eb;
+      (1 + worldBonus('cultxp')) * eb * (1 + affixPct('xp'));
   }
-  return (1 + ri * CONFIG.XP_REALM_BONUS) * fb * wb * eb;
+  return (1 + ri * CONFIG.XP_REALM_BONUS) * fb * wb * eb * (1 + affixPct('xp'));
 }
 
 /* --------------------------------------------------------------- 经验升级 */
@@ -1481,7 +1674,7 @@ function effTime(def, id) {
 function doubleChance(id, skillId) {
   const m = masteryOf(id);
   const sk = state.skills[skillId] ? state.skills[skillId].lvl : 1;
-  const c = m.lvl * CONFIG.MASTERY_DOUBLE_PER_LVL + sk * CONFIG.SKILL_DOUBLE_PER_LVL + formBonus('double') + worldBonus('double');
+  const c = m.lvl * CONFIG.MASTERY_DOUBLE_PER_LVL + sk * CONFIG.SKILL_DOUBLE_PER_LVL + formBonus('double') + worldBonus('double') + affixPct('double');
   return clamp(c, 0, 0.9);
 }
 
@@ -1526,7 +1719,7 @@ function thievingCycle(def) {
 
   const got = [];
   const lost = [];
-  const dropMul = 1 + formBonus('drop') + worldBonus('drop') + elemBonus('thieving', 'drop');
+  const dropMul = 1 + formBonus('drop') + worldBonus('drop') + elemBonus('thieving', 'drop') + affixPct('drop');
   const dchance = doubleChance(def.id, 'thieving');
   def.loot.forEach(function (l) {
     if (Math.random() >= Math.min(1, l.chance * dropMul)) return;
@@ -2444,7 +2637,7 @@ function onMonsterKilled(target) {
   addMastery(m.id, Math.max(1, Math.round(m.xp * CONFIG.MASTERY_XP_RATIO * (1 + formBonus('mastery') + worldBonus('mastery')))));
 
   const drops = [];
-  const dropMul = 1 + formBonus('drop') + worldBonus('drop') + elemBonus('combat', 'drop');
+  const dropMul = 1 + formBonus('drop') + worldBonus('drop') + elemBonus('combat', 'drop') + affixPct('drop');
   const dbl = doubleChance(m.id, 'combat');
   m.drops.forEach(function (d) {
     if (Math.random() < Math.min(1, d.chance * dropMul)) {
@@ -2542,7 +2735,7 @@ function passiveTick(dt) {
   }
 
   /* 灵力自然凝聚（不占用动作槽，受聚灵阵加成） */
-  state.spirit += CONFIG.SPIRIT_PER_SEC * (1 + formBonus('spirit') + worldBonus('spirit')) * dt;
+  state.spirit += CONFIG.SPIRIT_PER_SEC * (1 + formBonus('spirit') + worldBonus('spirit') + affixPct('spirit')) * dt;
 
   /* 灵植地块：被动生长，离线同样推进 */
   growPlots(dt);
@@ -3313,26 +3506,23 @@ function checkinFlushPending() {
   logMsg('签到奖励补发：神品信徒「' + (cat ? cat.name : inst.id) + '」已入驻招贤殿。', 'good');
 }
 
-/* ------------------------------------------------------------ 装备 */
+/* ------------------------------------------------------------ 装备
+ * v2.22.0：穿戴槽存实例 uid；equipItem(itemId) 仅保留为旧调用兼容，自动挑一件未穿戴实例。 */
 function equipItem(itemId) {
-  const it = ITEMS[itemId];
-  if (!it || it.type !== 'equip' || invCount(itemId) < 1) return false;
-  const old = state.equip[it.slot];
-  invRemove(itemId, 1);
-  if (old) invAdd(old, 1);
-  state.equip[it.slot] = itemId;
-  clampHp();
-  logMsg('装备「' + it.name + '」。', 'good');
-  return true;
+  const list = state.gear || [];
+  for (let i = 0; i < list.length; i++) {
+    if (list[i].id === itemId && !isGearEquipped(list[i].uid)) return equipGear(list[i].uid);
+  }
+  return false;
 }
 
 function unequipSlot(slot) {
-  const id = state.equip[slot];
-  if (!id) return false;
+  const uid = state.equip[slot];
+  if (!uid) return false;
+  const g = gearByUid(uid);
   state.equip[slot] = null;
-  invAdd(id, 1);
   clampHp();
-  logMsg('卸下「' + itemName(id) + '」。', 'info');
+  logMsg('卸下「' + (g ? itemName(g.id) : '装备') + '」。', 'info');
   return true;
 }
 

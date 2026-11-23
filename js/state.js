@@ -20,6 +20,8 @@ function defaultState() {
     inv: { fish_qing: 3, log_qing: 2, herb_juqi: 2 },   // 一点起步物资
     invSlots: 0,        // 背包扩容次数（每次 +INV_SLOT_STEP 格，价格逐次递增）
     equip: { weapon: null, armor: null, helmet: null, boots: null, amulet: null, ring: null },
+    gear: [],           // 装备实例（v2.22.0）：{ uid, id, affixes:[{k,v}] }；穿戴槽存 uid
+    gearSeq: 0,         // 实例 uid 序号（仅用于补号，正常 uid 带时间戳）
     insight: 0,         // 悟性：每点 修炼速度 +1% / 突破成功率 +1%（悟道丹提升）
     skills: {},
     mastery: {},        // 精通表：actionId -> { lvl, xp }
@@ -171,6 +173,38 @@ function mergeState(def, saved) {
       if (ITEMS[id] && isFinite(saved.inv[id]) && saved.inv[id] > 0) out.inv[id] = Math.floor(saved.inv[id]);
     });
   }
+  /* 装备实例（v2.22.0）：词条存实例；旧档没有 gear 数组则从 inv / equip 迁移并补 roll。
+     单种装备迁移上限 1000 件，避免异常存档把浏览器卡死。 */
+  out.gear = [];
+  const gearUids = {};
+  if (Array.isArray(saved.gear)) {
+    saved.gear.forEach(function (g) {
+      if (!g || !ITEMS[g.id] || ITEMS[g.id].type !== 'equip') return;
+      let uid = (typeof g.uid === 'string' && g.uid && !gearUids[g.uid]) ? g.uid : null;
+      const inst = makeGear(g.id, g.affixes, uid);
+      if (gearUids[inst.uid]) inst.uid = nextGearUid();
+      gearUids[inst.uid] = true;
+      out.gear.push(inst);
+    });
+  }
+  Object.keys(out.inv).forEach(function (id) {
+    if (!ITEMS[id] || ITEMS[id].type !== 'equip') return;
+    const n = Math.min(1000, out.inv[id]);
+    delete out.inv[id];
+    for (let i = 0; i < n; i++) out.gear.push(makeGear(id));
+  });
+  /* 迁移/读档补齐：同名装备尽量不出现完全相同的词条组合（最多重试 5 次） */
+  out.gear.forEach(function (inst, idx) {
+    for (let t = 0; t < 5; t++) {
+      const sig = gearSig(inst);
+      let dup = false;
+      for (let j = 0; j < idx; j++) {
+        if (out.gear[j].id === inst.id && gearSig(out.gear[j]) === sig) { dup = true; break; }
+      }
+      if (!dup) break;
+      inst.affixes = rollGearAffixes(inst.id);
+    }
+  });
   /* 背包扩容次数（v2.13.0）：旧档缺失按 0，异常值夹到 [0, 最大次数] */
   {
     const maxSteps = Math.max(0, Math.floor((CONFIG.INV_SLOT_MAX - CONFIG.INV_SLOTS) / CONFIG.INV_SLOT_STEP));
@@ -179,8 +213,17 @@ function mergeState(def, saved) {
   }
   if (saved.equip) {
     EQUIP_SLOTS.forEach(function (sl) {
-      const id = saved.equip[sl.id];
-      out.equip[sl.id] = (ITEMS[id] && ITEMS[id].type === 'equip') ? id : null;
+      const val = saved.equip[sl.id];
+      let g = null;
+      if (typeof val === 'string') {
+        for (let i = 0; i < out.gear.length; i++) if (out.gear[i].uid === val) { g = out.gear[i]; break; }
+        /* 旧档 equip 存的是 itemId：补建实例并补 roll */
+        if (!g && ITEMS[val] && ITEMS[val].type === 'equip') {
+          g = makeGear(val);
+          out.gear.push(g);
+        }
+      }
+      out.equip[sl.id] = g ? g.uid : null;
     });
   }
 

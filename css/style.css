@@ -2020,3 +2020,42 @@ body.compact .planetstage { height: min(50vh, 420px); }
 }
 .dhpchip.low { color: #ffb3ad; background: rgba(226, 100, 92, .16); border-color: rgba(226, 100, 92, .55); }
 .dbinjzero { color: #ffb3ad; font-weight: 700; }
+
+/* ============================================== 装备词条 (v2.22.0)
+ * 品质用 --qc 着色；词条为绿色胶囊，对比行只列差异，避免卡片读不懂。 */
+.gearlist {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(248px, 1fr));
+  gap: 8px; margin-bottom: 12px;
+}
+.gcard {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 9px 10px; border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, .08);
+  border-left: 3px solid var(--qc, var(--line));
+  background: linear-gradient(180deg, rgba(255, 255, 255, .035), rgba(255, 255, 255, .015));
+}
+.ghead { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.gico { font-size: 18px; flex: none; }
+.gname { font-weight: 700; color: var(--qc, var(--text)); min-width: 0; }
+.eqq {
+  margin-left: 6px; padding: 0 5px; border-radius: 999px;
+  font-size: 10px; font-style: normal; font-weight: 600;
+  color: var(--qc, var(--muted)); border: 1px solid var(--qc, var(--line));
+}
+.gslot { margin-left: auto; font-size: 10.5px; color: var(--muted); flex: none; }
+.gbase { font-size: 11px; color: #d9c08a; font-variant-numeric: tabular-nums; }
+.gaffix { display: flex; flex-wrap: wrap; gap: 4px; }
+.afchip {
+  padding: 1px 6px; border-radius: 999px; font-size: 10.5px;
+  color: #9ee0c4; border: 1px solid rgba(125, 216, 184, .35);
+  background: rgba(125, 216, 184, .1);
+}
+.afchip.none { color: var(--muted); border-color: var(--line2); background: transparent; }
+.gcmp { font-size: 10.5px; color: #e8c98a; }
+.gcmp.muted { color: var(--muted); }
+.gacts { display: flex; gap: 6px; margin-top: 2px; }
+/* 已穿戴：词条单独一行，不挤占主属性 */
+.slot.eq { flex-wrap: wrap; border-left: 3px solid var(--qc, var(--line)); }
+.slot.eq .sitem { white-space: normal; }
+.slot.eq .saffix { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 4px; }
+.slot.eq .sstat { color: var(--jade); }

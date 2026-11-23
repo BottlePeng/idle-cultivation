@@ -12,7 +12,7 @@
      minor++  机制更新（新增/改动机制，影响存档），patch 归零
      major++  大型更新（DLC、全新机制，需重开游戏），minor/patch 归零
    改这里用 `node tools/version.js patch|minor|major`，打包前会自动同步。 */
-const VERSION = '2.21.0';
+const VERSION = '2.22.1';
 
 /* =========================================================================
  * 兑换码（集中配置）
@@ -32,7 +32,7 @@ function devCodeHash(s) {
 
 const REDEEM = {
   CODES: [
-    { hash: '0xa640d8d0', feature: 'devtools', label: '测试控制台' }
+    { hash: '0x6f40c970', feature: 'devtools', label: '测试控制台' }
   ]
 };
 
@@ -390,6 +390,37 @@ const EQUIP_SLOTS = [
   { id: 'amulet', name: '玉佩' },
   { id: 'ring', name: '灵戒' }
 ];
+
+/* =========================================================================
+ * 装备词条（v2.22.0）
+ * 品质不新增字段，按装备基础 value 分档；词条只覆盖现有加成通道：
+ * 五行仅来自上阵信徒、战阵不读装备，因此不进池，避免造不存在的数值。
+ * ========================================================================= */
+const EQUIP_QUALITY = [
+  { id: 'fan',  name: '凡品', color: '#b8c0cc', min: 0,     max: 300,   count: [1, 1], flat: [0.08, 0.15], pct: [1.0, 2.0] },
+  { id: 'ling', name: '灵品', color: '#7dd8b8', min: 300,   max: 1000,  count: [1, 2], flat: [0.08, 0.15], pct: [1.0, 2.5] },
+  { id: 'xuan', name: '玄品', color: '#63a9e0', min: 1000,  max: 3000,  count: [2, 2], flat: [0.09, 0.16], pct: [1.5, 3.0] },
+  { id: 'di',   name: '地品', color: '#a98be0', min: 3000,  max: 8000,  count: [2, 3], flat: [0.10, 0.17], pct: [2.0, 3.5] },
+  { id: 'tian', name: '天品', color: '#f0b45a', min: 8000,  max: 20000, count: [3, 3], flat: [0.11, 0.18], pct: [2.5, 4.5] },
+  { id: 'xian', name: '仙品', color: '#ff7a6a', min: 20000, max: Infinity, count: [3, 4], flat: [0.12, 0.20], pct: [3.0, 5.0] }
+];
+
+/* 词条池：flat 为固定值（攻/防/命/闪/生命），pct 为现有全局百分比通道 */
+const AFFIX_POOL = [
+  { k: 'atk',    name: '攻击',     fmt: 'flat', weight: 20 },
+  { k: 'def',    name: '防御',     fmt: 'flat', weight: 17 },
+  { k: 'hp',     name: '生命',     fmt: 'flat', weight: 18 },
+  { k: 'hit',    name: '命中',     fmt: 'flat', weight: 12 },
+  { k: 'ev',     name: '闪避',     fmt: 'flat', weight: 13 },
+  { k: 'speed',  name: '工作速度', fmt: 'pct',  weight: 5 },
+  { k: 'xp',     name: '经验获取', fmt: 'pct',  weight: 5 },
+  { k: 'double', name: '额外产出', fmt: 'pct',  weight: 4 },
+  { k: 'spirit', name: '灵力恢复', fmt: 'pct',  weight: 3 },
+  { k: 'drop',   name: '战斗掉落', fmt: 'pct',  weight: 3 }
+];
+
+/* 同名百分比词条全身合计上限（避免 6 件装备把速度/经验叠穿） */
+const AFFIX_PCT_CAP = 0.15;
 
 /* =========================================================================
  * 技能表  xpBase/xpPow 决定升级曲线：need = base * lvl^pow
