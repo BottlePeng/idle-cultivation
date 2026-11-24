@@ -56,20 +56,50 @@ body {
   flex-wrap: wrap;
 }
 
-.brand { display: flex; align-items: center; gap: 10px; }
+/* 品牌区：上下排版 —— 图标在上，中文名与英文名依次在下；
+   标题与英文名都禁止换行/截断，空间不足时只收缩字号，不拆词。 */
+.brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  text-align: center;
+  flex: 0 0 auto;              /* 不受资源栏挤压，避免被压窄后换行 */
+}
 .brand .logo {
-  font-size: 26px;
+  font-size: 24px;
+  line-height: 1;
   color: var(--gold);
   text-shadow: 0 0 12px rgba(216, 178, 106, .5);
 }
+.brandtext {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+}
 .brandtext h1 {
   margin: 0;
-  font-size: 17px;
-  letter-spacing: 3px;
+  font-size: clamp(14px, 1.35vw, 17px);
+  letter-spacing: clamp(1px, .22vw, 3px);
   color: var(--gold2);
   font-weight: 600;
+  white-space: nowrap;         /* 「穿越星球」始终单行 */
+  overflow: visible;           /* 宁可略宽也不省略号截断 */
 }
-.brandtext small { color: var(--muted); font-size: 10px; letter-spacing: 1px; }
+.brandtext small {
+  color: var(--muted);
+  font-size: clamp(9px, .78vw, 10px);
+  letter-spacing: clamp(.3px, .07vw, 1px);
+  white-space: nowrap;         /* 英文名始终单行，不在词组中间断开 */
+  overflow: visible;
+}
+/* 英文模式：英文名比中文长，单独收紧字距并略降字号，保证整行放下 */
+html[lang="en"] .brandtext h1 {
+  font-size: clamp(12px, 1.15vw, 15px);
+  letter-spacing: clamp(.2px, .05vw, .6px);
+}
 
 .resbar { display: flex; align-items: center; gap: 14px; flex: 1; flex-wrap: wrap; }
 .res {

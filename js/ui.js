@@ -17,7 +17,11 @@ function setHTML(sel, html) {
   if (_htmlCache[sel] === sig) return;
   _htmlCache[sel] = sig;
   const el = $(sel);
-  if (el) el.innerHTML = html;
+  if (el) {
+    el.innerHTML = html;
+    /* 英文模式：渲染后立即把该容器内的中文文本/属性整体本地化 */
+    if (typeof localizeDOM === 'function') localizeDOM(el);
+  }
 }
 
 /* ------------------------------------------------------- 应用内确认弹窗
@@ -53,6 +57,7 @@ function showConfirm(title, body, onOk, onCancel, tone) {
   } else {
     bodyEl.textContent = body || '';
   }
+  if (typeof localizeDOM === 'function') localizeDOM(mask);
   mask.classList.remove('hidden');
   if (ok) ok.focus();
 }
@@ -407,7 +412,7 @@ function renderSidebar() {
   SIDEBAR_GROUPS.forEach(function (g) { g.items.forEach(function (id) { grouped[id] = true; }); });
   const groups = SIDEBAR_GROUPS.slice();
   const extra = SKILL_ORDER.filter(function (id) { return !grouped[id]; });
-  if (extra.length) groups.push({ id: 'more', name: '其他', icon: '➕', items: extra });
+  if (extra.length) groups.push({ id: 'more', name: t('其他'), icon: '➕', items: extra });
   let html = '';
   groups.forEach(function (g) {
     const entries = [];
@@ -998,6 +1003,7 @@ function updateGuide() {
   if (gd) setText(gd, cur.desc);
   const gh = card.querySelector('[data-ghint]');
   if (gh) setText(gh, '👉 ' + cur.hint);
+  if (typeof localizeDOM === 'function') localizeDOM(card);
 }
 
 /* 穿越星球面板：中心星球 + 四周飞来的灵石 / 星砂 / 材料 */
@@ -3539,6 +3545,7 @@ function updateSettingsMsg() {
   if (msg.textContent !== DEV.msg) msg.textContent = DEV.msg;
   const cls = 'setmsg ' + (DEV.msgType || 'info');
   if (msg.className !== cls) msg.className = cls;
+  if (typeof localizeDOM === 'function') localizeDOM(msg);
 }
 
 /* ================================================================= 右栏 */
@@ -4033,6 +4040,7 @@ let toastTimer = null;
 function showToast(html, sticky) {
   const el = $('#toast');
   el.innerHTML = html + '<div class="tacts"><button class="btn ghost small" data-act="closetoast">知道了</button></div>';
+  if (typeof localizeDOM === 'function') localizeDOM(el);
   el.classList.remove('hidden');
   if (toastTimer) clearTimeout(toastTimer);
   if (!sticky) toastTimer = setTimeout(hideToast, 15000);

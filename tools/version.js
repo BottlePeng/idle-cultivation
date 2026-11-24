@@ -20,6 +20,7 @@ const path = require('path');
 const ROOT = path.resolve(__dirname, '..');
 const DATA_FILE = path.join(ROOT, 'js', 'data.js');
 const ELECTRON_PKG = path.join(ROOT, 'packaging', 'electron', 'package.json');
+const INDEX_FILE = path.join(ROOT, 'index.html');
 const VERSION_RE = /const VERSION = '(\d+)\.(\d+)\.(\d+)';/;
 
 function readVersion() {
@@ -49,6 +50,20 @@ function syncElectron(text) {
   return text;
 }
 
+/* 给 index.html 的本地 css/js 加上 ?v=<版本>，避免预览壳或浏览器
+   只缓存住其中一部分文件，造成「界面是新的、事件逻辑是旧的」这种混用。 */
+function syncIndexCacheBust(text) {
+  if (!fs.existsSync(INDEX_FILE)) return false;
+  const src = fs.readFileSync(INDEX_FILE, 'utf8');
+  const out = src.replace(
+    /((?:src|href)="(?:\.\/)?(?:js|css)\/[^"?#]+)(?:\?v=[^"]*)?"/g,
+    '$1?v=' + text + '"'
+  );
+  if (out === src) return false;
+  fs.writeFileSync(INDEX_FILE, out, 'utf8');
+  return true;
+}
+
 function main() {
   const arg = (process.argv[2] || 'show').toLowerCase();
   let v = readVersion();
@@ -70,6 +85,7 @@ function main() {
 
   const text = (arg === 'show' || arg === 'sync') ? before : writeVersion(v);
   const synced = syncElectron(text);
+  const cacheBusted = syncIndexCacheBust(text);
 
   if (arg === 'show' || arg === 'sync') {
     console.log('当前版本 v' + text);
@@ -78,6 +94,7 @@ function main() {
   }
   if (synced) console.log('已同步 packaging/electron/package.json → ' + synced);
   else if (fs.existsSync(ELECTRON_PKG)) console.log('打包配置版本已一致，无需同步');
+  if (cacheBusted) console.log('已给 index.html 的本地 css/js 加上 ?v=' + text);
 }
 
 main();

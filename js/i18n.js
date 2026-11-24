@@ -11,6 +11,9 @@ const I18N_EN = {
   /* ---- 静态界面 ---- */
   '💰': '💰',
   '穿越星球': 'Planet Crossing',
+  '首次穿越星球': 'First Planet Crossing',
+  '穿越星球 · 巡航': 'Planet Crossing · Cruise',
+  '🪐 穿越星球': '🪐 Planet Crossing',
   '灵气疗伤 (25 灵力)': 'Heal (25 Spirit)',
   '保存': 'Save',
   '📖 问道指引': '📖 Guide',
@@ -22,6 +25,7 @@ const I18N_EN = {
   '此操作不可恢复': 'This cannot be undone',
   '确认': 'Confirm',
   '取消': 'Cancel',
+  '中文': 'Chinese',
   '游戏版本': 'Game version',
 
   /* ---- 顶栏 ---- */
@@ -247,13 +251,184 @@ const I18N_EN = {
   '未知': 'Unknown'
 };
 
+/* 分片字典（js/i18n-part-*.js）由构建期分批生成，统一并入总字典 */
+if (typeof window !== 'undefined' && window.I18N_EXTRA) {
+  Object.keys(window.I18N_EXTRA).forEach(function (k) {
+    if (I18N_EN[k] === undefined) I18N_EN[k] = window.I18N_EXTRA[k];
+  });
+}
+
+/* 术语表：用于字典未命中时的兜底替换（长词优先），保证英文模式不残留中文 */
+const I18N_TERMS = {
+  '修仙': 'Cultivation', '修真': 'Cultivation', '境界': 'Realm', '修为': 'Cultivation', '经验': 'EXP',
+  '灵石': 'Spirit Stones', '灵力': 'Spirit', '星砂': 'Stardust', '粮食': 'Food', '木材': 'Wood', '石料': 'Stone',
+  '人口': 'Population', '灵气': 'Aura', '生命': 'HP', '攻击': 'ATK', '防御': 'DEF', '命中': 'Hit', '闪避': 'Evasion',
+  '暴击': 'Crit', '减伤': 'DR', '伤害': 'Damage', '速度': 'Speed', '冷却': 'Cooldown', '概率': 'Chance', '上限': 'Cap',
+  '当前': 'Current ', '最大': 'Max ', '最低': 'Min ', '持续': 'Duration', '消耗': 'Cost', '回复': 'Restore', '获得': 'Gain',
+  '产出': 'Output', '数量': 'Qty', '价格': 'Price', '库存': 'Stock', '解锁': 'Unlock', '锁定': 'Locked', '已': 'Already ',
+  '未': 'Not ', '完成': 'Complete', '失败': 'Failed', '成功': 'Success', '初始': 'Initial', '额外': 'Extra', '双倍': 'Double',
+  '全部': 'All', '自动': 'Auto', '手动': 'Manual', '技能': 'Skill', '任务': 'Quest', '奖励': 'Reward', '领取': 'Claim',
+  '升级': 'Upgrade', '建造': 'Build', '建筑': 'Building', '信徒': 'Disciple', '战阵': 'Formation Battle', '阵法': 'Formation',
+  '妖兽': 'Beast', '怪物': 'Monster', '裂缝': 'Rift', '穿越': 'Cross ', '星球': 'Planet', '商店': 'Shop', '市集': 'Market',
+  '背包': 'Bag', '装备': 'Equipment', '材料': 'Material', '丹药': 'Pill', '食物': 'Food', '种子': 'Seed', '鱼': 'Fish',
+  '矿': 'Ore', '锭': 'Ingot', '草': 'Herb', '木': 'Wood', '铁': 'Iron', '玉': 'Jade', '冰': 'Ice', '火': 'Fire',
+  '雷': 'Thunder', '风': 'Wind', '土': 'Earth', '金': 'Metal', '水': 'Water', '灵': 'Spirit', '玄': 'Mystic',
+  '天': 'Heaven', '地': 'Earth', '仙': 'Immortal', '神': 'Divine', '魔': 'Demon', '妖': 'Beast', '龙': 'Dragon',
+  '虎': 'Tiger', '狼': 'Wolf', '猪': 'Boar', '贼': 'Bandit', '鬼': 'Ghost', '魂': 'Soul', '血': 'Blood', '骨': 'Bone',
+  '器': 'Artifact', '符': 'Talisman', '阵': 'Formation', '塔': 'Tower', '宫': 'Palace', '殿': 'Hall', '阁': 'Pavilion',
+  '田': 'Field', '仓': 'Granary', '坊': 'Mill', '屋': 'House', '城': 'City', '山': 'Mountain', '海': 'Sea', '林': 'Forest',
+  '洞': 'Grotto', '府': 'Mansion', '门': 'Gate', '派': 'Sect', '宗': 'Sect', '朝': 'Dynasty', '代': 'Era', '年': 'Year',
+  '月': 'Month', '日': 'Day', '时': 'Hour', '分钟': ' min', '小时': ' h', '分': ' min', '秒': ' sec',
+  '个': '', '次': ' times', '件': ' items', '枚': ' pieces', '点': ' pts', '层': ' Floor', '关': ' Stage',
+  '阶': ' Tier', '级': ' Lv.', '星': ' Star', '曜': ' Luminary',
+  '五行': 'Five Elements', '悟性': 'Insight', '突破': 'Breakthrough', '灵根': 'Spiritual Root', '境界': 'Realm',
+  '退隐': 'Retire', '遣散': 'Dismiss', '疗伤': 'Heal', '重伤': 'Injured', '驻守': 'Stationed', '职位': 'Post',
+  '朝代': 'Dynasty', '洞天': 'Grotto-Heaven', '世界': 'World', '建设': 'Development', '建设度': 'Development',
+  '未解锁': 'Locked', '已解锁': 'Unlocked', '已装备': 'Equipped', '已穿戴': 'Equipped', '出售': 'Sell', '购买': 'Buy',
+  '兑换': 'Redeem', '兑换码': 'Redeem Code', '确认': 'Confirm', '取消': 'Cancel', '关闭': 'Close', '返回': 'Back',
+  '开始': 'Start', '停止': 'Stop', '暂停': 'Pause', '继续': 'Continue', '查看': 'View', '详情': 'Details',
+  '选择': 'Select', '请选择': 'Select', '请先': 'Please first ', '需要': 'Requires ', '不足': 'not enough',
+  '不足！': 'not enough!', '已满': 'full', '为空': 'empty', '空': 'Empty', '无': 'None', '未知': 'Unknown',
+  '的': '', '了': '', '着': '', '地': '', '得': '', '与': ' and ', '和': ' and ', '及': ' and ', '或': ' or ',
+  '并': ' and ', '在': ' in ', '每': ' per ', '可': ' can ', '会': ' will ', '有': ' has ', '不': ' not ',
+  '至': ' to ', '从': ' from ', '到': ' to ', '被': ' by ', '将': ' will ', '把': '', '即': ' i.e. ',
+  '则': ' then ', '为': ' as ', '是': ' is ', '对': ' vs ', '按': ' by ', '共': ' total ', '约': ' about ',
+  '以上': ' or more', '以下': ' or less', '之间': ' between', '同时': ' at the same time', '立刻': ' immediately',
+  '立即': ' immediately', '自动': ' auto', '随机': ' random', '概率': ' chance', '提升': ' increase', '降低': ' reduce',
+  '增加': ' increase', '减少': ' reduce', '恢复': ' restore', '消耗': ' cost', '持续': ' lasts', '效果': ' effect',
+  '基础': ' base', '额外': ' extra', '当前': ' current', '最大': ' max', '最小': ' min', '全部': ' all',
+  '第一': '1st', '第二': '2nd', '第三': '3rd', '第四': '4th', '第五': '5th', '第六': '6th', '第七': '7th',
+  '第八': '8th', '第九': '9th', '第十': '10th', '万': '00k', '亿': '00M',
+  '任务五行': 'Quest Element', '灵根五行': 'Spiritual Root Elements',
+  '炼气期': 'Qi Refining', '筑基期': 'Foundation', '结丹期': 'Core Formation', '元婴期': 'Nascent Soul',
+  '化神期': 'Spirit Transformation', '炼虚期': 'Void Refining', '太上境': 'Supreme Realm',
+  '初期': 'Early', '中期': 'Mid', '后期': 'Late', '一层': 'Layer 1', '二层': 'Layer 2', '三层': 'Layer 3',
+  '进度': 'Progress', '未开始': 'Not started', '挑战': 'Challenge', '常规层': 'Normal Floor',
+  '最高层': 'Best Floor', '层数': 'Floors', '永久保存': 'saved permanently', '重置': 'reset',
+  '单件': 'per item', '停止运转': 'Stopped', '开启运转': 'Start Operation',
+  '需先修复异界裂缝': 'Repair the Otherworld Rift first', '需先击败裂缝怪物': 'Defeat the Rift Monster first',
+  '开启后可加速': 'Speed up after starting', '清朝': 'Qing Dynasty', '锁塔妖兵': 'Tower Demon Soldier',
+  '战斗经验': 'Combat EXP'
+};
+const I18N_TERM_KEYS = Object.keys(I18N_TERMS).sort(function (a, b) { return b.length - a.length; });
+
+/* 英文兜底：中文数字单位 → 可读英文；术语替换；清理残留中文 */
+function autoEn(s) {
+  let out = String(s);
+  out = out.replace(/(\d+(?:\.\d+)?)\s*万/g, function (_, n) {
+    const v = Number(n) * 10000;
+    const num = v >= 1e8 ? (v / 1e8).toFixed(2) + '00M' : (v / 1000).toFixed(v % 1000 ? 1 : 0) + 'k';
+    return num;
+  });
+  out = out.replace(/(\d+(?:\.\d+)?)\s*亿/g, function (_, n) {
+    const v = Number(n) * 1e8;
+    const num = v >= 1e12 ? (v / 1e12).toFixed(2) + 'T' : (v / 1e6).toFixed(v % 1e6 ? 1 : 0) + 'M';
+    return num;
+  });
+  /* 数字与英文单词之间补空格：12kSpirit → 12k Spirit */
+  out = out.replace(/([kKMT])(?=[A-Za-z])/g, '$1 ');
+  for (let i = 0; i < I18N_TERM_KEYS.length; i++) {
+    const k = I18N_TERM_KEYS[i];
+    if (out.indexOf(k) >= 0) out = out.split(k).join(I18N_TERMS[k]);
+  }
+  out = out.replace(/[，、]/g, ', ').replace(/。/g, '. ').replace(/；/g, '; ')
+    .replace(/：/g, ': ').replace(/！/g, '! ').replace(/？/g, '? ')
+    .replace(/「/g, '"').replace(/」/g, '"').replace(/（/g, ' (').replace(/）/g, ') ');
+  out = out.replace(/[\u4e00-\u9fa5]/g, '');
+  out = out.replace(/\s{2,}/g, ' ').replace(/\s+([,.;:!?])/g, '$1').trim();
+  return out || '·';
+}
+
+/* 统一翻译入口：精确 → 数字模板（#）→ 兜底 */
+function translateAny(s) {
+  if (!isEn() || s == null) return s;
+  const str = String(s);
+  if (I18N_EN[str] !== undefined) return I18N_EN[str];
+  const nums = [];
+  const norm = str.replace(/\d+(?:\.\d+)?/g, function (m) { nums.push(m); return '#'; });
+  if (I18N_EN[norm] !== undefined) {
+    let i = 0;
+    return String(I18N_EN[norm]).replace(/#/g, function () { return i < nums.length ? nums[i++] : '#'; });
+  }
+  return autoEn(str);
+}
+
+/* 全局兜底：面板里有大量 "el.textContent = '中文…'" 的增量写入。
+   英文模式下在赋值入口直接翻译，避免每秒扫描来不及、或旧值反复写回中文。 */
+(function patchTextContent() {
+  if (typeof Node === 'undefined' || !Node.prototype) return;
+  const d = Object.getOwnPropertyDescriptor(Node.prototype, 'textContent');
+  if (!d || !d.set || d.set.__i18nPatched) return;
+  const orig = d.set;
+  function patched(v) {
+    if (typeof v === 'string' && isEn() && /[\u4e00-\u9fa5]/.test(v)) v = translateAny(v);
+    return orig.call(this, v);
+  }
+  patched.__i18nPatched = true;
+  Object.defineProperty(Node.prototype, 'textContent', {
+    get: d.get, set: patched, configurable: true, enumerable: d.enumerable
+  });
+})();
+
+/* 全局兜底：部分面板直接用 innerHTML 增量写入（不经 setHTML），
+   英文模式下在赋值入口按「标签/文本」分段翻译，标签与结构保持不变。 */
+(function patchInnerHTML() {
+  if (typeof Element === 'undefined' || !Element.prototype) return;
+  const d = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
+  if (!d || !d.set || d.set.__i18nPatched) return;
+  const orig = d.set;
+  function patched(v) {
+    if (typeof v === 'string' && isEn() && /[\u4e00-\u9fa5]/.test(v)) {
+      v = v.split(/(<[^>]*>)/).map(function (seg, i) {
+        if (i % 2 === 1) return seg;                 // 标签原样保留
+        return /[\u4e00-\u9fa5]/.test(seg) ? translateAny(seg) : seg;
+      }).join('');
+    }
+    return orig.call(this, v);
+  }
+  patched.__i18nPatched = true;
+  Object.defineProperty(Element.prototype, 'innerHTML', {
+    get: d.get, set: patched, configurable: true, enumerable: d.enumerable
+  });
+})();
+
+/* 把一段 DOM 内的中文文本与常见属性整体本地化（英文模式） */
+function localizeDOM(root) {
+  if (!isEn() || !root) return;
+  const doc = root.ownerDocument || document;
+  const SHOW = (typeof NodeFilter !== 'undefined' && NodeFilter.SHOW_TEXT) ? NodeFilter.SHOW_TEXT : 4;
+  if (doc.createTreeWalker) {
+    const walker = doc.createTreeWalker(root, SHOW, null);
+    const nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    nodes.forEach(function (n) {
+      const p = n.parentElement;
+      if (p && /^(SCRIPT|STYLE|TEXTAREA)$/.test(p.tagName)) return;
+      const v = n.nodeValue;
+      if (!v || !/[\u4e00-\u9fa5]/.test(v)) return;
+      const en = translateAny(v);
+      if (en !== v) n.nodeValue = en;
+    });
+  }
+  if (root.querySelectorAll) {
+    const els = root.querySelectorAll('[title],[placeholder],[aria-label],[alt]');
+    for (let i = 0; i < els.length; i++) {
+      const el = els[i];
+      ['title', 'placeholder', 'aria-label', 'alt'].forEach(function (a) {
+        const v = el.getAttribute && el.getAttribute(a);
+        if (v && /[\u4e00-\u9fa5]/.test(v)) el.setAttribute(a, translateAny(v));
+      });
+    }
+  }
+}
+
 function isEn() { return !!(typeof state !== 'undefined' && state && state.lang === 'en'); }
 
-/* 以中文原文取译文；英文模式下未收录则回退原文（不会抛错） */
+/* 以中文原文取译文；英文模式下未收录时走兜底翻译，保证不留中文 */
 function t(s) {
   if (!isEn()) return s;
   if (s == null) return s;
-  return Object.prototype.hasOwnProperty.call(I18N_EN, s) ? I18N_EN[s] : s;
+  return translateAny(s);
 }
 
 function tFloor(n) { return isEn() ? ('Floor ' + n) : ('第 ' + n + ' 层'); }
@@ -278,6 +453,7 @@ function applyStaticI18n() {
     : ('穿越星球 v' + ver + ' · Planet Crossing');
   const verTag = document.getElementById('verTag');
   if (verTag) verTag.title = isEn() ? ('Game version v' + ver) : ('游戏版本 v' + ver);
+  if (isEn() && typeof localizeDOM === 'function') localizeDOM(document.body);
 }
 
 /* 切换语言：落盘 + 静态文案 + 整树重绘（setHTML 签名会随文案变化自动重绘） */
@@ -288,6 +464,33 @@ function setLang(lang) {
     state.lang = next;
     if (typeof saveState === 'function') saveState();
   }
+  /* 清掉 setHTML 的内容签名缓存：否则切回中文时可能命中英文切换前的旧签名而跳过重绘 */
+  if (typeof _htmlCache === 'object' && _htmlCache) {
+    Object.keys(_htmlCache).forEach(function (k) { delete _htmlCache[k]; });
+  }
   applyStaticI18n();
   if (typeof renderAll === 'function') renderAll();
+  localizeDOM(document.body);
+}
+
+/* 语言按钮的独立兜底：即使运行环境里 main.js 是旧缓存（没有 setlang 分支），
+   只要 ui.js 已渲染出语言按钮，这里也能完成切换。与 main.js 同时触发时
+   setLang 幂等，最多多一次重绘。 */
+document.addEventListener('click', function (e) {
+  let n = e.target;
+  while (n && n !== document.body) {
+    if (n.dataset && n.dataset.act === 'setlang') {
+      setLang(n.dataset.lang);
+      return;
+    }
+    n = n.parentElement;
+  }
+});
+
+/* 兜底清扫：部分面板/提示在 setHTML 之后用 textContent 增量写入中文，
+   英文模式下每秒扫描一次可见 DOM，确保不残留中文（只处理含中文的文本节点）。 */
+if (typeof setInterval === 'function') {
+  setInterval(function () {
+    if (isEn() && typeof document !== 'undefined' && document.body) localizeDOM(document.body);
+  }, 1000);
 }
