@@ -81,7 +81,7 @@
 | 31 | 战阵重伤与疗伤 | 信徒生命归零立即自动下阵并进入重伤：战阵 / 任务 / 朝代职位均不可选；只能消耗灵力（按缺失生命 0.6/1%，满血约 60，单次封顶 200）与 1 枚聚气丹恢复，无自然自愈；重伤标记存信徒实例，旧档缺省健康 | `DBATTLE.INJURY` / `inst.injured`、`healDisciple` | [战阵重伤与疗伤](./机制-战阵重伤与疗伤.md) |
 | 32 | 战阵生命延续 | 通关 / 失败 / 自动连战 / 重复挑战都不回满，剩余比例存 `inst.hpPct` 跨关卡、切动作、读档延续；只有疗伤回满；自动连战在任一在场信徒 <25% 生命时暂停并提示 | `dbattleSyncHp`、`AUTO_MIN_HP_PCT` | [战阵重伤与疗伤](./机制-战阵重伤与疗伤.md#21-生命延续v2210) |
 | 33 | 装备词条 | 装备实例化：`state.gear` 存 `{uid,id,affixes}`，`state.equip[slot]` 存 uid；每件产出随机 roll 1~4 条词条（按基础 value 分六档品质），池含攻/防/命/闪/生命固定值与工作速度/经验/额外产出/灵力恢复/战斗掉落百分比（同名合计封顶 15%）；所有产出经 `invAdd` 统一 roll；旧档一次性补 roll；无洗练重铸 | `EQUIP_QUALITY/AFFIX_POOL`、`makeGear/rollGearAffixes/grantEquip` | [装备词条](./机制-装备词条.md) |
-| 34 | 语言切换 | 设置→通用提供中文 / English；`state.lang` 随存档持久化，旧档缺省 zh、异常值回落 zh；`js/i18n.js` 以中文原文为 key 的英文字典，缺词回退中文；切换立即 `saveState` + 整树重绘；本期覆盖导航/设置/背包/市集/右栏/技能与装备名，物品长描述、任务与建筑长文留待后续增量 | `state.lang` / `I18N_EN`、`t()` / `setLang()` | [语言切换](./机制-语言切换.md) |
+| 34 | 语言切换 | 设置→通用提供中文 / English；`state.lang` 随存档持久化，旧档缺省 zh、异常值回落 zh；`js/i18n.js` + 7 个字典分片（1341 条）覆盖全量可见文案，运行时按 `#` 数字模板命中拼接句，未命中走 `autoEn` 术语兜底并清除残留汉字；全局在 `textContent` / `innerHTML` 写入入口本地化，覆盖增量刷新面板；含 `?v=<版本>` 缓存版本避免新旧文件混用 | `state.lang`、`I18N_EN`/`I18N_EXTRA`、`translateAny/localizeDOM`、`tools/version.js` | [语言切换](./机制-语言切换.md) |
 
 ---
 
