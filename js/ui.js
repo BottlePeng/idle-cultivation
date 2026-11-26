@@ -3168,6 +3168,9 @@ function renderDisciples() {
   const cap = discipleStoreCap();
   const slots = discipleSlots();
   const d = state.disciples;
+  /* 已任朝代职位的信徒从仓库列表中隐去（效果与遣散一致：不再出现卡片）；
+     实例仍保留在 owned 里，职位加成与朝代页面占用展示不受影响。 */
+  const list = d.owned.filter(function (inst) { return !discDynPost(inst.uid); });
   const slotsFull = discipleEquippedCount() >= slots;
 
   let html = '<div class="sdbar"><span class="sdico">🙏</span>' +
@@ -3227,13 +3230,13 @@ function renderDisciples() {
   html += '</div>';
 
   /* 仓库 */
-  html += '<div class="secttl">信徒仓库（共 ' + d.owned.length + ' 位）</div>';
-  if (!d.owned.length) {
+  html += '<div class="secttl">信徒仓库（共 ' + list.length + ' 位）</div>';
+  if (!list.length) {
     html += '<div class="empty">仓库空空，先招募一位信徒吧。</div>';
     return html;
   }
   html += '<div class="dgrid">';
-  d.owned.forEach(function (inst) {
+  list.forEach(function (inst) {
     const dd = findDisciple(inst.id);
     if (!dd) return;
     const t = DISCIPLE_TIERS[inst.tier];
@@ -3241,14 +3244,10 @@ function renderDisciples() {
     const inj = discInjured(inst);
     const pct = discHpPct(inst);
     let stat;
-    const post = discDynPost(inst.uid);
     const dbSlot = dbattleSlotOf(inst.uid);
     if (inj) {
       stat = '<span class="dstat bad">重伤，需疗伤 · 生命归零，暂不可上阵</span>' +
         discHealButtonHTML(inst);
-    } else if (post) {
-      stat = '<span class="dstat ok">担任「' + dynastyName(post.d.dyn) + '」' +
-        dynPostName(post.role) + ' · 不可取下</span>';
     } else if (dbSlot >= 0) {
       stat = '<span class="dstat ok">战阵第 ' + (dbSlot + 1) + ' 位 · 不可驻守任务</span>' +
         '<button class="mini" data-act="select" data-skill="dbattle">战阵面板</button>';

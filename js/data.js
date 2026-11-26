@@ -12,7 +12,7 @@
      minor++  机制更新（新增/改动机制，影响存档），patch 归零
      major++  大型更新（DLC、全新机制，需重开游戏），minor/patch 归零
    改这里用 `node tools/version.js patch|minor|major`，打包前会自动同步。 */
-const VERSION = '2.24.2';
+const VERSION = '2.24.4';
 
 /* =========================================================================
  * 兑换码（集中配置）
